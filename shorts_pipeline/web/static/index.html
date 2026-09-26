@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shorts console</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">▶ Shorts console</div>
+  <nav>
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="pipeline">Pipeline</button>
+    <button data-tab="studio">Studio</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div id="jobpill" class="pill hidden"></div>
+</header>
+
+<main>
+  <!-- ------------------------------------------------------------ overview -->
+  <section id="tab-overview" class="tab active">
+    <div class="cards" id="statuscards"></div>
+    <div class="grid2">
+      <div class="panel">
+        <h2>What to make next</h2>
+        <p class="muted" id="bp-run"></p>
+        <div id="blueprints" class="bplist"></div>
+      </div>
+      <div class="panel">
+        <h2>Top ranked Shorts</h2>
+        <div class="tablewrap"><table id="topshorts"><thead><tr>
+          <th>#</th><th>score</th><th>views/h</th><th>format</th><th>hook</th><th>title</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ pipeline -->
+  <section id="tab-pipeline" class="tab">
+    <div class="panel">
+      <h2>Run the pipeline</h2>
+      <div class="row">
+        <button class="primary" data-job="run">Run everything</button>
+        <button data-job="discover">Discover</button>
+        <button data-job="judge">Judge</button>
+        <button data-job="rank">Rank</button>
+        <button data-job="analyze">Analyze</button>
+        <label class="inline"><input type="checkbox" id="opt-force"> re-judge cached</label>
+        <label class="inline"><input type="checkbox" id="opt-api"> use YouTube API chart</label>
+      </div>
+      <p class="muted">Discover pulls hashtag shelves then the newest Shorts of the fastest-growing channels. Judge sends each Short to TypeSafe once. Rank and Analyze are free and instant, so change weights in Settings and re-run them.</p>
+    </div>
+    <div class="grid2">
+      <div class="panel">
+        <h2>Job log <span id="jobstatus" class="muted"></span></h2>
+        <pre id="joblog" class="log">No job yet.</pre>
+      </div>
+      <div class="panel">
+        <h2>Runs</h2>
+        <div class="tablewrap"><table id="runs"><thead><tr><th>run</th><th>shorts</th><th>judged</th><th>blueprints</th><th></th></tr></thead><tbody></tbody></table></div>
+        <h3>Report</h3>
+        <pre id="report" class="report"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------ studio -->
+  <section id="tab-studio" class="tab">
+    <div class="panel">
+      <h2>Produce a Short</h2>
+      <div class="row">
+        <select id="prod-run"></select>
+        <select id="prod-blueprint"></select>
+        <input id="prod-angle" placeholder="optional angle, e.g. why octopuses have three hearts" size="48">
+        <label class="inline"><input type="checkbox" id="prod-upload"> upload when done</label>
+        <button class="primary" data-job="produce">Write, voice and render</button>
+      </div>
+      <p class="muted">Uses the Anthropic key if set, otherwise your Claude subscription token. TypeSafe QA rejects weak hooks and asks for a rewrite, up to the attempt limit in config.</p>
+    </div>
+    <div id="outputs" class="outputs"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ settings -->
+  <section id="tab-settings" class="tab">
+    <div class="grid2">
+      <div class="panel">
+        <h2>API keys</h2>
+        <p class="muted">Saved to <code>.env</code> in the project folder. Values are never shown again after saving, only the last four characters.</p>
+        <form id="keysform"></form>
+        <h3>YouTube upload</h3>
+        <p class="muted" id="yt-status"></p>
+        <input type="file" id="secretsfile" accept="application/json">
+        <button id="secretsbtn">Upload client_secrets.json</button>
+        <details class="muted"><summary>How to get client_secrets.json</summary>
+          <ol>
+            <li>console.cloud.google.com → new project → APIs &amp; Services → enable <b>YouTube Data API v3</b></li>
+            <li>OAuth consent screen → External → add your Google account as a test user</li>
+            <li>Credentials → Create credentials → OAuth client ID → <b>Desktop app</b> → download JSON</li>
+            <li>Upload it here. The first upload job opens a browser window to approve access.</li>
+          </ol></details>
+        <h3>Claude subscription instead of an API key</h3>
+        <p class="muted">Run <code>claude setup-token</code> in a terminal (it opens a browser), paste the token above as the subscription token.</p>
+      </div>
+      <div class="panel">
+        <h2>Pipeline settings</h2>
+        <form id="cfgform">
+          <h3>Discovery</h3>
+          <label>Hashtags (comma separated)<textarea name="discovery.hashtags" rows="2"></textarea></label>
+          <div class="row">
+            <label>Max age (days)<input type="number" name="discovery.max_age_days" min="1"></label>
+            <label>Channels to follow<input type="number" name="discovery.channels_to_follow" min="0"></label>
+            <label>Workers<input type="number" name="discovery.workers" min="1" max="8"></label>
+          </div>
+          <h3>Ranking weights</h3>
+          <div class="row">
+            <label>Velocity<input type="number" step="0.05" name="ranking.weights.velocity"></label>
+            <label>Engagement<input type="number" step="0.05" name="ranking.weights.engagement"></label>
+            <label>Replicable<input type="number" step="0.05" name="ranking.weights.replicable"></label>
+            <label>Hook<input type="number" step="0.05" name="ranking.weights.hook"></label>
+            <label>Evergreen<input type="number" step="0.05" name="ranking.weights.evergreen"></label>
+          </div>
+          <h3>Production</h3>
+          <div class="row">
+            <label>Voice<input name="production.voice"></label>
+            <label>Target seconds<input type="number" name="production.target_seconds" min="15" max="180"></label>
+            <label>Background<select name="production.background_source"><option>auto</option><option>pexels</option><option>generated</option></select></label>
+            <label>Script backend<select name="production.script_backend"><option>auto</option><option>api</option><option>claude_code</option></select></label>
+            <label>Upload privacy<select name="upload.privacy"><option>private</option><option>unlisted</option><option>public</option></select></label>
+          </div>
+          <button class="primary" type="submit">Save settings</button>
+          <span id="cfgsaved" class="muted"></span>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

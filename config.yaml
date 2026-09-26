@@ -1,0 +1,51 @@
+# Discovery: where to look for Shorts. Hashtag pages give the most reliable Shorts lists.
+discovery:
+  hashtags: [shorts, trending, fyp, facts, motivation, funny, story, storytime, lifehacks, money, ai, history, psychology, science]
+  search_queries: []            # YouTube search pages hide Shorts from yt-dlp; leave empty unless that changes
+  per_source_limit: 40          # flat entries pulled per hashtag/search page
+  max_candidates: 120           # full-metadata fetches per stage (each is ~1-2s)
+  channels_to_follow: 30        # stage 2: pull the newest Shorts of the 30 fastest-growing channels found
+  shorts_per_channel: 6
+  max_age_days: 21              # ignore uploads older than this (not "trending" any more)
+  fallback_max_age_days: 90     # relax to this if fewer than min_candidates survive
+  min_candidates: 20
+  max_duration_seconds: 180     # YouTube Shorts are up to 3 minutes
+  fetch_transcripts: true
+  transcript_chars: 700         # chars of transcript given to the judge (the hook lives here)
+  workers: 3                    # parallel metadata fetches; higher trips YouTube's bot check sooner
+  request_spacing_seconds: 0.7  # pause between yt-dlp requests inside each worker
+  cookies_from_browser: null    # e.g. chrome / firefox / edge: lets yt-dlp use your logged-in YouTube cookies
+                                # (fewer bot checks). Off by default because it reads your browser profile.
+
+# Ranking weights (must be positive; normalised in code). Change them, re-run `rank` - no re-judging needed.
+ranking:
+  weights:
+    velocity: 0.35        # views per hour since upload (log-scaled, batch-normalised)
+    engagement: 0.15      # likes+comments per view
+    replicable: 0.25      # TypeSafe Score: can a faceless pipeline make this?
+    hook: 0.15            # TypeSafe Score: hook strength
+    evergreen: 0.10       # TypeSafe Score: still worth watching next month?
+  min_english_noul: 0.6   # drop Shorts a general English-speaking audience would not follow
+  max_promo_noul: 0.6     # drop ads / sponsored / channel-promo Shorts
+  min_format_confidence: 0.35   # below this the format label is "uncertain" and excluded from blueprints
+  min_blueprint_replicable: 0.6 # median replicability (0-1) a format needs to count as faceless-friendly;
+                                # lower ones are still listed, marked [stretch], after the friendly ones
+  max_per_channel: 2            # Shorts per channel that count toward a blueprint (stops repost spam looking like a trend)
+
+# Production
+production:
+  voice: en-US-AndrewNeural   # any edge-tts voice; `edge-tts --list-voices`
+  voice_rate: "+8%"
+  target_seconds: 40          # script length target (30-55 is the Shorts sweet spot)
+  words_per_caption: 3        # caption chunk size
+  font: Impact
+  font_size: 96
+  music_volume_db: -18        # background music level if assets/music/*.mp3 exist
+  background_source: auto     # auto | pexels | generated
+  script_backend: auto        # auto | api | claude_code  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription)
+  script_max_attempts: 3      # regenerate if TypeSafe QA says the hook is weak
+  script_min_hook_score: 2    # 0-3, see judge.SCRIPT_QA_QUESTIONS
+
+upload:
+  privacy: private            # private | unlisted | public
+  category_id: "22"           # 22 = People & Blogs, 24 = Entertainment, 27 = Education, 28 = Science & Technology

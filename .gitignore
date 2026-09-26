@@ -1,0 +1,8 @@
+.env
+data/
+output/
+client_secrets.json
+__pycache__/
+*.pyc
+.agents/
+skills-lock.json

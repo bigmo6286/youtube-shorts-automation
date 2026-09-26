@@ -1,0 +1,372 @@
+"""FastAPI backend for the console. Binds to localhost only: it can read and write your API keys."""
+from __future__ import annotations
+
+import contextlib
+import io
+import logging
+import os
+import threading
+import time
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import yaml
+from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from .. import cli
+from ..config import OUTPUT_DIR, ROOT, load_config
+from ..storage import RUNS_DIR, load_json
+
+log = logging.getLogger("shorts.web")
+STATIC = Path(__file__).parent / "static"
+ENV_PATH = ROOT / ".env"
+CONFIG_PATH = ROOT / "config.yaml"
+
+KEY_FIELDS = {
+    "TYPESAFE_API_KEY": "TypeSafe API key (judging, ranking, script QA)",
+    "ANTHROPIC_API_KEY": "Anthropic API key (script writing, optional if using a subscription token)",
+    "CLAUDE_CODE_OAUTH_TOKEN": "Claude subscription token from `claude setup-token`",
+    "PEXELS_API_KEY": "Pexels API key (stock footage backgrounds, optional)",
+    "YOUTUBE_API_KEY": "YouTube Data API key (optional extra discovery source)",
+}
+PATH_FIELDS = {
+    "CLAUDE_CODE_BIN": "Path to claude.exe (optional, auto-detected)",
+    "YOUTUBE_CLIENT_SECRETS": "OAuth client secrets file for uploads",
+}
+
+app = FastAPI(title="Shorts console")
+
+
+# ------------------------------------------------------------------------------------ .env handling
+
+def _read_env() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.lstrip().startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                values[k.strip()] = v.strip()
+    return values
+
+
+def _write_env(updates: dict[str, str]) -> None:
+    """Update or append keys while keeping comments and order of the existing file."""
+    lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
+    seen = set()
+    for i, line in enumerate(lines):
+        if line.strip() and not line.lstrip().startswith("#") and "=" in line:
+            k = line.split("=", 1)[0].strip()
+            if k in updates:
+                lines[i] = f"{k}={updates[k]}"
+                seen.add(k)
+    for k, v in updates.items():
+        if k not in seen:
+            lines.append(f"{k}={v}")
+    ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    for k, v in updates.items():           # the running server must see them too
+        if v:
+            os.environ[k] = v
+        else:
+            os.environ.pop(k, None)
+
+
+def _mask(value: str) -> str:
+    return f"…{value[-4:]}" if len(value) >= 8 else "set"
+
+
+# ------------------------------------------------------------------------------------ jobs
+
+class Job:
+    def __init__(self, kind: str, params: dict[str, Any]):
+        self.id = uuid.uuid4().hex[:10]
+        self.kind = kind
+        self.params = params
+        self.status = "queued"
+        self.log: list[str] = []
+        self.result: Any = None
+        self.error: str | None = None
+        self.started = time.time()
+        self.finished: float | None = None
+
+    def to_dict(self, tail: int | None = None) -> dict[str, Any]:
+        lines = self.log[-tail:] if tail else self.log
+        return {"id": self.id, "kind": self.kind, "params": self.params, "status": self.status,
+                "log": lines, "log_length": len(self.log), "result": self.result, "error": self.error,
+                "started": self.started, "finished": self.finished}
+
+
+JOBS: dict[str, Job] = {}
+_JOB_LOCK = threading.Lock()          # one pipeline job at a time: YouTube rate limits and a small CPU
+_CURRENT: Job | None = None
+
+
+class _JobLogHandler(logging.Handler):
+    def __init__(self, job: Job):
+        super().__init__(logging.INFO)
+        self.job = job
+        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name.startswith("typesafe_sdk") and record.levelno < logging.WARNING:
+            return                       # one line per request is noise here
+        self.job.log.append(self.format(record))
+
+
+class _JobStdout(io.TextIOBase):
+    def __init__(self, job: Job):
+        self.job = job
+        self._buf = ""
+
+    def write(self, s: str) -> int:      # type: ignore[override]
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            if line.strip():
+                self.job.log.append(line)
+        return len(s)
+
+
+def _args(job: Job) -> SimpleNamespace:
+    p = job.params
+    return SimpleNamespace(
+        run=p.get("run") or None, force=bool(p.get("force")), top=int(p.get("top", 20)),
+        api=bool(p.get("api")), produce=bool(p.get("produce")), blueprint=int(p.get("blueprint", 1)),
+        angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
+    )
+
+
+COMMANDS = {
+    "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
+    "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
+}
+
+
+def _run_job(job: Job) -> None:
+    global _CURRENT
+    handler = _JobLogHandler(job)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    if root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+    job.status = "running"
+    _CURRENT = job
+    try:
+        with contextlib.redirect_stdout(_JobStdout(job)):
+            result = COMMANDS[job.kind](_args(job))
+        job.result = str(result) if result is not None else None
+        job.status = "done"
+    except SystemExit as exc:            # cli functions use sys.exit for user-facing failures
+        job.error = str(exc)
+        job.status = "error"
+    except Exception as exc:  # noqa: BLE001
+        job.error = f"{type(exc).__name__}: {exc}"
+        job.status = "error"
+        log.exception("job %s failed", job.id)
+    finally:
+        job.finished = time.time()
+        root.removeHandler(handler)
+        _CURRENT = None
+        _JOB_LOCK.release()
+
+
+class JobRequest(BaseModel):
+    kind: str
+    params: dict[str, Any] = {}
+
+
+@app.post("/api/jobs")
+def start_job(req: JobRequest) -> dict[str, Any]:
+    if req.kind not in COMMANDS:
+        raise HTTPException(400, f"unknown job kind {req.kind}")
+    if not _JOB_LOCK.acquire(blocking=False):
+        raise HTTPException(409, f"a job is already running ({_CURRENT.kind if _CURRENT else '?'})")
+    job = Job(req.kind, req.params)
+    JOBS[job.id] = job
+    threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+    return job.to_dict()
+
+
+@app.get("/api/jobs")
+def list_jobs() -> list[dict[str, Any]]:
+    return [j.to_dict(tail=1) for j in sorted(JOBS.values(), key=lambda j: -j.started)[:20]]
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str, offset: int = 0) -> dict[str, Any]:
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "no such job")
+    d = job.to_dict()
+    d["log"] = job.log[offset:]
+    return d
+
+
+# ------------------------------------------------------------------------------------ settings
+
+@app.get("/api/settings")
+def get_settings() -> dict[str, Any]:
+    values = _read_env()
+    keys = [{"name": k, "label": label, "set": bool(values.get(k)), "hint": _mask(values[k]) if values.get(k) else ""}
+            for k, label in KEY_FIELDS.items()]
+    paths = [{"name": k, "label": label, "value": values.get(k, "")} for k, label in PATH_FIELDS.items()]
+    secrets_path = values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json"
+    return {"keys": keys, "paths": paths, "config": load_config(),
+            "client_secrets_present": (ROOT / secrets_path).exists(),
+            "youtube_token_present": (ROOT / "data" / "youtube_token.json").exists()}
+
+
+class SettingsUpdate(BaseModel):
+    keys: dict[str, str] = {}
+    paths: dict[str, str] = {}
+    config: dict[str, Any] | None = None
+
+
+@app.post("/api/settings")
+def update_settings(body: SettingsUpdate) -> dict[str, Any]:
+    updates: dict[str, str] = {}
+    for k, v in body.keys.items():
+        if k in KEY_FIELDS and v is not None and v.strip() != "":
+            updates[k] = v.strip()
+    for k, v in body.paths.items():
+        if k in PATH_FIELDS and v is not None:
+            updates[k] = v.strip()
+    if updates:
+        _write_env(updates)
+    if body.config is not None:
+        current = load_config()
+        for section, values in body.config.items():
+            if isinstance(values, dict) and isinstance(current.get(section), dict):
+                current[section].update(values)
+        CONFIG_PATH.write_text(yaml.safe_dump(current, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return get_settings()
+
+
+@app.delete("/api/settings/keys/{name}")
+def clear_key(name: str) -> dict[str, Any]:
+    if name not in KEY_FIELDS:
+        raise HTTPException(400, "unknown key")
+    _write_env({name: ""})
+    return get_settings()
+
+
+@app.post("/api/settings/client-secrets")
+async def upload_client_secrets(file: UploadFile) -> dict[str, Any]:
+    data = await file.read()
+    if b'"installed"' not in data and b'"web"' not in data:
+        raise HTTPException(400, "that does not look like a Google OAuth client JSON file")
+    (ROOT / "client_secrets.json").write_bytes(data)
+    _write_env({"YOUTUBE_CLIENT_SECRETS": "client_secrets.json"})
+    return get_settings()
+
+
+# ------------------------------------------------------------------------------------ runs and outputs
+
+def _run_summary(run_dir: Path) -> dict[str, Any]:
+    shorts = load_json(run_dir / "shorts.json", []) or []
+    analysis = load_json(run_dir / "analysis.json")
+    return {
+        "id": run_dir.name,
+        "shorts": len(shorts),
+        "judged": sum(1 for s in shorts if s.get("judgment")),
+        "ranked": bool(shorts) and "score" in shorts[0],
+        "blueprints": len(analysis["blueprints"]) if analysis else 0,
+        "has_analysis": analysis is not None,
+    }
+
+
+@app.get("/api/runs")
+def list_runs() -> list[dict[str, Any]]:
+    if not RUNS_DIR.exists():
+        return []
+    runs = sorted((p for p in RUNS_DIR.iterdir() if p.is_dir() and (p / "shorts.json").exists()), reverse=True)
+    return [_run_summary(p) for p in runs]
+
+
+@app.get("/api/runs/{run_id}")
+def get_run(run_id: str, top: int = 40) -> dict[str, Any]:
+    run_dir = RUNS_DIR / run_id
+    if not (run_dir / "shorts.json").exists():
+        raise HTTPException(404, "no such run")
+    shorts = load_json(run_dir / "shorts.json", []) or []
+    slim = []
+    for s in shorts[:top]:
+        j = s.get("judgment") or {}
+        slim.append({
+            "id": s["id"], "title": s["title"], "url": s["url"], "channel": s.get("channel", ""),
+            "views": s.get("view_count", 0), "views_per_hour": s.get("views_per_hour"), "duration": s.get("duration"),
+            "score": s.get("score"), "excluded": s.get("excluded", []), "signals": s.get("signals"),
+            "format": j.get("format", {}).get("choice"), "topic": j.get("topic", {}).get("choice"),
+            "hook_style": j.get("hook_style", {}).get("choice"),
+            "format_confidence": j.get("format", {}).get("confidence"),
+        })
+    report = (run_dir / "analysis.md").read_text(encoding="utf-8") if (run_dir / "analysis.md").exists() else ""
+    return {"summary": _run_summary(run_dir), "shorts": slim, "analysis": load_json(run_dir / "analysis.json"),
+            "report": report}
+
+
+@app.get("/api/outputs")
+def list_outputs() -> list[dict[str, Any]]:
+    if not OUTPUT_DIR.exists():
+        return []
+    out = []
+    for d in sorted((p for p in OUTPUT_DIR.iterdir() if p.is_dir()), reverse=True):
+        meta = load_json(d / "meta.json")
+        script = load_json(d / "script.json")
+        if not meta:
+            continue
+        qa = (script or {}).get("qa") or {}
+        out.append({
+            "dir": d.name, "title": meta.get("title"), "description": meta.get("description"),
+            "hashtags": meta.get("hashtags", []), "duration": meta.get("duration"),
+            "blueprint": {k: meta.get("blueprint", {}).get(k) for k in ("format", "topic", "hook_style")},
+            "video_url": f"/outputs/{d.name}/short.mp4" if (d / "short.mp4").exists() else None,
+            "youtube_id": meta.get("youtube_id"),
+            "script_text": (script or {}).get("full_text"),
+            "backend": (script or {}).get("backend"),
+            "qa": {"hook_strength": qa.get("hook_strength", {}).get("score"), "clarity": qa.get("clarity", {}).get("score"),
+                   "matches_format": qa.get("matches_format", {}).get("noul"), "has_payoff": qa.get("has_payoff", {}).get("noul"),
+                   "policy_risk": qa.get("policy_risk", {}).get("noul")} if qa else None,
+        })
+    return out
+
+
+@app.get("/api/status")
+def status() -> dict[str, Any]:
+    values = _read_env()
+    runs = list_runs()
+    return {
+        "typesafe": bool(values.get("TYPESAFE_API_KEY")),
+        "script_backend": "api" if values.get("ANTHROPIC_API_KEY") else ("claude_code" if values.get("CLAUDE_CODE_OAUTH_TOKEN") else None),
+        "pexels": bool(values.get("PEXELS_API_KEY")),
+        "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
+        "latest_run": runs[0] if runs else None,
+        "outputs": len(list_outputs()),
+        "job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None,
+    }
+
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
+app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(str(STATIC / "index.html"))
+
+
+@app.exception_handler(Exception)
+async def _unhandled(_, exc: Exception) -> JSONResponse:
+    log.exception("unhandled error")
+    return JSONResponse({"detail": f"{type(exc).__name__}: {exc}"}, status_code=500)
+
+
+def serve(host: str = "127.0.0.1", port: int = 8787) -> None:
+    import uvicorn
+    print(f"Shorts console: http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="warning")

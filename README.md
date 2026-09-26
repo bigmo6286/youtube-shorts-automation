@@ -1,0 +1,138 @@
+# YouTube Shorts automation
+
+Finds what is trending on Shorts, judges every video with TypeSafe (System One / Jev), ranks them,
+works out which *formats* you can copy as a faceless creator, then writes, voices, captions, renders
+and (optionally) uploads a new Short in that style.
+
+```
+discover  ->  judge  ->  rank  ->  analyze  ->  produce  ->  upload
+ yt-dlp      TypeSafe   weights   blueprints   Claude +      YouTube
+                                               edge-tts +    Data API
+                                               ffmpeg
+```
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+copy .env.example .env      # then fill in the keys
+```
+
+ffmpeg must be on PATH (it is on this machine). Keys:
+
+| Key | Needed for | Where |
+|---|---|---|
+| `TYPESAFE_API_KEY` | judge, analyze, script QA | https://console.typesafe.ai/keys |
+| `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN` | produce (script writing) | API key from https://console.anthropic.com, or your Claude Pro/Max subscription: see below |
+| `PEXELS_API_KEY` | optional stock footage backgrounds | https://www.pexels.com/api/ |
+| `client_secrets.json` | upload | see below |
+
+Without `TYPESAFE_API_KEY` the tool still discovers and ranks by view velocity and engagement,
+but it cannot label formats, so `analyze` produces no blueprints and `produce` has nothing to work from.
+
+### Using a Claude subscription instead of an API key
+
+`produce` can write scripts through Claude Code's headless mode, which runs on a Claude Pro/Max
+login rather than API billing. One-time setup in your own terminal (it opens a browser to sign in):
+
+```bash
+claude setup-token
+```
+
+Paste the token it prints into `.env` as `CLAUDE_CODE_OAUTH_TOKEN`. If `claude` is not on your PATH,
+use the copy bundled with the Claude desktop app, for example
+`%APPDATA%\Claude\claude-code\<version>\claude.exe setup-token`; the pipeline finds that copy on its own.
+With `script_backend: auto` in `config.yaml` the API key is used when present, otherwise the subscription.
+
+## Web console
+
+```bash
+python main.py web
+```
+
+Opens a local console at http://127.0.0.1:8787 with four tabs:
+
+- **Overview**: which keys are configured, the latest run, the blueprints and the top ranked Shorts.
+- **Pipeline**: run everything or one stage at a time, watch the live log, open any run's report.
+- **Studio**: pick a blueprint and an optional angle, produce a Short, preview the video, read the
+  script and its TypeSafe QA scores, upload to YouTube.
+- **Settings**: paste API keys (saved to `.env`, shown masked afterwards), upload
+  `client_secrets.json`, and edit discovery hashtags, ranking weights, voice, backgrounds and privacy.
+
+The console binds to localhost only because it can read and write your keys. Do not expose it.
+
+## Commands
+
+```bash
+python main.py run                 # discover -> judge -> rank -> analyze, prints the report
+python main.py run --produce       # ...and render a Short from the #1 blueprint into output/
+python main.py produce --blueprint 2 --angle "why octopuses have three hearts"
+python main.py produce --upload    # render then upload (private by default, see config.yaml)
+python main.py upload output/<dir> # upload something rendered earlier
+python main.py rank --top 30       # re-rank after editing weights in config.yaml (no API calls)
+```
+
+Each `discover` creates `data/runs/<timestamp>/` with `shorts.json` (metadata, transcript, TypeSafe
+judgment, signals, score), `analysis.json` and `analysis.md`. Later commands default to the latest run.
+
+Discovery is two-stage and needs no API key. Stage 1 reads the Shorts shelf of every hashtag in
+`config.yaml` (those skew toward all-time hits). Stage 2 takes the fastest-growing channels found in
+stage 1 and pulls their newest Shorts, which is where the actually-trending material comes from.
+Metadata and transcripts are cached in `data/cache/`, so re-runs are fast. YouTube search pages hide
+Shorts from yt-dlp, so search is not used.
+
+If the log shows "Sign in to confirm you're not a bot" or "HTTP Error 429", YouTube is rate-limiting
+anonymous requests from this machine; the fetcher stops early after 8 failures in a row and keeps
+whatever it has. Wait an hour, lower `discovery.workers`, raise `request_spacing_seconds`, or set
+`cookies_from_browser: chrome` (or firefox/edge) so yt-dlp reuses your logged-in session. Roughly
+300 metadata fetches per hour is a safe anonymous budget. The yt-dlp warning about a missing
+JavaScript runtime (deno) is harmless here: we only read metadata, never download video.
+
+## How the ranking works
+
+Each Short is one TypeSafe request that asks nine questions in parallel (`shorts_pipeline/judge.py`):
+
+- **Choice**: `format`, `topic`, `hook_style`
+- **Score**: `hook_strength`, `replicable` (can a voiceover + stock footage pipeline remake this?), `evergreen`
+- **Noul**: `english_ok`, `is_promo`, `clickbait_risk`
+
+Code owns the policy. `rank.py` combines log-scaled views-per-hour and engagement with the three
+normalised Scores using the weights in `config.yaml`, and drops Shorts whose `english_ok` or
+`is_promo` Nouls fail the thresholds. Change a weight, run `rank` again; no re-judging.
+
+`analyze.py` groups the survivors by (format, topic), sums their scores into an *opportunity*
+number, throws out groups the pipeline cannot physically make (median replicability too low),
+and picks each group's dominant hook style (probability-weighted). Those groups are the blueprints.
+Groups whose replicability sits below `min_blueprint_replicable` (on-camera comedy, for example)
+are listed after the faceless-friendly ones and tagged **[stretch]**: trending, but the originals
+depend on a person or original footage, so expect a voiceover remake to underperform them.
+
+## How production works
+
+1. `script_gen.py` asks Claude (`claude-opus-5`, structured output) for a script that follows the
+   blueprint and its exemplars' pacing, then asks TypeSafe to QA it (hook strength, clarity, format
+   match, payoff, policy risk). Weak drafts are sent back with the reviewer notes, up to
+   `script_max_attempts` times.
+2. `tts.py` voices it with edge-tts and keeps per-word timings.
+3. `captions.py` turns the timings into an ASS subtitle track with the spoken word highlighted.
+4. `footage.py` fetches a portrait Pexels clip per line (if a key exists) or generates a motion background.
+5. `render.py` assembles everything with ffmpeg at 1080x1920, mixing in any track from `assets/music/`.
+
+## YouTube upload setup (one time)
+
+1. https://console.cloud.google.com -> new project -> **APIs & Services -> Enable APIs** -> *YouTube Data API v3*.
+2. **OAuth consent screen** -> External -> add your own Google account under *Test users*.
+3. **Credentials -> Create credentials -> OAuth client ID -> Desktop app** -> download the JSON.
+4. Save it as `client_secrets.json` in this folder.
+5. The first `upload` opens a browser for consent; the token is cached in `data/youtube_token.json`.
+
+Uploads default to **private** so you can review before publishing. Change `upload.privacy` in
+`config.yaml` when you trust the output. Unverified Google Cloud projects have a daily upload quota
+of roughly six videos.
+
+## Tuning
+
+- `config.yaml -> discovery.hashtags / search_queries`: steer discovery toward a niche.
+- `ranking.weights`: how much velocity vs. replicability vs. hook matters to you.
+- `production.voice`: `edge-tts --list-voices` shows every option.
+- `production.target_seconds`: 30-55 s is the Shorts sweet spot.
