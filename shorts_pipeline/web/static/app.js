@@ -57,7 +57,10 @@ async function loadStatus() {
     card("YouTube upload", s.youtube_upload, s.youtube_upload ? "ready" : "client secrets missing"),
     card("Latest run", !!s.latest_run, s.latest_run ? `${s.latest_run.shorts} Shorts, ${s.latest_run.blueprints} blueprints` : "none yet"),
     card("Produced", s.outputs > 0, `${s.outputs} Shorts`),
+    card("Scheduler", s.schedule && s.schedule.enabled, s.schedule && s.schedule.enabled
+      ? `${s.schedule.done_today} done today${s.schedule.next && s.schedule.next[0] ? `, next ${s.schedule.next[0].kind} ${s.schedule.next[0].time}` : ""}` : "off (Settings)"),
   ].join("");
+  loadSchedule();
   const inst = $("#installffmpeg");
   if (inst) inst.addEventListener("click", () => startJob("setup_ffmpeg"));
   if (s.job_running && (!state.job || state.job.id !== s.job_running.id)) attachJob(s.job_running.id);
@@ -251,6 +254,19 @@ async function loadOutputs() {
   }));
 }
 
+// ---------------------------------------------------------------- schedule
+async function loadSchedule() {
+  const p = await api("/api/schedule");
+  const c = p.config;
+  $("#schedsummary").textContent = c.enabled
+    ? `on: ${c.produces_per_day} Shorts/day, ${c.refresh_per_day} trend refresh/day, ${String(c.start_hour).padStart(2, "0")}:00-${String(c.end_hour).padStart(2, "0")}:00, ${p.done_today}/${c.produces_per_day} done today`
+    : "off. Turn it on under Settings.";
+  $("#schednext").innerHTML = p.next.length ? "Next: " + p.next.map((n) => `<span class="tag">${n.time} ${esc(n.kind)}</span>`).join(" ") : (c.enabled ? "No more slots today." : "");
+  $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
+      <td class="${h.status === "error" ? "err" : ""}">${esc(h.status)}</td><td>${h.params && h.params.blueprint ? h.params.blueprint : "-"}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">Nothing scheduled has run yet.</td></tr>`;
+}
+
 // ---------------------------------------------------------------- telegram
 $("#tgdiscover").addEventListener("click", async () => {
   try {
@@ -350,6 +366,10 @@ async function loadSettings() {
   const tgKey = s.keys.find((k) => k.name === "TELEGRAM_BOT_TOKEN");
   const tgChat = s.paths.find((p) => p.name === "TELEGRAM_CHAT_ID");
   $("#tgstatus").textContent = tgKey && tgKey.set ? (tgChat && tgChat.value ? `Configured for chat ${tgChat.value}.` : "Token saved; now find your chat id.") : "No bot token yet.";
+  const sc = c.schedule || {};
+  $(`[name="schedule.enabled"]`).checked = !!sc.enabled;
+  set("schedule.produces_per_day", sc.produces_per_day ?? 20); set("schedule.refresh_per_day", sc.refresh_per_day ?? 1);
+  set("schedule.start_hour", sc.start_hour ?? 6); set("schedule.end_hour", sc.end_hour ?? 24); set("schedule.blueprints_to_rotate", sc.blueprints_to_rotate ?? 5);
   const intro = c.production.intro || {}, outro = c.production.outro || {};
   $(`[name="production.intro.enabled"]`).checked = intro.enabled !== false;
   set("production.intro.text", intro.text ?? "{title}"); set("production.intro.seconds", intro.seconds ?? 1.5);
@@ -381,8 +401,11 @@ $("#cfgform").addEventListener("submit", async (ev) => {
       outro: { ...(state.settings.config.production.outro || {}), enabled: $(`[name="production.outro.enabled"]`).checked,
         text: g("production.outro.text") || "Follow for more", handle: g("production.outro.handle"), seconds: num("production.outro.seconds") || 2 } },
     upload: { privacy: g("upload.privacy") },
+    schedule: { enabled: $(`[name="schedule.enabled"]`).checked, produces_per_day: num("schedule.produces_per_day") || 20,
+      refresh_per_day: num("schedule.refresh_per_day"), start_hour: num("schedule.start_hour"), end_hour: num("schedule.end_hour") || 24,
+      blueprints_to_rotate: num("schedule.blueprints_to_rotate") || 5 },
   };
-  try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); }
+  try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); loadStatus(); }
   catch (e) { toast(e.message, true); }
 });
 $("#secretsbtn").addEventListener("click", async () => {

@@ -67,6 +67,16 @@ notifications:
   telegram:
     on_produce: true          # send every finished Short (video + title + description + hashtags) to TELEGRAM_CHAT_ID
 
+# Built-in scheduler (runs while the web console is running; see README "Run it on a schedule")
+schedule:
+  enabled: false
+  produces_per_day: 20        # Shorts to write, render and send per day, evenly spaced over the window below
+  refresh_per_day: 1          # discover + judge + rank + analyze runs per day (keeps blueprints fresh)
+  start_hour: 6               # active window, local time (24 = midnight)
+  end_hour: 24
+  blueprints_to_rotate: 5     # cycle through the top N blueprints so videos vary in format and topic
+  catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
+
 upload:
   privacy: private            # private | unlisted | public
   category_id: "22"           # 22 = People & Blogs, 24 = Entertainment, 27 = Education, 28 = Science & Technology

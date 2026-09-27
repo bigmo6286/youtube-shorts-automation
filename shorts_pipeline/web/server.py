@@ -14,20 +14,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import yaml
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .. import cli
-from ..config import OUTPUT_DIR, ROOT, load_config
+from ..config import OUTPUT_DIR, ROOT, load_config, save_local_config
 from ..storage import RUNS_DIR, load_json
 
 log = logging.getLogger("shorts.web")
 STATIC = Path(__file__).parent / "static"
 ENV_PATH = ROOT / ".env"
-CONFIG_PATH = ROOT / "config.yaml"
 
 KEY_FIELDS = {
     "TYPESAFE_API_KEY": "TypeSafe API key (judging, ranking, script QA)",
@@ -149,6 +147,7 @@ def _args(job: Job) -> SimpleNamespace:
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
         count=int(p.get("count") or 5), intro=p.get("intro"), outro=p.get("outro"),
+        scheduled=bool(p.get("scheduled")),
     )
 
 
@@ -212,16 +211,27 @@ class JobRequest(BaseModel):
     params: dict[str, Any] = {}
 
 
-@app.post("/api/jobs")
-def start_job(req: JobRequest) -> dict[str, Any]:
-    if req.kind not in COMMANDS:
-        raise HTTPException(400, f"unknown job kind {req.kind}")
+def submit_job(kind: str, params: dict[str, Any]) -> dict[str, Any] | None:
+    """Start a job unless one is running (returns None in that case)."""
+    if kind not in COMMANDS:
+        raise ValueError(f"unknown job kind {kind}")
     if not _JOB_LOCK.acquire(blocking=False):
-        raise HTTPException(409, f"a job is already running ({_CURRENT.kind if _CURRENT else '?'})")
-    job = Job(req.kind, req.params)
+        return None
+    job = Job(kind, params)
     JOBS[job.id] = job
     threading.Thread(target=_run_job, args=(job,), daemon=True).start()
     return job.to_dict()
+
+
+@app.post("/api/jobs")
+def start_job(req: JobRequest) -> dict[str, Any]:
+    try:
+        job = submit_job(req.kind, req.params)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if job is None:
+        raise HTTPException(409, f"a job is already running ({_CURRENT.kind if _CURRENT else '?'})")
+    return job
 
 
 @app.get("/api/jobs")
@@ -288,11 +298,7 @@ def update_settings(body: SettingsUpdate) -> dict[str, Any]:
     if updates:
         _write_env(updates)
     if body.config is not None:
-        current = load_config()
-        for section, values in body.config.items():
-            if isinstance(values, dict) and isinstance(current.get(section), dict):
-                current[section].update(values)
-        CONFIG_PATH.write_text(yaml.safe_dump(current, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        save_local_config({k: v for k, v in body.config.items() if isinstance(v, dict)})
     return get_settings()
 
 
@@ -312,6 +318,23 @@ async def upload_client_secrets(file: UploadFile) -> dict[str, Any]:
     (ROOT / "client_secrets.json").write_bytes(data)
     _write_env({"YOUTUBE_CLIENT_SECRETS": "client_secrets.json"})
     return get_settings()
+
+
+# ------------------------------------------------------------------------------------ scheduler
+
+from ..scheduler import Scheduler  # noqa: E402
+
+SCHEDULER = Scheduler(submit_job, lambda job_id: JOBS[job_id].status if job_id in JOBS else None)
+
+
+@app.on_event("startup")
+def _start_scheduler() -> None:
+    SCHEDULER.start()
+
+
+@app.get("/api/schedule")
+def get_schedule() -> dict[str, Any]:
+    return SCHEDULER.plan()
 
 
 # ------------------------------------------------------------------------------------ telegram
@@ -447,6 +470,7 @@ def status() -> dict[str, Any]:
         "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
         "music_tracks": len(get_music()),
         "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),
+        "schedule": {k: v for k, v in SCHEDULER.plan().items() if k in ("next", "done_today")} | {"enabled": bool(load_config().get("schedule", {}).get("enabled"))},
         "latest_run": runs[0] if runs else None,
         "outputs": len(list_outputs()),
         "job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None,

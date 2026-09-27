@@ -125,6 +125,28 @@ depend on a person or original footage, so expect a voiceover remake to underper
 5. `render.py` assembles everything with ffmpeg at 1080x1920 and mixes in background music: the
    track is looped to the video length, faded in and out, and ducked under the voice so words stay clear.
 
+## Run it on a schedule
+
+The console has a built-in scheduler (Settings -> Schedule). With it on, it spreads the configured
+number of Shorts evenly across your active hours (default 20 a day between 06:00 and midnight, one
+every 54 minutes), refreshes the trend analysis once a day, rotates through the top blueprints so
+formats and topics vary, avoids subjects used in recent videos, and sends every finished Short to
+Telegram. If the console was off, it runs the single most recent missed slot when it comes back,
+never the whole backlog. Runs and their status are listed on the Overview.
+
+The scheduler only runs while `python main.py web` is running. On Windows:
+
+```bash
+python main.py autostart install     # start the console at every logon (pythonw, no window)
+python main.py autostart status
+python main.py autostart remove
+```
+
+and set Windows power options so the machine does not sleep. `python main.py schedule` prints today's slots.
+
+Settings changed in the console are written to `config.local.yaml` (untracked), so `git pull` never
+conflicts with them; `config.yaml` holds the defaults.
+
 ## Intro and outro
 
 Every Short gets a short generated title card at the start (the video title over a motion

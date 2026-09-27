@@ -178,7 +178,7 @@ def cmd_produce(args) -> Path:
         try:
             script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
                                                 max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
-                                                backend=cfg.get("script_backend", "auto"))
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
         except RuntimeError as exc:
             sys.exit(f"Script writing failed: {exc}")
 
@@ -309,6 +309,18 @@ def cmd_telegram(args) -> None:
         _notify_telegram(out_dir, meta, force=True)
 
 
+def _recent_titles(limit: int = 20) -> list[str]:
+    """Titles of the last produced Shorts, so the writer does not repeat subjects."""
+    if not OUTPUT_DIR.exists():
+        return []
+    titles = []
+    for d in sorted((p for p in OUTPUT_DIR.iterdir() if p.is_dir()), reverse=True)[:limit]:
+        meta = load_json(d / "meta.json")
+        if meta and meta.get("title"):
+            titles.append(meta["title"])
+    return titles
+
+
 def _read_custom_script(args) -> str:
     text = getattr(args, "script_text", None) or ""
     path = getattr(args, "script_file", None)
@@ -422,6 +434,14 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("path", nargs="?", help="send: output/<dir> or its short.mp4")
     t.set_defaults(func=cmd_telegram)
 
+    s = sub.add_parser("schedule", help="show today's scheduled slots (the scheduler itself runs inside `web`)")
+    s.set_defaults(func=cmd_schedule)
+
+    a = sub.add_parser("autostart", help="Windows: start the console automatically at logon so the schedule runs")
+    a.add_argument("action", choices=["install", "remove", "status"])
+    a.add_argument("--port", type=int, default=8787)
+    a.set_defaults(func=cmd_autostart)
+
     w = sub.add_parser("web", help="start the local web console (keys, settings, runs, studio)")
     w.add_argument("--port", type=int, default=8787); w.add_argument("--host", default="127.0.0.1")
     w.set_defaults(func=cmd_web)
@@ -437,6 +457,49 @@ def cmd_music(args) -> None:
         credit = music.attribution_line(t)
         print(f"- {t['file']}  [{t['license']}] {t['title']}{' by ' + t['creator'] if t['creator'] else ''}"
               f"{'  (credit required)' if credit else ''}")
+
+
+def cmd_schedule(args) -> None:
+    from .scheduler import Scheduler
+    plan = Scheduler(lambda *_: None, lambda *_: None).plan()
+    cfg = plan["config"]
+    print(f"scheduler {'ENABLED' if cfg['enabled'] else 'disabled'}: {cfg['produces_per_day']} produce/day, "
+          f"{cfg['refresh_per_day']} refresh/day, window {cfg['start_hour']:02.0f}:00-{cfg['end_hour']:02.0f}:00, "
+          f"rotating {cfg['blueprints_to_rotate']} blueprints")
+    for slot in plan["today"]:
+        mark = "done" if slot["done"] else (("missed" if cfg["enabled"] else "past") if slot["past"] else "")
+        print(f"  {slot['time']}  {slot['kind']:<8} {mark}")
+    print("The schedule runs while `python main.py web` is running; use `autostart install` to keep it running.")
+
+
+TASK_NAME = "ShortsConsole"
+
+
+def cmd_autostart(args) -> None:
+    import platform
+    import subprocess
+
+    if platform.system() != "Windows":
+        sys.exit("autostart is implemented for Windows Task Scheduler; on macOS/Linux use launchd/systemd to run `python main.py web`.")
+    if args.action == "status":
+        r = subprocess.run(["schtasks", "/Query", "/TN", TASK_NAME], capture_output=True, text=True)
+        print(r.stdout.strip() if r.returncode == 0 else f"no '{TASK_NAME}' task installed")
+        return
+    if args.action == "remove":
+        r = subprocess.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True)
+        print(r.stdout.strip() or r.stderr.strip())
+        return
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    exe = pythonw if pythonw.exists() else Path(sys.executable)
+    main_py = ROOT / "main.py"
+    command = f'"{exe}" "{main_py}" web --port {args.port}'
+    r = subprocess.run(["schtasks", "/Create", "/SC", "ONLOGON", "/TN", TASK_NAME, "/TR", command, "/F", "/RL", "LIMITED"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"could not create the task: {r.stderr.strip() or r.stdout.strip()}")
+    print(f"Installed logon task '{TASK_NAME}': {command}")
+    print("It starts at your next logon. To start it now without logging out:  schtasks /Run /TN " + TASK_NAME)
+    print("The laptop must stay awake: set Windows power settings so it never sleeps while plugged in.")
 
 
 def cmd_setup_ffmpeg(args) -> Path:

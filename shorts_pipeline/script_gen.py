@@ -40,13 +40,15 @@ big on-screen captions. Rules:
 - Write for speech: contractions, plain words, no emojis, no markdown."""
 
 
-def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None) -> str:
+def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, avoid: list[str] | None = None) -> str:
     words = int(target_seconds * 2.6)
     exemplars = "\n".join(
         f"- Title: {e['title']!r}; opening transcript: {e.get('transcript', '')[:250]!r}"
         for e in blueprint.get("exemplars", [])
     ) or "- (none)"
     angle_line = f"Specific angle or subject to use: {angle}\n" if angle else "Pick a fresh, specific subject inside the topic.\n"
+    if avoid:
+        angle_line += "Recently made videos, do not repeat these subjects or angles:\n" + "\n".join(f"- {t}" for t in avoid[:20]) + "\n"
     return (
         f"Format: {blueprint['format']}\nTopic: {blueprint['topic']}\nHook style: {blueprint['hook_style']}\n"
         f"Why this works right now: {blueprint.get('why_it_works', '')}\n"
@@ -128,14 +130,15 @@ def pick_backend(preference: str = "auto") -> str:
 
 
 def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angle: str | None = None,
-                    max_attempts: int = 3, min_hook_score: float = 2.0, backend: str = "auto") -> dict[str, Any]:
+                    max_attempts: int = 3, min_hook_score: float = 2.0, backend: str = "auto",
+                    avoid_titles: list[str] | None = None) -> dict[str, Any]:
     backend = pick_backend(backend)
     log.info("script backend: %s", backend)
     client = anthropic.Anthropic() if backend == "api" else None
     feedback = ""
     best: dict[str, Any] | None = None
     for attempt in range(1, max_attempts + 1):
-        user_prompt = _prompt(blueprint, target_seconds, angle) + feedback
+        user_prompt = _prompt(blueprint, target_seconds, angle, avoid_titles) + feedback
         parsed = _draft_via_api(client, user_prompt) if client else _draft_via_claude_code(user_prompt)
         script = parsed.model_dump()
         script["backend"] = backend

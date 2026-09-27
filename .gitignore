@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 .agents/
 skills-lock.json
+config.local.yaml
