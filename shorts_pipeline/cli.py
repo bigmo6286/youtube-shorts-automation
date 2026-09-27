@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -472,34 +473,44 @@ def cmd_schedule(args) -> None:
     print("The schedule runs while `python main.py web` is running; use `autostart install` to keep it running.")
 
 
-TASK_NAME = "ShortsConsole"
+AUTOSTART_NAME = "ShortsConsole.vbs"
+
+
+def _startup_script() -> Path:
+    appdata = os.environ.get("APPDATA", "")
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / AUTOSTART_NAME
 
 
 def cmd_autostart(args) -> None:
+    """Per-user Startup folder entry (no admin rights needed) that launches the console hidden at logon."""
     import platform
-    import subprocess
 
     if platform.system() != "Windows":
-        sys.exit("autostart is implemented for Windows Task Scheduler; on macOS/Linux use launchd/systemd to run `python main.py web`.")
+        sys.exit("autostart is implemented for Windows; on macOS/Linux use launchd/systemd to run `python main.py web`.")
+    script = _startup_script()
     if args.action == "status":
-        r = subprocess.run(["schtasks", "/Query", "/TN", TASK_NAME], capture_output=True, text=True)
-        print(r.stdout.strip() if r.returncode == 0 else f"no '{TASK_NAME}' task installed")
+        print(f"installed: {script}" if script.exists() else "not installed")
         return
     if args.action == "remove":
-        r = subprocess.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True)
-        print(r.stdout.strip() or r.stderr.strip())
+        if script.exists():
+            script.unlink()
+            print(f"removed {script}")
+        else:
+            print("nothing to remove")
         return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = pythonw if pythonw.exists() else Path(sys.executable)
     main_py = ROOT / "main.py"
-    command = f'"{exe}" "{main_py}" web --port {args.port}'
-    r = subprocess.run(["schtasks", "/Create", "/SC", "ONLOGON", "/TN", TASK_NAME, "/TR", command, "/F", "/RL", "LIMITED"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        sys.exit(f"could not create the task: {r.stderr.strip() or r.stdout.strip()}")
-    print(f"Installed logon task '{TASK_NAME}': {command}")
-    print("It starts at your next logon. To start it now without logging out:  schtasks /Run /TN " + TASK_NAME)
-    print("The laptop must stay awake: set Windows power settings so it never sleeps while plugged in.")
+    # WScript.Shell.Run with window style 0 = hidden; pythonw avoids a console window as well
+    vbs = ('Set sh = CreateObject("WScript.Shell")\n'
+           f'sh.CurrentDirectory = "{ROOT}"\n'
+           f'sh.Run """{exe}"" ""{main_py}"" web --port {args.port}", 0, False\n')
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(vbs, encoding="utf-8")
+    print(f"Installed {script}")
+    print("The console now starts hidden at every logon. To start it right now without logging out, double-click that file")
+    print("or run:  wscript \"" + str(script) + "\"")
+    print("Keep the machine awake: Windows Settings -> System -> Power -> Sleep: Never (while plugged in).")
 
 
 def cmd_setup_ffmpeg(args) -> Path:
