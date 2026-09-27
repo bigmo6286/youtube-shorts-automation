@@ -34,6 +34,8 @@ KEY_FIELDS = {
     "PEXELS_API_KEY": "Pexels API key (stock footage backgrounds, optional)",
     "YOUTUBE_API_KEY": "YouTube Data API key (optional extra discovery source)",
     "TELEGRAM_BOT_TOKEN": "Telegram bot token from @BotFather (delivery of finished Shorts)",
+    "TOGETHER_API_KEY": "Together AI key (optional: FLUX images instead of the free generator)",
+    "OPENAI_API_KEY": "OpenAI key (optional: gpt-image-1 images instead of the free generator)",
 }
 PATH_FIELDS = {
     "TELEGRAM_CHAT_ID": "Telegram chat id to send finished Shorts to (use Find my chat ID below)",
@@ -495,6 +497,12 @@ def list_outputs() -> list[dict[str, Any]]:
     return out
 
 
+def _ai_images_on() -> bool:
+    from ..imagegen import available, settings as ai_settings
+    s = ai_settings()
+    return bool(s.get("enabled")) and s.get("mode") != "never" and available(s.get("provider"))
+
+
 @app.get("/api/status")
 def status() -> dict[str, Any]:
     values = _read_env()
@@ -506,6 +514,7 @@ def status() -> dict[str, Any]:
         "typesafe": bool(values.get("TYPESAFE_API_KEY")),
         "script_backend": "api" if values.get("ANTHROPIC_API_KEY") else ("claude_code" if values.get("CLAUDE_CODE_OAUTH_TOKEN") else None),
         "pexels": bool(values.get("PEXELS_API_KEY")),
+        "ai_images": _ai_images_on(),
         "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
         "music_tracks": len(get_music()),
         "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),

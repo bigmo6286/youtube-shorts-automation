@@ -41,6 +41,8 @@ def _slug_text(url: str) -> str:
 
 
 def search_videos(keyword: str) -> list[dict[str, Any]]:
+    if not env("PEXELS_API_KEY"):
+        return []
     key = f"v:{keyword.lower()}"
     cached = _SEARCH_CACHE.get(key)
     if cached is not None:
@@ -67,6 +69,8 @@ def search_videos(keyword: str) -> list[dict[str, Any]]:
 
 
 def search_photos(keyword: str) -> list[dict[str, Any]]:
+    if not env("PEXELS_API_KEY"):
+        return []
     key = f"p:{keyword.lower()}"
     cached = _SEARCH_CACHE.get(key)
     if cached is not None:
@@ -181,6 +185,11 @@ def photo_clip(photo_url: str, photo_id: str, seconds: float, out_path: Path) ->
     img = _download(photo_url, PEXELS_CACHE / f"photo_{photo_id}.jpg")
     if not img:
         return None
+    return image_clip(img, seconds, out_path)
+
+
+def image_clip(img: Path, seconds: float, out_path: Path) -> Path | None:
+    """Slow Ken Burns zoom over any local image (stock photo or AI-generated)."""
     frames = int((seconds + 0.5) * 30)
     vf = (f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
           f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,format=yuv420p")
@@ -217,6 +226,15 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
     """Best matching background for one line. Returns (clip path, note for the log)."""
     # Pass 1: the line's own term, literal match. Pass 2: the video's subject term, same-subject match.
     used = used if used is not None else set()
+    from . import imagegen
+
+    ai = imagegen.settings()
+    ai_on = bool(ai.get("enabled")) and ai.get("mode") != "never" and imagegen.available()
+    if ai_on and ai.get("mode") == "always":
+        img = imagegen.generate(line_text, keyword, fallback_keyword)
+        clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
+        if clip:
+            return clip, f"AI image ({ai['provider']}) for '{keyword}'"
     attempts = [(keyword, True)]
     if fallback_keyword:
         attempts.append((fallback_keyword, False))
@@ -234,6 +252,11 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
             if clip:
                 used.add(pick["id"])
                 return clip, f"photo '{pick['description'][:60]}' ({fit:.0%} {'literal' if strict else 'same-subject'} fit, '{kw}')"
+    if ai_on:
+        img = imagegen.generate(line_text, keyword, fallback_keyword)
+        clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
+        if clip:
+            return clip, f"AI image ({ai['provider']}) for '{keyword}' (nothing on Pexels matched)"
     clip = generated_background(work_dir / f"bg_{index}.mp4", seconds + 0.5, seed=index)
     return clip, f"generated background (nothing on Pexels matched '{keyword}' or '{fallback_keyword}')"
 
@@ -241,10 +264,17 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
 def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_seconds: float,
                      source: str, work_dir: Path) -> list[dict[str, Any]]:
     """One background segment per script line (or one generated clip for the whole video)."""
+    from . import imagegen
+
     use_pexels = source in ("auto", "pexels") and bool(env("PEXELS_API_KEY"))
-    if not use_pexels:
+    ai = imagegen.settings()
+    use_ai = source != "generated" and bool(ai.get("enabled")) and ai.get("mode") != "never" and imagegen.available()
+    if not use_pexels and not use_ai:
         clip = generated_background(work_dir / "bg.mp4", total_seconds + 0.5)
         return [{"path": str(clip), "start": 0.0, "end": total_seconds}]
+    if not use_pexels:
+        # no Pexels key: every line gets an AI image (the search steps are skipped inside footage_for_line)
+        _SEARCH_CACHE.set("v:__nopexels__", [])
 
     chunks = [script["hook"], *[ln["text"] for ln in script["lines"]], script["cta"]]
     first_kw = script["lines"][0]["visual_keyword"] if script["lines"] else script.get("title", "abstract")

@@ -51,7 +51,7 @@ async function loadStatus() {
     card("ffmpeg", !!s.ffmpeg, s.ffmpeg ? "ready" : `missing <button id="installffmpeg">Install ffmpeg</button>`),
     card("TypeSafe", s.typesafe, s.typesafe ? "connected" : "key missing"),
     card("Script writer", !!s.script_backend, s.script_backend === "api" ? "Anthropic API" : s.script_backend === "claude_code" ? "Claude subscription" : "not configured"),
-    card("Backgrounds", s.pexels, s.pexels ? "Pexels footage" : "generated gradient"),
+    card("Backgrounds", s.pexels || s.ai_images, s.pexels ? `Pexels footage${s.ai_images ? " + AI images" : ""}` : s.ai_images ? "AI images" : "generated gradient"),
     card("Music", s.music_tracks > 0, s.music_tracks > 0 ? `${s.music_tracks} track${s.music_tracks === 1 ? "" : "s"}` : "no tracks (Settings)"),
     card("Telegram", s.telegram, s.telegram ? "delivery on" : "not connected"),
     card("YouTube upload", s.youtube_upload, s.youtube_upload ? "ready" : "client secrets missing"),
@@ -410,6 +410,10 @@ async function loadSettings() {
   const tgChat = s.paths.find((p) => p.name === "TELEGRAM_CHAT_ID");
   $("#tgstatus").textContent = tgKey && tgKey.set ? (tgChat && tgChat.value ? `Configured for chat ${tgChat.value}.` : "Token saved; now find your chat id.") : "No bot token yet.";
   loadCaptions();
+  const ai = c.production.ai_images || {};
+  set("production.ai_images.mode", ai.enabled === false ? "never" : (ai.mode || "fallback"));
+  set("production.ai_images.provider", ai.provider || "pollinations");
+  set("production.ai_images.style", ai.style || "");
   const sc = c.schedule || {};
   $(`[name="schedule.enabled"]`).checked = !!sc.enabled;
   set("schedule.produces_per_day", sc.produces_per_day ?? 20); set("schedule.refresh_per_day", sc.refresh_per_day ?? 1);
@@ -441,6 +445,8 @@ $("#cfgform").addEventListener("submit", async (ev) => {
       music: { default: g("production.music.default"), volume_db: num("production.music.volume_db"),
         fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked },
       captions: capRead(),
+      ai_images: { enabled: g("production.ai_images.mode") !== "never", mode: g("production.ai_images.mode"),
+        provider: g("production.ai_images.provider"), style: g("production.ai_images.style") },
       intro: { ...(state.settings.config.production.intro || {}), enabled: $(`[name="production.intro.enabled"]`).checked,
         text: g("production.intro.text") || "{title}", seconds: num("production.intro.seconds") || 1.5 },
       outro: { ...(state.settings.config.production.outro || {}), enabled: $(`[name="production.outro.enabled"]`).checked,

@@ -129,6 +129,12 @@ depend on a person or original footage, so expect a voiceover remake to underper
    subject-level term, then Pexels photos (with a slow zoom), and only then the generated background.
    The activity log says what was chosen for every line and why.
 
+When Pexels has nothing that fits a line, an **AI-generated image** is made from the line's footage
+term and the sentence itself, then shown with the same slow zoom. The default generator is
+Pollinations (free, no key, about five seconds per image); with a key you can switch to Together AI
+(FLUX) or OpenAI (gpt-image-1) in Settings, and "for every line" turns stock footage off entirely.
+Images are cached under `data/cache/aiimg`.
+
 Caption looks are presets plus overrides (Settings -> Captions, with a live preview): bold Impact,
 clean sans, boxed word, pop, minimal, neon; any font, size, colours, outline, highlight mode, position
 and words per caption. Extra fonts go in `assets/fonts`.
