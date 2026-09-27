@@ -161,9 +161,10 @@ class Scheduler:
                 return job is not None
             n = max(1, min(int(cfg["blueprints_to_rotate"]), len(blueprints)))
             idx = int(self.state.get("next_blueprint", 0)) % n
-            self.state["next_blueprint"] = (idx + 1) % n
             params = {"run": run_dir.name, "blueprint": idx + 1, "music": "random", "scheduled": True}
             job = self._submit("produce", params)
+            if job is not None:                # advance the rotation only when the job really started
+                self.state["next_blueprint"] = (idx + 1) % n
         if job is None:
             return False                       # another job is running; retry on the next tick
         self.state["history"].append({"kind": kind, "slot": slot.strftime("%Y-%m-%d %H:%M"),
