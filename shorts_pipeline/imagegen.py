@@ -139,56 +139,62 @@ HF_DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell"
 
 
 def _huggingface(prompt: str, dest: Path) -> Path:
-    """Hugging Face serverless Inference API (free token, small monthly allowance). Handles the
-    'model is loading' 503 by waiting, and rate limits by backing off."""
+    """Hugging Face Inference Providers via the official client: `provider="auto"` routes the model to
+    whichever partner serves it (fal-ai, nscale, ...) and bills the monthly HF credits. Errors carry the
+    HTTP status, so a 402 (credits exhausted) or 429 (rate limit) is recognised by _looks_like_limit."""
+    from huggingface_hub import InferenceClient
+
     model = settings().get("model") or HF_DEFAULT_MODEL
-    headers = {"Authorization": f"Bearer {env('HF_TOKEN')}", "Accept": "image/png"}
-    body = {"inputs": prompt, "parameters": {"width": 768, "height": 1344, "num_inference_steps": 4}}
-    urls = [f"https://router.huggingface.co/hf-inference/models/{model}",
-            f"https://api-inference.huggingface.co/models/{model}"]
-    last = ""
-    for url in urls:
-        for attempt in range(4):
-            r = requests.post(url, headers=headers, json=body, timeout=180)
-            ctype = r.headers.get("content-type", "")
-            if r.status_code == 200 and ctype.startswith("image/"):
-                dest.write_bytes(r.content)
-                return dest
-            last = f"{r.status_code} {r.text[:160]}"
-            if r.status_code == 503:                       # cold model: the body says how long to wait
-                try:
-                    wait = float(r.json().get("estimated_time", 15))
-                except Exception:  # noqa: BLE001
-                    wait = 15.0
-                log.info("huggingface model loading, waiting %.0fs", min(wait, 60))
-                time.sleep(min(wait, 60))
-                continue
-            if r.status_code == 429:
-                time.sleep(10 * (attempt + 1))
-                continue
-            if r.status_code in (400, 401, 402, 403):     # bad token, no credit, gated model: no point retrying
-                raise RuntimeError(f"huggingface {last}")
-            break
-    raise RuntimeError(f"huggingface failed: {last}")
+    client = InferenceClient(api_key=env("HF_TOKEN"), provider="auto", timeout=180)
+    try:
+        image = client.text_to_image(prompt, model=model, width=768, height=1344, num_inference_steps=4)
+    except Exception as exc:  # noqa: BLE001 - normalise so the status code is visible in the message
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        raise RuntimeError(f"huggingface {status or ''} {str(exc)[:200]}".strip()) from exc
+    image.convert("RGB").save(dest, "JPEG", quality=92)
+    return dest
 
 
 PROVIDERS = {"pollinations": _pollinations, "together": _together, "openai": _openai, "huggingface": _huggingface}
 
 
+_PAUSED_UNTIL: dict[str, float] = {}     # provider -> time until which we skip it (after a limit / credit error)
+PAUSE_SECONDS = 3600
+
+
+def _looks_like_limit(exc: Exception) -> bool:
+    """Quota / credit / rate-limit errors (worth pausing the provider), not connection failures."""
+    msg = str(exc).lower()
+    return any(k in msg for k in ("429", "402", "rate limit", "rate-limit", "quota", "credit", "too many requests",
+                                  "insufficient", "billing", "monthly included"))
+
+
 def generate(line_text: str, keyword: str, subject: str = "") -> Path | None:
-    """Return a cached or freshly generated portrait image for this line, or None on failure."""
+    """Return a cached or freshly generated portrait image for this line, or None on failure.
+    The configured provider is tried first; if it fails (limits, credit, outage) the free keyless
+    generator takes over, and a provider that hit a limit is skipped for an hour."""
     cfg = settings()
-    provider = cfg["provider"] if available(cfg["provider"]) else "pollinations"
     prompt = build_prompt(line_text, keyword, subject, cfg.get("style") or DEFAULT_STYLE)
-    dest = _cache_path(prompt, provider)
-    if dest.exists() and dest.stat().st_size > 1000:
+    order = []
+    if available(cfg["provider"]) and _PAUSED_UNTIL.get(cfg["provider"], 0) < time.time():
+        order.append(cfg["provider"])
+    if "pollinations" not in order:
+        order.append("pollinations")
+    for provider in order:
+        dest = _cache_path(prompt, provider)
+        if dest.exists() and dest.stat().st_size > 1000:
+            return dest
+        t = time.time()
+        try:
+            PROVIDERS[provider](prompt, dest)
+        except Exception as exc:  # noqa: BLE001
+            dest.unlink(missing_ok=True)
+            if provider != "pollinations" and _looks_like_limit(exc):
+                _PAUSED_UNTIL[provider] = time.time() + PAUSE_SECONDS
+                log.warning("AI image provider %s hit a limit (%s); using the free generator for the next hour", provider, str(exc)[:120])
+            else:
+                log.warning("AI image (%s) failed for %r: %s", provider, keyword, str(exc)[:160])
+            continue
+        log.info("AI image (%s) for %r in %.1fs", provider, keyword, time.time() - t)
         return dest
-    t = time.time()
-    try:
-        PROVIDERS[provider](prompt, dest)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("AI image (%s) failed for %r: %s", provider, keyword, exc)
-        dest.unlink(missing_ok=True)
-        return None
-    log.info("AI image (%s) for %r in %.1fs", provider, keyword, time.time() - t)
-    return dest
+    return None
