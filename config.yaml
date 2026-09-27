@@ -40,6 +40,19 @@ production:
   words_per_caption: 3        # caption chunk size
   font: Impact
   font_size: 96
+  intro:
+    enabled: true
+    mode: card                # card = generated title card; clip = your own assets/intro.mp4 (muted, music plays over it)
+    text: "{title}"           # {title} is replaced by the video title
+    seconds: 1.5
+    clip: assets/intro.mp4
+  outro:
+    enabled: true
+    mode: card
+    text: "Follow for more"
+    handle: ""                # e.g. "@yourchannel", shown under the outro text
+    seconds: 2.0
+    clip: assets/outro.mp4
   music:
     default: random           # none | random | part of a file name or title in assets/music
     volume_db: -18            # music level relative to the voice; -14 louder, -22 quieter
@@ -49,6 +62,10 @@ production:
   script_backend: auto        # auto | api | claude_code  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription)
   script_max_attempts: 3      # regenerate if TypeSafe QA says the hook is weak
   script_min_hook_score: 2    # 0-3, see judge.SCRIPT_QA_QUESTIONS
+
+notifications:
+  telegram:
+    on_produce: true          # send every finished Short (video + title + description + hashtags) to TELEGRAM_CHAT_ID
 
 upload:
   privacy: private            # private | unlisted | public

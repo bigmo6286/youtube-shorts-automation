@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import analyze, fetch, judge, rank
-from .config import OUTPUT_DIR, has_typesafe, load_config
+from .config import OUTPUT_DIR, ROOT, has_typesafe, load_config
 from .storage import RUNS_DIR, latest_run_dir, load_json, new_run_dir, now_iso, save_json
 
 log = logging.getLogger("shorts")
@@ -194,11 +194,21 @@ def cmd_produce(args) -> Path:
 
     voice_path = out_dir / "voice.mp3"
     words = tts.synthesize(script["full_text"], voice_path, voice=cfg["voice"], rate=cfg["voice_rate"])
-    total = max(render.probe_duration(voice_path), words[-1]["end"] if words else 1.0) + 0.4
+    body_seconds = max(render.probe_duration(voice_path), words[-1]["end"] if words else 1.0) + 0.4
     save_json(out_dir / "words.json", words)
+
+    intro = _card(cfg.get("intro") or {}, "intro", script, out_dir, cfg, enabled=getattr(args, "intro", None))
+    outro = _card(cfg.get("outro") or {}, "outro", script, out_dir, cfg, enabled=getattr(args, "outro", None))
+    intro_seconds = intro["seconds"] if intro else 0.0
+    total = intro_seconds + body_seconds + (outro["seconds"] if outro else 0.0)
+    log.info("timeline: intro %.1fs + body %.1fs + outro %.1fs = %.1fs", intro_seconds, body_seconds,
+             outro["seconds"] if outro else 0.0, total)
+
+    # Captions are burned onto the body stream before the intro is concatenated in front of it, so their
+    # clock is body-local: no offset here (the intro card carries its own subtitle file).
     ass_path = captions.write_ass(words, out_dir / "captions.ass", words_per_caption=cfg["words_per_caption"],
                                   full_text=script["full_text"], font=cfg["font"], font_size=cfg["font_size"])
-    segments = footage.plan_backgrounds(script, words, total, cfg["background_source"], out_dir)
+    segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir)
 
     music_cfg = dict(cfg.get("music") or {})
     if "music_volume_db" in cfg and "volume_db" not in music_cfg:      # older config.yaml
@@ -215,16 +225,88 @@ def cmd_produce(args) -> Path:
     video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
                           music_path=Path(track["path"]) if track else None,
                           music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
-                          fade_seconds=float(music_cfg.get("fade_seconds", 1.5)))
-    save_json(out_dir / "meta.json", {"run": run_name, "blueprint": blueprint, "video": str(video),
-                                      "title": script["title"], "description": description,
-                                      "hashtags": script["hashtags"], "duration": total,
-                                      "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
-                                      "mode": "custom" if script.get("backend") == "custom" else "blueprint"})
+                          fade_seconds=float(music_cfg.get("fade_seconds", 1.5)), intro=intro, outro=outro)
+    meta = {"run": run_name, "blueprint": blueprint, "video": str(video),
+            "title": script["title"], "description": description,
+            "hashtags": script["hashtags"], "duration": total,
+            "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
+            "intro": bool(intro), "outro": bool(outro),
+            "mode": "custom" if script.get("backend") == "custom" else "blueprint"}
+    save_json(out_dir / "meta.json", meta)
     print(f"\nRendered {video}  ({total:.1f}s)")
     if args.upload:
         _upload(out_dir)
+    _notify_telegram(out_dir, meta)
     return out_dir
+
+
+def _card(card_cfg: dict, kind: str, script: dict, out_dir: Path, cfg: dict, *, enabled: bool | None) -> dict | None:
+    """Build the intro or outro: a generated title card (default) or the user's own clip from assets/."""
+    from . import captions, footage, render
+
+    on = card_cfg.get("enabled", True) if enabled is None else enabled
+    if not on:
+        return None
+    seconds = float(card_cfg.get("seconds", 1.5 if kind == "intro" else 2.0))
+    if card_cfg.get("mode", "card") == "clip":
+        clip = Path(card_cfg.get("clip") or f"assets/{kind}.mp4")
+        if not clip.is_absolute():
+            clip = ROOT / clip
+        if not clip.exists():
+            log.warning("%s clip %s not found; using a generated card instead", kind, clip)
+        else:
+            return {"path": str(clip), "seconds": min(seconds, render.probe_duration(clip)) if seconds > 0 else render.probe_duration(clip), "ass": None}
+    text = (card_cfg.get("text") or ("{title}" if kind == "intro" else "Follow for more")).replace("{title}", script["title"])
+    sub = (card_cfg.get("sub_text") or ("" if kind == "intro" else card_cfg.get("handle", ""))).replace("{title}", script["title"])
+    bg = footage.generated_background(out_dir / f"{kind}_bg.mp4", seconds + 0.5, seed=3 if kind == "intro" else 1)
+    ass = captions.write_card_ass(text, seconds, out_dir / f"{kind}.ass", sub_text=sub, font=cfg["font"], font_size=cfg["font_size"])
+    return {"path": str(bg), "seconds": seconds, "ass": str(ass)}
+
+
+def _notify_telegram(out_dir: Path, meta: dict, *, force: bool = False) -> None:
+    from . import notify
+
+    tcfg = (load_config().get("notifications") or {}).get("telegram") or {}
+    if not force and not tcfg.get("on_produce", True):
+        return
+    if not notify.telegram_configured():
+        if force:
+            sys.exit("Telegram is not configured: add the bot token and chat id in Settings.")
+        return
+    try:
+        note = f"New Short ready ({meta.get('duration', 0):.0f}s)" + (f" · https://youtube.com/shorts/{meta['youtube_id']}" if meta.get("youtube_id") else "")
+        notify.send_short(Path(meta["video"]), meta, note=note)
+        print("Sent to Telegram.")
+    except Exception as exc:  # noqa: BLE001 - delivery must never fail the render
+        log.error("Telegram delivery failed: %s", exc)
+        if force:
+            sys.exit(f"Telegram delivery failed: {exc}")
+
+
+def cmd_telegram(args) -> None:
+    from . import notify
+
+    if args.action == "test":
+        if not notify.telegram_configured():
+            sys.exit("Telegram is not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
+        notify.send_message("Shorts console: Telegram is connected. New videos will arrive here with their title, description and hashtags.")
+        print("Test message sent.")
+    elif args.action == "discover":
+        try:
+            chats = notify.discover_chats()
+        except Exception as exc:  # noqa: BLE001
+            sys.exit(f"Could not read chats: {exc}")
+        if not chats:
+            print("No chats found yet. Send your bot any message in Telegram, then run this again.")
+        for c in chats:
+            print(f"- chat_id {c['id']}  ({c['type']}) {c['name']}")
+    elif args.action == "send":
+        target = Path(args.path)
+        out_dir = target if target.is_dir() else target.parent
+        meta = load_json(out_dir / "meta.json")
+        if not meta:
+            sys.exit(f"No meta.json in {out_dir}")
+        _notify_telegram(out_dir, meta, force=True)
 
 
 def _read_custom_script(args) -> str:
@@ -311,6 +393,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--hashtags", help="comma separated, for --script-file")
     pr.add_argument("--keywords", help="comma separated stock-footage search terms, for --script-file")
     pr.add_argument("--music", help="none | random | part of a track name (default from config.yaml)")
+    pr.add_argument("--no-intro", dest="intro", action="store_false", default=None, help="skip the intro card")
+    pr.add_argument("--no-outro", dest="outro", action="store_false", default=None, help="skip the outro card")
     pr.add_argument("--upload", action="store_true")
     pr.set_defaults(func=cmd_produce)
 
@@ -332,6 +416,11 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--query", default="lofi chill", help="fetch: what to search for on Openverse (CC0 / CC-BY only)")
     m.add_argument("--count", type=int, default=5)
     m.set_defaults(func=cmd_music)
+
+    t = sub.add_parser("telegram", help="Telegram delivery: test, discover chat ids, or send a produced Short")
+    t.add_argument("action", choices=["test", "discover", "send"])
+    t.add_argument("path", nargs="?", help="send: output/<dir> or its short.mp4")
+    t.set_defaults(func=cmd_telegram)
 
     w = sub.add_parser("web", help="start the local web console (keys, settings, runs, studio)")
     w.add_argument("--port", type=int, default=8787); w.add_argument("--host", default="127.0.0.1")

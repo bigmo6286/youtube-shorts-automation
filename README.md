@@ -125,6 +125,28 @@ depend on a person or original footage, so expect a voiceover remake to underper
 5. `render.py` assembles everything with ffmpeg at 1080x1920 and mixes in background music: the
    track is looped to the video length, faded in and out, and ducked under the voice so words stay clear.
 
+## Intro and outro
+
+Every Short gets a short generated title card at the start (the video title over a motion
+background, 1.5 s) and an end card ("Follow for more" plus your handle, 2 s). Music runs across the
+whole video; the voice and captions start after the intro. Text, seconds and on/off are in Settings
+or `config.yaml -> production.intro / outro`. To use your own branded clips, put `assets/intro.mp4`
+and `assets/outro.mp4` in the project and set `mode: clip`; clips are muted and the music plays over
+them. `produce --no-intro --no-outro` skips them for one video.
+
+## Telegram delivery
+
+1. In Telegram, talk to **@BotFather**, create a bot, copy its token into Settings.
+2. Send your new bot any message, then click **Find my chat ID** in Settings (or run
+   `python main.py telegram discover`). To deliver into a group or channel, add the bot there first
+   and send a message in it.
+3. **Send test message** confirms the link. With "send automatically" on (the default), every finished
+   Short arrives as a video with the title, description and hashtags as its caption, ready to copy into
+   YouTube. Any card in Studio also has a **Send to Telegram** button, and there is
+   `python main.py telegram send output/<dir>`.
+
+Telegram bots can send videos up to 50 MB; a typical Short here is 3-6 MB.
+
 ## Background music
 
 Tracks live in `assets/music/`. Fill it from the console's Settings tab (upload your own files, or

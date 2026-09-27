@@ -53,6 +53,7 @@ async function loadStatus() {
     card("Script writer", !!s.script_backend, s.script_backend === "api" ? "Anthropic API" : s.script_backend === "claude_code" ? "Claude subscription" : "not configured"),
     card("Backgrounds", s.pexels, s.pexels ? "Pexels footage" : "generated gradient"),
     card("Music", s.music_tracks > 0, s.music_tracks > 0 ? `${s.music_tracks} track${s.music_tracks === 1 ? "" : "s"}` : "no tracks (Settings)"),
+    card("Telegram", s.telegram, s.telegram ? "delivery on" : "not connected"),
     card("YouTube upload", s.youtube_upload, s.youtube_upload ? "ready" : "client secrets missing"),
     card("Latest run", !!s.latest_run, s.latest_run ? `${s.latest_run.shorts} Shorts, ${s.latest_run.blueprints} blueprints` : "none yet"),
     card("Produced", s.outputs > 0, `${s.outputs} Shorts`),
@@ -233,6 +234,7 @@ async function loadOutputs() {
           <button data-copy="title" data-dir="${o.dir}">Copy title</button>
           <button data-copy="desc" data-dir="${o.dir}">Copy description + hashtags</button>
           <button data-copy="all" data-dir="${o.dir}">Copy all for upload</button>
+          <button data-telegram="${o.dir}">Send to Telegram</button>
           ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
         </div>
         <div class="muted small">${esc(o.folder)}</div>
@@ -240,6 +242,7 @@ async function loadOutputs() {
           : `<button data-upload="${o.dir}">Upload to YouTube</button>`}
       </div></div>`).join("") || `<p class="muted">Nothing produced yet.</p>`;
   $$("button[data-upload]").forEach((b) => b.addEventListener("click", () => startJob("upload", { path: `output/${b.dataset.upload}` })));
+  $$("button[data-telegram]").forEach((b) => b.addEventListener("click", () => startJob("telegram", { action: "send", path: `output/${b.dataset.telegram}` })));
   $$("button[data-copy]").forEach((b) => b.addEventListener("click", () => {
     const o = state.outputs[b.dataset.dir]; const kind = b.dataset.copy;
     if (kind === "title") copyText(o.title, "Title");
@@ -247,6 +250,25 @@ async function loadOutputs() {
     else copyText(uploadPack(o), "Title, description and hashtags");
   }));
 }
+
+// ---------------------------------------------------------------- telegram
+$("#tgdiscover").addEventListener("click", async () => {
+  try {
+    const chats = await api("/api/telegram/discover");
+    if (!chats.length) return toast("No chats yet: send your bot a message in Telegram, then try again", true);
+    const chosen = chats[0];
+    $(`input[name="TELEGRAM_CHAT_ID"]`).value = chosen.id;
+    await api("/api/settings", { method: "POST", body: JSON.stringify({ paths: { TELEGRAM_CHAT_ID: chosen.id } }) });
+    $("#tgstatus").textContent = chats.length === 1 ? `Chat id ${chosen.id} (${chosen.name || chosen.type}) saved.`
+      : `Saved ${chosen.id} (${chosen.name || chosen.type}). Others seen: ${chats.slice(1).map((c) => `${c.id} ${c.name || c.type}`).join(", ")}. Change the field above if needed.`;
+    toast("Chat id saved"); loadStatus();
+  } catch (e) { toast(e.message, true); }
+});
+$("#tgtest").addEventListener("click", () => startJob("telegram", { action: "test" }));
+$("#tg-onproduce").addEventListener("change", async (ev) => {
+  try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config: { notifications: { telegram: { on_produce: ev.target.checked } } } }) }); toast(ev.target.checked ? "Automatic Telegram delivery on" : "Automatic Telegram delivery off"); }
+  catch (e) { toast(e.message, true); }
+});
 
 // ---------------------------------------------------------------- music library
 async function loadMusic() {
@@ -323,6 +345,16 @@ async function loadSettings() {
   set("discovery.hashtags", (c.discovery.hashtags || []).join(", "));
   set("discovery.max_age_days", c.discovery.max_age_days); set("discovery.channels_to_follow", c.discovery.channels_to_follow); set("discovery.workers", c.discovery.workers);
   Object.entries(c.ranking.weights || {}).forEach(([k, v]) => set(`ranking.weights.${k}`, v));
+  const tg = (c.notifications || {}).telegram || {};
+  $("#tg-onproduce").checked = tg.on_produce !== false;
+  const tgKey = s.keys.find((k) => k.name === "TELEGRAM_BOT_TOKEN");
+  const tgChat = s.paths.find((p) => p.name === "TELEGRAM_CHAT_ID");
+  $("#tgstatus").textContent = tgKey && tgKey.set ? (tgChat && tgChat.value ? `Configured for chat ${tgChat.value}.` : "Token saved; now find your chat id.") : "No bot token yet.";
+  const intro = c.production.intro || {}, outro = c.production.outro || {};
+  $(`[name="production.intro.enabled"]`).checked = intro.enabled !== false;
+  set("production.intro.text", intro.text ?? "{title}"); set("production.intro.seconds", intro.seconds ?? 1.5);
+  $(`[name="production.outro.enabled"]`).checked = outro.enabled !== false;
+  set("production.outro.text", outro.text ?? "Follow for more"); set("production.outro.handle", outro.handle ?? ""); set("production.outro.seconds", outro.seconds ?? 2);
   const m = c.production.music || {};
   set("production.music.default", m.default === "none" ? "none" : "random");
   set("production.music.volume_db", m.volume_db ?? c.production.music_volume_db ?? -18);
@@ -343,7 +375,11 @@ $("#cfgform").addEventListener("submit", async (ev) => {
     production: { voice: g("production.voice"), target_seconds: num("production.target_seconds"),
       background_source: g("production.background_source"), script_backend: g("production.script_backend"),
       music: { default: g("production.music.default"), volume_db: num("production.music.volume_db"),
-        fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked } },
+        fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked },
+      intro: { ...(state.settings.config.production.intro || {}), enabled: $(`[name="production.intro.enabled"]`).checked,
+        text: g("production.intro.text") || "{title}", seconds: num("production.intro.seconds") || 1.5 },
+      outro: { ...(state.settings.config.production.outro || {}), enabled: $(`[name="production.outro.enabled"]`).checked,
+        text: g("production.outro.text") || "Follow for more", handle: g("production.outro.handle"), seconds: num("production.outro.seconds") || 2 } },
     upload: { privacy: g("upload.privacy") },
   };
   try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); }

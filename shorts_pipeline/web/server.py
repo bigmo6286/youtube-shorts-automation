@@ -35,8 +35,10 @@ KEY_FIELDS = {
     "CLAUDE_CODE_OAUTH_TOKEN": "Claude subscription token from `claude setup-token`",
     "PEXELS_API_KEY": "Pexels API key (stock footage backgrounds, optional)",
     "YOUTUBE_API_KEY": "YouTube Data API key (optional extra discovery source)",
+    "TELEGRAM_BOT_TOKEN": "Telegram bot token from @BotFather (delivery of finished Shorts)",
 }
 PATH_FIELDS = {
+    "TELEGRAM_CHAT_ID": "Telegram chat id to send finished Shorts to (use Find my chat ID below)",
     "FFMPEG_DIR": "Folder containing ffmpeg.exe and ffprobe.exe (optional, auto-detected or auto-installed)",
     "CLAUDE_CODE_BIN": "Path to claude.exe (optional, auto-detected)",
     "YOUTUBE_CLIENT_SECRETS": "OAuth client secrets file for uploads",
@@ -146,14 +148,14 @@ def _args(job: Job) -> SimpleNamespace:
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
-        count=int(p.get("count") or 5),
+        count=int(p.get("count") or 5), intro=p.get("intro"), outro=p.get("outro"),
     )
 
 
 COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
-    "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music,
+    "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
 }
 
 
@@ -312,6 +314,17 @@ async def upload_client_secrets(file: UploadFile) -> dict[str, Any]:
     return get_settings()
 
 
+# ------------------------------------------------------------------------------------ telegram
+
+@app.get("/api/telegram/discover")
+def telegram_discover() -> list[dict[str, Any]]:
+    from ..notify import discover_chats
+    try:
+        return discover_chats()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+
+
 # ------------------------------------------------------------------------------------ music
 
 @app.get("/api/music")
@@ -409,6 +422,7 @@ def list_outputs() -> list[dict[str, Any]]:
             "youtube_id": meta.get("youtube_id"),
             "mode": meta.get("mode", "blueprint"),
             "music": meta.get("music"),
+            "intro": meta.get("intro"), "outro": meta.get("outro"),
             "folder": str(d),
             "script_text": (script or {}).get("full_text"),
             "backend": (script or {}).get("backend"),
@@ -432,6 +446,7 @@ def status() -> dict[str, Any]:
         "pexels": bool(values.get("PEXELS_API_KEY")),
         "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
         "music_tracks": len(get_music()),
+        "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),
         "latest_run": runs[0] if runs else None,
         "outputs": len(list_outputs()),
         "job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None,

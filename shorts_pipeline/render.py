@@ -26,30 +26,60 @@ def probe_channels(path: Path) -> int:
     return int(streams[0].get("channels") or 2)
 
 
+def _vchain(idx: int, length: float, label: str) -> str:
+    return (f"[{idx}:v]trim=duration={length:.3f},setpts=PTS-STARTPTS,"
+            f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=30,format=yuv420p,setsar=1[{label}]")
+
+
 def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out_path: Path, *,
            total_seconds: float, music_path: Path | None = None, music_volume_db: float = -18.0,
-           duck: bool = True, fade_seconds: float = 1.5) -> Path:
+           duck: bool = True, fade_seconds: float = 1.5,
+           intro: dict[str, Any] | None = None, outro: dict[str, Any] | None = None) -> Path:
     """Segments are {path, start, end}; each is trimmed/looped to its slot, scaled and cropped to 9:16.
-    Music (optional) is looped to the video length, faded in and out, and ducked under the voice."""
+    Music (optional) is looped to the video length, faded in and out, and ducked under the voice.
+    intro / outro are {path, seconds, ass?}: a card or clip placed before / after the body; the voice is
+    delayed by the intro and `total_seconds` must already include both. Clips are muted (music plays over them)."""
     work = out_path.parent.resolve()
     inputs: list[str] = []
     filters: list[str] = []
-    for i, seg in enumerate(segments):
+    idx = 0
+    parts: list[str] = []
+
+    if intro:
+        inputs += ["-stream_loop", "-1", "-i", str(Path(intro["path"]).resolve())]
+        filters.append(_vchain(idx, intro["seconds"], "vintro_raw"))
+        filters.append(f"[vintro_raw]subtitles={Path(intro['ass']).name}[vintro]" if intro.get("ass") else "[vintro_raw]null[vintro]")
+        parts.append("[vintro]")
+        idx += 1
+
+    body_labels = []
+    for seg in segments:
         length = max(0.5, seg["end"] - seg["start"])
         inputs += ["-stream_loop", "-1", "-i", str(Path(seg["path"]).resolve())]
-        filters.append(
-            f"[{i}:v]trim=duration={length:.3f},setpts=PTS-STARTPTS,"
-            f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
-            f"fps=30,format=yuv420p,setsar=1[v{i}]"
-        )
-    n = len(segments)
-    concat = "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[vcat]"
-    filters.append(concat)
+        filters.append(_vchain(idx, length, f"v{idx}"))
+        body_labels.append(f"[v{idx}]")
+        idx += 1
+    filters.append("".join(body_labels) + f"concat=n={len(body_labels)}:v=1:a=0[vcat]")
     # captions: run ffmpeg from the work dir so the ASS path needs no Windows drive-letter escaping
-    filters.append(f"[vcat]subtitles={ass_path.name}[vout]")
+    filters.append(f"[vcat]subtitles={ass_path.name}[vbody]")
+    parts.append("[vbody]")
 
-    voice_idx = n
+    if outro:
+        inputs += ["-stream_loop", "-1", "-i", str(Path(outro["path"]).resolve())]
+        filters.append(_vchain(idx, outro["seconds"], "voutro_raw"))
+        filters.append(f"[voutro_raw]subtitles={Path(outro['ass']).name}[voutro]" if outro.get("ass") else "[voutro_raw]null[voutro]")
+        parts.append("[voutro]")
+        idx += 1
+
+    if len(parts) > 1:
+        filters.append("".join(parts) + f"concat=n={len(parts)}:v=1:a=0[vout]")
+    else:
+        filters.append("[vbody]null[vout]")
+
+    voice_idx = idx
     inputs += ["-i", str(voice_path.resolve())]
+    intro_ms = int(round((intro["seconds"] if intro else 0.0) * 1000))
+    voice_pre = f"adelay={intro_ms}|{intro_ms}," if intro_ms else ""
     if music_path and Path(music_path).exists():
         fade = max(0.0, min(fade_seconds, total_seconds / 3))
         inputs += ["-stream_loop", "-1", "-i", str(Path(music_path).resolve())]
@@ -63,7 +93,7 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
             voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000,pan=stereo|c0=c0|c1=c0"
         else:
             voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo"
-        filters.append(voice_chain + ",asplit=2[vo][vsc]")
+        filters.append(voice_chain + f",{voice_pre}apad=whole_dur={total_seconds:.3f},asplit=2[vo][vsc]")
         if duck:
             # sidechaincompress lowers the music while the voice is loud, so words stay intelligible
             filters.append("[m][vsc]sidechaincompress=threshold=0.02:ratio=6:attack=20:release=500:makeup=1[md]")
@@ -73,6 +103,9 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
             mix_in = "[vo][m]"
         # normalize=0: keep the voice at its own level instead of amix halving every input
         filters.append(f"{mix_in}amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]")
+        amap = "[aout]"
+    elif intro_ms or outro:
+        filters.append(f"[{voice_idx}:a]{voice_pre}apad=whole_dur={total_seconds:.3f}[aout]")
         amap = "[aout]"
     else:
         amap = f"{voice_idx}:a"
