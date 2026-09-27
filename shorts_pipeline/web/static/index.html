@@ -178,6 +178,32 @@
             <label>Rotate top N blueprints<input type="number" min="1" max="8" name="schedule.blueprints_to_rotate"></label>
           </div>
           <p class="muted">Runs are spread evenly over the window and each finished Short goes to Telegram. The scheduler only runs while this console is running: use <code>python main.py autostart install</code> so it starts at logon, and keep the machine awake.</p>
+          <h3>Captions</h3>
+          <div class="capgrid">
+            <div>
+              <div class="row">
+                <label>Preset<select name="captions.style" id="cap-preset"></select></label>
+                <label>Font<input name="captions.font" placeholder="Impact"></label>
+                <label>Size<input type="number" min="40" max="160" name="captions.size"></label>
+                <label>Words per caption<input type="number" min="1" max="8" name="captions.words_per_caption"></label>
+              </div>
+              <div class="row">
+                <label>Text colour<input type="color" name="captions.primary"></label>
+                <label>Highlight colour<input type="color" name="captions.highlight"></label>
+                <label>Outline colour<input type="color" name="captions.outline_color"></label>
+                <label>Outline<input type="number" min="0" max="14" name="captions.outline"></label>
+                <label>Shadow<input type="number" min="0" max="10" name="captions.shadow"></label>
+              </div>
+              <div class="row">
+                <label>Highlight<select name="captions.highlight_mode"><option value="color">colour</option><option value="box">box</option><option value="pop">pop (bigger)</option><option value="none">none</option></select></label>
+                <label>Position<select name="captions.position"><option>top</option><option>center</option><option>lower</option><option>bottom</option></select></label>
+                <label class="inline"><input type="checkbox" name="captions.uppercase"> UPPERCASE</label>
+                <button type="button" id="cap-reset">Reset to preset</button>
+              </div>
+              <p class="muted">Fonts must be installed on this machine, or drop .ttf files into <code>assets/fonts</code>. The preview updates as you change values; save with the button at the bottom.</p>
+            </div>
+            <div class="cappreview"><img id="cap-preview" alt="caption preview" width="203" height="360"></div>
+          </div>
           <h3>Intro and outro</h3>
           <div class="row">
             <label class="inline"><input type="checkbox" name="production.intro.enabled"> intro card</label>

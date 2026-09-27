@@ -148,6 +148,7 @@ def _args(job: Job) -> SimpleNamespace:
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
         count=int(p.get("count") or 5), intro=p.get("intro"), outro=p.get("outro"),
         scheduled=bool(p.get("scheduled")), enhance=p.get("enhance", True) is not False,
+        telegram=p.get("telegram", True) is not False,
     )
 
 
@@ -318,6 +319,42 @@ async def upload_client_secrets(file: UploadFile) -> dict[str, Any]:
     (ROOT / "client_secrets.json").write_bytes(data)
     _write_env({"YOUTUBE_CLIENT_SECRETS": "client_secrets.json"})
     return get_settings()
+
+
+# ------------------------------------------------------------------------------------ captions
+
+@app.get("/api/captions/presets")
+def caption_presets() -> dict[str, Any]:
+    from ..captions import POSITIONS, PRESETS, resolve_style
+    return {"presets": {k: {"label": v["label"], **{kk: vv for kk, vv in v.items() if kk != "label"}} for k, v in PRESETS.items()},
+            "positions": list(POSITIONS), "current": resolve_style((load_config().get("production") or {}).get("captions"))}
+
+
+class CaptionStyleBody(BaseModel):
+    style: dict[str, Any] = {}
+
+
+@app.post("/api/captions/preview")
+def caption_preview(body: CaptionStyleBody):
+    """Render the caption style over a sample frame; returns a PNG."""
+    import subprocess
+    import tempfile
+    from fastapi.responses import Response
+    from ..captions import subtitles_filter, write_preview_ass
+    from ..tools import ensure_ffmpeg_on_path
+    if not ensure_ffmpeg_on_path():
+        raise HTTPException(400, "ffmpeg is not available")
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        ass = write_preview_ass(work / "preview.ass", body.style)
+        out = work / "preview.png"
+        filt = ("gradients=size=1080x1920:speed=0.01:nb_colors=3:c0=0x1b1f3b:c1=0x3a0f5c:c2=0x0b3b5c:duration=1:rate=1,"
+                "format=yuv420p," + subtitles_filter(ass) + ",scale=405:720")
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", filt, "-frames:v", "1", "-update", "1", out.name]
+        r = subprocess.run(cmd, cwd=str(work), capture_output=True, text=True)
+        if r.returncode != 0 or not out.exists():
+            raise HTTPException(500, f"preview failed: {r.stderr[-300:]}")
+        return Response(out.read_bytes(), media_type="image/png")
 
 
 # ------------------------------------------------------------------------------------ scheduler

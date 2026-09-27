@@ -37,8 +37,13 @@ production:
   voice: en-US-AndrewNeural   # any edge-tts voice; `edge-tts --list-voices`
   voice_rate: "+8%"
   target_seconds: 40          # script length target (30-55 is the Shorts sweet spot)
-  words_per_caption: 3        # caption chunk size
-  font: Impact
+  captions:
+    style: bold_impact        # bold_impact | clean_sans | boxed | pop | minimal | neon (presets in captions.py)
+    # Any of these override the preset when set: font, size, primary, highlight, highlight_box,
+    # outline_color, outline, shadow, highlight_mode (color|box|pop|none), uppercase, position
+    # (top|center|lower|bottom), words_per_caption, spacing. Extra fonts: drop .ttf files in assets/fonts.
+  words_per_caption: 3        # legacy; captions.words_per_caption wins when set
+  font: Impact                # legacy; captions.font wins when set
   font_size: 96
   intro:
     enabled: true

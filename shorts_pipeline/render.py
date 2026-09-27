@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .captions import subtitles_filter
 from .tools import ensure_ffmpeg_on_path
 
 ensure_ffmpeg_on_path()
@@ -48,7 +49,7 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
     if intro:
         inputs += ["-stream_loop", "-1", "-i", str(Path(intro["path"]).resolve())]
         filters.append(_vchain(idx, intro["seconds"], "vintro_raw"))
-        filters.append(f"[vintro_raw]subtitles={Path(intro['ass']).name}[vintro]" if intro.get("ass") else "[vintro_raw]null[vintro]")
+        filters.append(f"[vintro_raw]{subtitles_filter(Path(intro['ass']))}[vintro]" if intro.get("ass") else "[vintro_raw]null[vintro]")
         parts.append("[vintro]")
         idx += 1
 
@@ -61,13 +62,13 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
         idx += 1
     filters.append("".join(body_labels) + f"concat=n={len(body_labels)}:v=1:a=0[vcat]")
     # captions: run ffmpeg from the work dir so the ASS path needs no Windows drive-letter escaping
-    filters.append(f"[vcat]subtitles={ass_path.name}[vbody]")
+    filters.append(f"[vcat]{subtitles_filter(ass_path)}[vbody]")
     parts.append("[vbody]")
 
     if outro:
         inputs += ["-stream_loop", "-1", "-i", str(Path(outro["path"]).resolve())]
         filters.append(_vchain(idx, outro["seconds"], "voutro_raw"))
-        filters.append(f"[voutro_raw]subtitles={Path(outro['ass']).name}[voutro]" if outro.get("ass") else "[voutro_raw]null[voutro]")
+        filters.append(f"[voutro_raw]{subtitles_filter(Path(outro['ass']))}[voutro]" if outro.get("ass") else "[voutro_raw]null[voutro]")
         parts.append("[voutro]")
         idx += 1
 

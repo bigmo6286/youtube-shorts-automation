@@ -123,7 +123,15 @@ depend on a person or original footage, so expect a voiceover remake to underper
    `script_max_attempts` times.
 2. `tts.py` voices it with edge-tts and keeps per-word timings.
 3. `captions.py` turns the timings into an ASS subtitle track with the spoken word highlighted.
-4. `footage.py` fetches a portrait Pexels clip per line (if a key exists) or generates a motion background.
+4. `footage.py` finds footage that matches each line. Claude writes a literal, filmable search term per
+   line; Pexels returns several portrait candidates, whose slugs and alt text describe them; TypeSafe
+   picks the one that best illustrates the sentence, or says none does. Then it tries the video's
+   subject-level term, then Pexels photos (with a slow zoom), and only then the generated background.
+   The activity log says what was chosen for every line and why.
+
+Caption looks are presets plus overrides (Settings -> Captions, with a live preview): bold Impact,
+clean sans, boxed word, pop, minimal, neon; any font, size, colours, outline, highlight mode, position
+and words per caption. Extra fonts go in `assets/fonts`.
 5. `render.py` assembles everything with ffmpeg at 1080x1920 and mixes in background music: the
    track is looped to the video length, faded in and out, and ducked under the voice so words stay clear.
 

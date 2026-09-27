@@ -226,8 +226,7 @@ def cmd_produce(args) -> Path:
 
     # Captions are burned onto the body stream before the intro is concatenated in front of it, so their
     # clock is body-local: no offset here (the intro card carries its own subtitle file).
-    ass_path = captions.write_ass(words, out_dir / "captions.ass", words_per_caption=cfg["words_per_caption"],
-                                  full_text=script["full_text"], font=cfg["font"], font_size=cfg["font_size"])
+    ass_path = captions.write_ass(words, out_dir / "captions.ass", style=_caption_style(cfg), full_text=script["full_text"])
     segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir)
 
     music_cfg = dict(cfg.get("music") or {})
@@ -256,7 +255,8 @@ def cmd_produce(args) -> Path:
     print(f"\nRendered {video}  ({total:.1f}s)")
     if args.upload:
         _upload(out_dir)
-    _notify_telegram(out_dir, meta)
+    if getattr(args, "telegram", True):
+        _notify_telegram(out_dir, meta)
     return out_dir
 
 
@@ -279,8 +279,22 @@ def _card(card_cfg: dict, kind: str, script: dict, out_dir: Path, cfg: dict, *, 
     text = (card_cfg.get("text") or ("{title}" if kind == "intro" else "Follow for more")).replace("{title}", script["title"])
     sub = (card_cfg.get("sub_text") or ("" if kind == "intro" else card_cfg.get("handle", ""))).replace("{title}", script["title"])
     bg = footage.generated_background(out_dir / f"{kind}_bg.mp4", seconds + 0.5, seed=3 if kind == "intro" else 1)
-    ass = captions.write_card_ass(text, seconds, out_dir / f"{kind}.ass", sub_text=sub, font=cfg["font"], font_size=cfg["font_size"])
+    ass = captions.write_card_ass(text, seconds, out_dir / f"{kind}.ass", sub_text=sub, style=_caption_style(cfg))
     return {"path": str(bg), "seconds": seconds, "ass": str(ass)}
+
+
+def _caption_style(cfg: dict) -> dict:
+    """captions.* from config, with the legacy font / font_size / words_per_caption keys as fallbacks."""
+    from .captions import resolve_style
+
+    raw = dict(cfg.get("captions") or {})
+    if "font" not in raw and cfg.get("font"):
+        raw["font"] = cfg["font"]
+    if "size" not in raw and cfg.get("font_size"):
+        raw["size"] = cfg["font_size"]
+    if "words_per_caption" not in raw and cfg.get("words_per_caption"):
+        raw["words_per_caption"] = cfg["words_per_caption"]
+    return resolve_style(raw)
 
 
 def _notify_telegram(out_dir: Path, meta: dict, *, force: bool = False) -> None:
@@ -429,6 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--music", help="none | random | part of a track name (default from config.yaml)")
     pr.add_argument("--no-intro", dest="intro", action="store_false", default=None, help="skip the intro card")
     pr.add_argument("--no-outro", dest="outro", action="store_false", default=None, help="skip the outro card")
+    pr.add_argument("--no-telegram", dest="telegram", action="store_false", default=True, help="do not send this one to Telegram")
     pr.add_argument("--upload", action="store_true")
     pr.set_defaults(func=cmd_produce)
 

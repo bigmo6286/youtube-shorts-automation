@@ -255,6 +255,48 @@ async function loadOutputs() {
   }));
 }
 
+// ---------------------------------------------------------------- captions
+const CAP_FIELDS = ["font", "size", "words_per_caption", "primary", "highlight", "outline_color", "outline", "shadow", "highlight_mode", "position", "uppercase"];
+function capRead() {
+  const st = { style: $("#cap-preset").value };
+  for (const f of CAP_FIELDS) {
+    const el = $(`[name="captions.${f}"]`); if (!el) continue;
+    if (el.type === "checkbox") st[f] = el.checked;
+    else if (el.type === "number") st[f] = Number(el.value);
+    else st[f] = el.value;
+  }
+  return st;
+}
+function capFill(values) {
+  for (const f of CAP_FIELDS) {
+    const el = $(`[name="captions.${f}"]`); if (!el || values[f] == null) continue;
+    if (el.type === "checkbox") el.checked = !!values[f]; else el.value = values[f];
+  }
+}
+let capTimer = null;
+async function capPreview() {
+  clearTimeout(capTimer);
+  capTimer = setTimeout(async () => {
+    try {
+      const res = await fetch("/api/captions/preview", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ style: capRead() }) });
+      if (!res.ok) return;
+      const blob = await res.blob(); $("#cap-preview").src = URL.createObjectURL(blob);
+    } catch (_) {}
+  }, 350);
+}
+async function loadCaptions() {
+  const p = await api("/api/captions/presets"); state.capPresets = p.presets;
+  const sel = $("#cap-preset");
+  sel.innerHTML = Object.entries(p.presets).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
+  const cur = (state.settings && state.settings.config.production.captions) || {};
+  sel.value = cur.style && p.presets[cur.style] ? cur.style : "bold_impact";
+  capFill(p.current);
+  capPreview();
+}
+$("#cap-preset").addEventListener("change", () => { capFill(state.capPresets[$("#cap-preset").value]); capPreview(); });
+$("#cap-reset").addEventListener("click", () => { capFill(state.capPresets[$("#cap-preset").value]); capPreview(); });
+CAP_FIELDS.forEach((f) => { const el = $(`[name="captions.${f}"]`); if (el) el.addEventListener("input", capPreview); });
+
 // ---------------------------------------------------------------- schedule
 async function loadSchedule() {
   const p = await api("/api/schedule");
@@ -367,6 +409,7 @@ async function loadSettings() {
   const tgKey = s.keys.find((k) => k.name === "TELEGRAM_BOT_TOKEN");
   const tgChat = s.paths.find((p) => p.name === "TELEGRAM_CHAT_ID");
   $("#tgstatus").textContent = tgKey && tgKey.set ? (tgChat && tgChat.value ? `Configured for chat ${tgChat.value}.` : "Token saved; now find your chat id.") : "No bot token yet.";
+  loadCaptions();
   const sc = c.schedule || {};
   $(`[name="schedule.enabled"]`).checked = !!sc.enabled;
   set("schedule.produces_per_day", sc.produces_per_day ?? 20); set("schedule.refresh_per_day", sc.refresh_per_day ?? 1);
@@ -397,6 +440,7 @@ $("#cfgform").addEventListener("submit", async (ev) => {
       background_source: g("production.background_source"), script_backend: g("production.script_backend"),
       music: { default: g("production.music.default"), volume_db: num("production.music.volume_db"),
         fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked },
+      captions: capRead(),
       intro: { ...(state.settings.config.production.intro || {}), enabled: $(`[name="production.intro.enabled"]`).checked,
         text: g("production.intro.text") || "{title}", seconds: num("production.intro.seconds") || 1.5 },
       outro: { ...(state.settings.config.production.outro || {}), enabled: $(`[name="production.outro.enabled"]`).checked,

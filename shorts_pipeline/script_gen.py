@@ -17,7 +17,10 @@ MODEL = "claude-opus-5"
 
 class ScriptLine(BaseModel):
     text: str = Field(description="One spoken sentence, max about 18 words, natural for text-to-speech")
-    visual_keyword: str = Field(description="2-4 word stock-footage search term that matches this line")
+    visual_keyword: str = Field(description=(
+        "Stock-footage search term for THIS line: a literal, filmable scene in 2-5 plain words, the kind of clip "
+        "a stock site actually has (e.g. 'octopus swimming underwater', 'woman brushing teeth', 'city traffic at night'). "
+        "Name the concrete subject of the sentence; never abstract ideas, emotions or metaphors."))
 
 
 class ShortScript(BaseModel):
@@ -27,6 +30,8 @@ class ShortScript(BaseModel):
     cta: str = Field(description="One short closing line (question to the viewer or a soft follow ask)")
     description: str = Field(description="YouTube description, 1-3 sentences plus hashtags")
     hashtags: list[str] = Field(description="3-6 hashtags without the # sign, first one shorts")
+    visual_fallback: str = Field(description=(
+        "One literal stock-footage term for the video's overall subject (2-4 plain words), used when a line's own term finds nothing"))
 
 
 SYSTEM = """You write scripts for faceless YouTube Shorts: an AI voice reads the script over stock footage with
@@ -84,7 +89,7 @@ def custom_script(text: str, *, title: str = "", description: str = "", hashtags
     if "shorts" not in [t.lower() for t in tags]:
         tags.insert(0, "shorts")
     script: dict[str, Any] = {
-        "title": title, "hook": hook, "lines": lines, "cta": cta,
+        "title": title, "hook": hook, "lines": lines, "cta": cta, "visual_fallback": keywords[0],
         "description": description.strip() or f"{title}\n\n" + " ".join("#" + t for t in tags),
         "hashtags": tags, "full_text": text, "word_count": len(text.split()),
         "attempt": 1, "backend": "custom", "qa": None, "qa_problems": [],
