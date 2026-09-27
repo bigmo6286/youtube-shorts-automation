@@ -2,7 +2,7 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
-const state = { runs: [], currentRun: null, job: null, jobOffset: 0, settings: null };
+const state = { runs: [], currentRun: null, job: null, jobOffset: 0, settings: null, blueprintRun: null };
 
 // ---------------------------------------------------------------- helpers
 async function api(path, opts = {}) {
@@ -68,12 +68,19 @@ async function loadRuns() {
       <td>${r.id}</td><td>${r.shorts}</td><td>${r.judged}</td><td>${r.blueprints}</td>
       <td><button data-open="${r.id}">open</button></td></tr>`).join("") || `<tr><td colspan="5" class="muted">No runs yet.</td></tr>`;
   $$("button[data-open]", tb).forEach((b) => b.addEventListener("click", () => openRun(b.dataset.open)));
+  // Rebuild the Studio run picker only when its options changed, and keep whatever the user picked:
+  // background refreshes (a job finishing, opening a run) must not reset the blueprint choice.
   const sel = $("#prod-run");
-  sel.innerHTML = state.runs.filter((r) => r.blueprints > 0).map((r) => `<option value="${r.id}">${r.id} (${r.blueprints} blueprints)</option>`).join("")
+  const previousRun = sel.value;
+  const html = state.runs.filter((r) => r.blueprints > 0).map((r) => `<option value="${r.id}">${r.id} (${r.blueprints} blueprints)</option>`).join("")
     || `<option value="">no analysed run yet</option>`;
-  sel.onchange = () => fillBlueprints(sel.value);
+  if (sel.innerHTML !== html) {
+    sel.innerHTML = html;
+    if (previousRun && [...sel.options].some((o) => o.value === previousRun)) sel.value = previousRun;
+  }
+  sel.onchange = () => fillBlueprints(sel.value, true);
   if (state.runs.length && !state.currentRun) openRun(state.runs[0].id);
-  else if (sel.value) fillBlueprints(sel.value);
+  else if (sel.value && (sel.value !== state.blueprintRun || !$("#prod-blueprint").options.length)) fillBlueprints(sel.value);
 }
 
 async function openRun(id) {
@@ -91,7 +98,8 @@ async function openRun(id) {
       <button data-produce="${i + 1}" data-run="${id}">Produce this</button></div>`).join("")
     || `<p class="muted">No blueprints. Run the pipeline with a TypeSafe key.</p>`;
   $$("button[data-produce]").forEach((b) => b.addEventListener("click", () => {
-    $("#prod-run").value = b.dataset.run; fillBlueprints(b.dataset.run).then(() => { $("#prod-blueprint").value = b.dataset.produce; });
+    $("#prod-run").value = b.dataset.run;
+    fillBlueprints(b.dataset.run, true).then(() => { $("#prod-blueprint").value = b.dataset.produce; });
     $$("nav button").find((x) => x.dataset.tab === "studio").click();
   }));
   const rows = r.shorts.filter((s) => !s.excluded.length).slice(0, 25);
@@ -103,12 +111,15 @@ async function openRun(id) {
   loadRuns();
 }
 
-async function fillBlueprints(runId) {
+async function fillBlueprints(runId, userChangedRun = false) {
   const sel = $("#prod-blueprint");
-  if (!runId) { sel.innerHTML = ""; return; }
+  if (!runId) { sel.innerHTML = ""; state.blueprintRun = null; return; }
+  const keep = userChangedRun ? null : sel.value;
   const r = await api(`/api/runs/${runId}`);
   const bps = (r.analysis && r.analysis.blueprints) || [];
+  state.blueprintRun = runId;
   sel.innerHTML = bps.map((b, i) => `<option value="${i + 1}">${i + 1}. ${b.format} × ${b.topic} (${b.hook_style}${b.stretch ? ", stretch" : ""})</option>`).join("");
+  if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
 }
 
 // ---------------------------------------------------------------- jobs
@@ -170,7 +181,11 @@ $$("button[data-job]").forEach((b) => b.addEventListener("click", () => {
   const kind = b.dataset.job;
   if (kind === "produce") {
     const run = $("#prod-run").value; if (!run) return toast("Run and analyse the pipeline first", true);
-    return startJob("produce", { run, blueprint: Number($("#prod-blueprint").value || 1), angle: $("#prod-angle").value, upload: $("#prod-upload").checked });
+    const bpSel = $("#prod-blueprint");
+    const blueprint = Number(bpSel.value || 1);
+    const label = bpSel.selectedOptions[0] ? bpSel.selectedOptions[0].textContent : `#${blueprint}`;
+    toast(`Producing ${label}`);
+    return startJob("produce", { run, blueprint, angle: $("#prod-angle").value, upload: $("#prod-upload").checked });
   }
   const params = { force: $("#opt-force").checked, api: $("#opt-api").checked };
   if (["judge", "rank", "analyze"].includes(kind) && state.currentRun) params.run = state.currentRun;
