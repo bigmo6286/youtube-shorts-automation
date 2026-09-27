@@ -53,13 +53,11 @@
     </div>
     <div class="grid2">
       <div class="panel">
-        <h2>Job log <span id="jobstatus" class="muted"></span></h2>
-        <pre id="joblog" class="log">No job yet.</pre>
-      </div>
-      <div class="panel">
         <h2>Runs</h2>
         <div class="tablewrap"><table id="runs"><thead><tr><th>run</th><th>shorts</th><th>judged</th><th>blueprints</th><th></th></tr></thead><tbody></tbody></table></div>
-        <h3>Report</h3>
+      </div>
+      <div class="panel">
+        <h2>Report</h2>
         <pre id="report" class="report"></pre>
       </div>
     </div>
@@ -135,6 +133,19 @@
     </div>
   </section>
 </main>
+
+<!-- ------------------------------------------------------------ activity log drawer (every tab) -->
+<aside id="drawer" class="drawer">
+  <div class="drawerhead">
+    <button id="drawertoggle" title="show or hide the log">▲ Activity log</button>
+    <span id="jobstatus" class="muted">no job yet</span>
+    <select id="jobpicker" title="earlier jobs"><option value="">current job</option></select>
+    <button id="logclear">clear</button>
+    <button id="logcopy">copy</button>
+    <span class="right muted" id="logfile"></span>
+  </div>
+  <pre id="joblog" class="log drawerlog">No job yet. Every job's full output appears here, including errors and tracebacks. Logs are also saved under data/logs/.</pre>
+</aside>
 
 <div id="toast" class="toast hidden"></div>
 <script src="/static/app.js"></script>

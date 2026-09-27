@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import logging
 import os
 import threading
 import time
+import traceback
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,12 +94,13 @@ class Job:
         self.error: str | None = None
         self.started = time.time()
         self.finished: float | None = None
+        self.log_file: str | None = None
 
     def to_dict(self, tail: int | None = None) -> dict[str, Any]:
         lines = self.log[-tail:] if tail else self.log
         return {"id": self.id, "kind": self.kind, "params": self.params, "status": self.status,
                 "log": lines, "log_length": len(self.log), "result": self.result, "error": self.error,
-                "started": self.started, "finished": self.finished}
+                "started": self.started, "finished": self.finished, "log_file": self.log_file}
 
 
 JOBS: dict[str, Job] = {}
@@ -115,6 +118,8 @@ class _JobLogHandler(logging.Handler):
         if record.name.startswith("typesafe_sdk") and record.levelno < logging.WARNING:
             return                       # one line per request is noise here
         self.job.log.append(self.format(record))
+        if record.exc_info:
+            self.job.log.extend(traceback.format_exception(*record.exc_info)[-6:])
 
 
 class _JobStdout(io.TextIOBase):
@@ -163,15 +168,35 @@ def _run_job(job: Job) -> None:
     except SystemExit as exc:            # cli functions use sys.exit for user-facing failures
         job.error = str(exc)
         job.status = "error"
+        job.log.append(f"ERROR: {exc}")
     except Exception as exc:  # noqa: BLE001
         job.error = f"{type(exc).__name__}: {exc}"
         job.status = "error"
-        log.exception("job %s failed", job.id)
+        job.log.append(f"ERROR: {job.error}")
+        job.log.extend(traceback.format_exc().rstrip().splitlines())
     finally:
         job.finished = time.time()
         root.removeHandler(handler)
         _CURRENT = None
         _JOB_LOCK.release()
+        _persist_job(job)
+
+
+LOG_DIR = ROOT / "data" / "logs"
+
+
+def _persist_job(job: Job) -> None:
+    """Keep every job log on disk so errors can be read after the page is closed."""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.localtime(job.started))
+        path = LOG_DIR / f"{stamp}_{job.kind}_{job.id}.log"
+        header = [f"job {job.id} kind={job.kind} status={job.status} params={json.dumps(job.params)}",
+                  f"error: {job.error}" if job.error else "", ""]
+        path.write_text("\n".join(header + job.log) + "\n", encoding="utf-8")
+        job.log_file = str(path)
+    except Exception:  # noqa: BLE001
+        log.exception("could not persist job log")
 
 
 class JobRequest(BaseModel):
@@ -194,6 +219,23 @@ def start_job(req: JobRequest) -> dict[str, Any]:
 @app.get("/api/jobs")
 def list_jobs() -> list[dict[str, Any]]:
     return [j.to_dict(tail=1) for j in sorted(JOBS.values(), key=lambda j: -j.started)[:20]]
+
+
+@app.get("/api/logs")
+def list_logs() -> list[dict[str, Any]]:
+    """Job logs from earlier console sessions, newest first."""
+    if not LOG_DIR.exists():
+        return []
+    files = sorted(LOG_DIR.glob("*.log"), reverse=True)[:50]
+    return [{"name": f.name, "size": f.stat().st_size} for f in files]
+
+
+@app.get("/api/logs/{name}")
+def read_log(name: str) -> dict[str, Any]:
+    path = LOG_DIR / Path(name).name
+    if not path.exists():
+        raise HTTPException(404, "no such log")
+    return {"name": path.name, "text": path.read_text(encoding="utf-8", errors="replace")}
 
 
 @app.get("/api/jobs/{job_id}")

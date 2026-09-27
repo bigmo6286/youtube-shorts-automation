@@ -54,5 +54,13 @@ td:last-child, th:last-child { white-space: normal; } tr.sel td { background: va
 
 .keyrow { flex-direction: column; gap: 4px; margin-bottom: 10px; } .keyrow > span:first-child { display: flex; gap: 8px; align-items: center; }
 .keyinput { display: flex; gap: 6px; } .keyinput button { padding: 4px 8px; }
-.toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel2); border: 1px solid var(--ok); color: var(--text); padding: 10px 14px; border-radius: 8px; box-shadow: 0 6px 24px #0008; }
+main { padding-bottom: 260px; }
+.drawer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--border); z-index: 6; box-shadow: 0 -6px 24px #0006; }
+.drawer.collapsed .drawerlog { display: none; }
+.drawerhead { display: flex; gap: 10px; align-items: center; padding: 6px 14px; }
+.drawerhead select { width: auto; max-width: 320px; padding: 4px 6px; }
+.drawerlog { max-height: 200px; border: 0; border-radius: 0; margin: 0; }
+.drawerlog .err { color: var(--danger); }
+.toast.error { cursor: pointer; } .toast.error::after { content: "  (click to dismiss, details in the activity log)"; color: var(--muted); }
+.toast { position: fixed; bottom: 250px; right: 20px; background: var(--panel2); border: 1px solid var(--ok); color: var(--text); padding: 10px 14px; border-radius: 8px; box-shadow: 0 6px 24px #0008; }
 .toast.error { border-color: var(--danger); }

@@ -17,7 +17,20 @@ async function api(path, opts = {}) {
 function toast(msg, isError = false) {
   const t = $("#toast");
   t.textContent = msg; t.classList.toggle("error", isError); t.classList.remove("hidden");
-  clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.add("hidden"), 4000);
+  clearTimeout(t._timer);
+  if (isError) { openDrawer(); t.onclick = () => t.classList.add("hidden"); }   // errors stay until dismissed
+  else t._timer = setTimeout(() => t.classList.add("hidden"), 4000);
+}
+function openDrawer() { $("#drawer").classList.remove("collapsed"); $("#drawertoggle").textContent = "▼ Activity log"; }
+function appendLog(lines) {
+  const pre = $("#joblog");
+  if (pre.dataset.empty !== "0") { pre.textContent = ""; pre.dataset.empty = "0"; }
+  for (const line of lines) {
+    const span = document.createElement("span");
+    if (/^(ERROR|Traceback|\s+File )|Error:/.test(line)) span.className = "err";
+    span.textContent = line + "\n"; pre.appendChild(span);
+  }
+  pre.scrollTop = 1e9;
 }
 const fmt = (n) => n == null ? "-" : Number(n).toLocaleString();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -106,22 +119,50 @@ async function startJob(kind, params = {}) {
 }
 function attachJob(id) {
   state.job = { id }; state.jobOffset = 0;
-  $("#joblog").textContent = "";
+  $("#joblog").textContent = ""; $("#joblog").dataset.empty = "0"; $("#logfile").textContent = "";
+  $("#jobpicker").value = "";
+  openDrawer();
   pollJob();
 }
 async function pollJob() {
   if (!state.job) return;
-  const j = await api(`/api/jobs/${state.job.id}?offset=${state.jobOffset}`);
-  if (j.log.length) { $("#joblog").textContent += j.log.join("\n") + "\n"; $("#joblog").scrollTop = 1e9; state.jobOffset = j.log_length; }
+  let j;
+  try { j = await api(`/api/jobs/${state.job.id}?offset=${state.jobOffset}`); }
+  catch (e) { appendLog([`(console unreachable: ${e.message}; retrying)`]); setTimeout(pollJob, 3000); return; }
+  if (j.log.length) { appendLog(j.log); state.jobOffset = j.log_length; }
   $("#jobstatus").textContent = `${j.kind}: ${j.status}`;
   const pill = $("#jobpill");
   pill.classList.remove("hidden"); pill.textContent = `${j.kind} · ${j.status}`; pill.className = `pill ${j.status}`;
   if (j.status === "running" || j.status === "queued") { setTimeout(pollJob, 1500); return; }
-  if (j.error) { $("#joblog").textContent += "ERROR: " + j.error + "\n"; toast(j.error, true); } else toast(`${j.kind} finished`);
+  if (j.log_file) $("#logfile").textContent = `saved: ${j.log_file.split(/[\\/]/).slice(-2).join("/")}`;
+  if (j.error) toast(`${j.kind} failed: ${j.error.split("\n")[0]}`, true); else toast(`${j.kind} finished`);
   state.job = null;
   setTimeout(() => pill.classList.add("hidden"), 6000);
-  loadStatus(); loadRuns(); if (j.kind === "produce" || j.kind === "upload") loadOutputs();
+  loadStatus(); loadRuns(); loadJobPicker(); if (j.kind === "produce" || j.kind === "upload") loadOutputs();
 }
+async function loadJobPicker() {
+  const jobs = await api("/api/jobs");
+  const logs = await api("/api/logs");
+  const sel = $("#jobpicker");
+  sel.innerHTML = `<option value="">current job</option>`
+    + jobs.map((j) => `<option value="job:${j.id}">${new Date(j.started * 1000).toLocaleTimeString()} ${j.kind} · ${j.status}</option>`).join("")
+    + (logs.length ? `<option disabled>── earlier sessions ──</option>` + logs.map((l) => `<option value="log:${l.name}">${l.name.replace(".log", "")}</option>`).join("") : "");
+}
+$("#jobpicker").addEventListener("change", async (ev) => {
+  const v = ev.target.value; if (!v) return;
+  $("#joblog").textContent = ""; $("#joblog").dataset.empty = "0"; openDrawer();
+  if (v.startsWith("job:")) { const j = await api(`/api/jobs/${v.slice(4)}`); $("#jobstatus").textContent = `${j.kind}: ${j.status}`; appendLog(j.log); if (j.error) appendLog([`ERROR: ${j.error}`]); }
+  else { const l = await api(`/api/logs/${encodeURIComponent(v.slice(4))}`); $("#jobstatus").textContent = l.name; appendLog(l.text.split("\n")); }
+});
+$("#drawertoggle").addEventListener("click", () => {
+  const d = $("#drawer"); d.classList.toggle("collapsed");
+  $("#drawertoggle").textContent = d.classList.contains("collapsed") ? "▲ Activity log" : "▼ Activity log";
+});
+$("#logclear").addEventListener("click", () => { $("#joblog").textContent = ""; });
+$("#logcopy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#joblog").textContent); toast("Log copied"); }
+  catch (_) { const r = document.createRange(); r.selectNodeContents($("#joblog")); getSelection().removeAllRanges(); getSelection().addRange(r); toast("Log selected, press Ctrl+C"); }
+});
 $$("button[data-job]").forEach((b) => b.addEventListener("click", () => {
   const kind = b.dataset.job;
   if (kind === "produce") {
@@ -206,5 +247,5 @@ $("#secretsbtn").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- boot
-loadStatus(); loadRuns(); loadOutputs();
+loadStatus(); loadRuns(); loadOutputs(); loadJobPicker();
 setInterval(loadStatus, 10000);
