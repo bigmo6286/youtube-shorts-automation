@@ -10,6 +10,9 @@ import requests
 
 from .config import env
 from .storage import CACHE_DIR
+from .tools import ensure_ffmpeg_on_path
+
+ensure_ffmpeg_on_path()
 
 log = logging.getLogger(__name__)
 

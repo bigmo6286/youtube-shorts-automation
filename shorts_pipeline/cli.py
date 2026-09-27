@@ -137,8 +137,10 @@ def cmd_analyze(args) -> Path:
 
 
 def cmd_produce(args) -> Path:
-    from . import captions, footage, render, script_gen, tts
+    from . import captions, footage, render, script_gen, tools, tts
 
+    if not tools.ensure_ffmpeg_on_path():     # check before spending a script generation
+        sys.exit(tools.MISSING_HELP)
     run_dir = _run_dir(args)
     cfg = load_config()["production"]
     analysis = load_json(run_dir / "analysis.json")
@@ -261,10 +263,20 @@ def build_parser() -> argparse.ArgumentParser:
     ru.add_argument("--angle"); ru.add_argument("--upload", action="store_true")
     ru.set_defaults(func=cmd_run)
 
+    f = sub.add_parser("setup-ffmpeg", help="download a portable ffmpeg into data/bin (Windows)")
+    f.set_defaults(func=cmd_setup_ffmpeg)
+
     w = sub.add_parser("web", help="start the local web console (keys, settings, runs, studio)")
     w.add_argument("--port", type=int, default=8787); w.add_argument("--host", default="127.0.0.1")
     w.set_defaults(func=cmd_web)
     return p
+
+
+def cmd_setup_ffmpeg(args) -> Path:
+    from . import tools
+    path = tools.install_ffmpeg()
+    print(f"ffmpeg ready: {path}")
+    return path
 
 
 def cmd_web(args) -> None:

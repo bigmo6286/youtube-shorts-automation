@@ -48,6 +48,7 @@ async function loadStatus() {
   const s = await api("/api/status");
   const card = (label, ok, text) => `<div class="card ${ok ? "ok" : "warn"}"><div class="label">${label}</div><div class="value">${text}</div></div>`;
   $("#statuscards").innerHTML = [
+    card("ffmpeg", !!s.ffmpeg, s.ffmpeg ? "ready" : `missing <button id="installffmpeg">Install ffmpeg</button>`),
     card("TypeSafe", s.typesafe, s.typesafe ? "connected" : "key missing"),
     card("Script writer", !!s.script_backend, s.script_backend === "api" ? "Anthropic API" : s.script_backend === "claude_code" ? "Claude subscription" : "not configured"),
     card("Backgrounds", s.pexels, s.pexels ? "Pexels footage" : "generated gradient"),
@@ -55,6 +56,8 @@ async function loadStatus() {
     card("Latest run", !!s.latest_run, s.latest_run ? `${s.latest_run.shorts} Shorts, ${s.latest_run.blueprints} blueprints` : "none yet"),
     card("Produced", s.outputs > 0, `${s.outputs} Shorts`),
   ].join("");
+  const inst = $("#installffmpeg");
+  if (inst) inst.addEventListener("click", () => startJob("setup_ffmpeg"));
   if (s.job_running && (!state.job || state.job.id !== s.job_running.id)) attachJob(s.job_running.id);
 }
 

@@ -23,6 +23,7 @@ main { padding: 20px; max-width: 1400px; margin: 0 auto; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--warn); border-radius: 10px; padding: 12px 14px; }
 .card.ok { border-left-color: var(--ok); } .card .label { color: var(--muted); font-size: 12px; } .card .value { font-weight: 600; margin-top: 2px; }
+.card .value button { margin-left: 6px; padding: 2px 8px; font-size: 12px; }
 
 button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 13px; }
 button:hover { border-color: var(--muted); } button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }

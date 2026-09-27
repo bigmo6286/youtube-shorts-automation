@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import ASSETS_DIR
+from .tools import ensure_ffmpeg_on_path
+
+ensure_ffmpeg_on_path()
 
 W, H = 1080, 1920
 

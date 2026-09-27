@@ -37,6 +37,7 @@ KEY_FIELDS = {
     "YOUTUBE_API_KEY": "YouTube Data API key (optional extra discovery source)",
 }
 PATH_FIELDS = {
+    "FFMPEG_DIR": "Folder containing ffmpeg.exe and ffprobe.exe (optional, auto-detected or auto-installed)",
     "CLAUDE_CODE_BIN": "Path to claude.exe (optional, auto-detected)",
     "YOUTUBE_CLIENT_SECRETS": "OAuth client secrets file for uploads",
 }
@@ -148,6 +149,7 @@ def _args(job: Job) -> SimpleNamespace:
 COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
+    "setup_ffmpeg": cli.cmd_setup_ffmpeg,
 }
 
 
@@ -381,7 +383,10 @@ def list_outputs() -> list[dict[str, Any]]:
 def status() -> dict[str, Any]:
     values = _read_env()
     runs = list_runs()
+    from ..tools import find_ffmpeg
+    ffmpeg_dir = find_ffmpeg()
     return {
+        "ffmpeg": str(ffmpeg_dir) if ffmpeg_dir else None,
         "typesafe": bool(values.get("TYPESAFE_API_KEY")),
         "script_backend": "api" if values.get("ANTHROPIC_API_KEY") else ("claude_code" if values.get("CLAUDE_CODE_OAUTH_TOKEN") else None),
         "pexels": bool(values.get("PEXELS_API_KEY")),

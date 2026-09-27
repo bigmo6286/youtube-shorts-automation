@@ -18,7 +18,9 @@ pip install -r requirements.txt
 copy .env.example .env      # then fill in the keys
 ```
 
-ffmpeg must be on PATH (it is on this machine). Keys:
+ffmpeg is needed for rendering. On Windows the tool can fetch a portable copy for you: click
+**Install ffmpeg** on the console Overview, or run `python main.py setup-ffmpeg` (about 90 MB into
+`data/bin/`). Otherwise install it yourself and, if it is not on PATH, set `FFMPEG_DIR` in `.env`. Keys:
 
 | Key | Needed for | Where |
 |---|---|---|
