@@ -24,12 +24,12 @@ class ScriptLine(BaseModel):
 
 
 class ShortScript(BaseModel):
-    title: str = Field(description="YouTube title, under 70 chars, includes the hook idea, no clickbait lies")
+    title: str = Field(description="YouTube title: 40-70 characters, hard maximum 100, no hashtags, includes the hook idea, no clickbait lies")
     hook: str = Field(description="The first spoken sentence. Must stop the scroll within 2 seconds.")
     lines: list[ScriptLine] = Field(description="The body, in order, after the hook")
     cta: str = Field(description="One short closing line (question to the viewer or a soft follow ask)")
-    description: str = Field(description="YouTube description, 1-3 sentences plus hashtags")
-    hashtags: list[str] = Field(description="3-6 hashtags without the # sign, first one shorts")
+    description: str = Field(description="YouTube description: 1-3 sentences, then the hashtags on their own line")
+    hashtags: list[str] = Field(description="3-6 hashtags without the # sign, first one shorts, never more than 15")
     visual_fallback: str = Field(description=(
         "One literal stock-footage term for the video's overall subject (2-4 plain words), used when a line's own term finds nothing"))
 
@@ -66,6 +66,50 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+# YouTube limits: title 100 chars (Shorts show ~70 before truncating), description 5000, at most 15 hashtags
+# (more than 15 and YouTube ignores them all). Hashtags in the title count toward the 100.
+TITLE_MAX = 100
+TITLE_TARGET = 70
+DESCRIPTION_MAX = 5000
+HASHTAGS_MAX = 15
+
+
+def _shorten(text: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    if " " in cut[limit // 2:]:
+        cut = cut[: cut.rfind(" ")]
+    return cut.rstrip(" ,;:-–—.!?")
+
+
+def finalize_metadata(script: dict[str, Any]) -> dict[str, Any]:
+    """Make title / description / hashtags safe to paste into YouTube as-is."""
+    title = re.sub(r"#\w+", "", script.get("title") or "").strip() or (script.get("hook") or "Untitled Short")
+    title = _shorten(title, TITLE_MAX)
+    script["title"] = title
+    script["title_over_target"] = len(title) > TITLE_TARGET
+
+    tags: list[str] = []
+    for t in script.get("hashtags") or []:
+        t = re.sub(r"[^\w]", "", str(t)).strip()
+        if t and t.lower() not in {x.lower() for x in tags}:
+            tags.append(t)
+    if "shorts" not in {t.lower() for t in tags}:
+        tags.insert(0, "shorts")
+    script["hashtags"] = tags[:HASHTAGS_MAX]
+
+    desc = (script.get("description") or "").strip()
+    present = {m.lower() for m in re.findall(r"#(\w+)", desc)}
+    extra = [t for t in script["hashtags"] if t.lower() not in present]
+    if len(present) + len(extra) > HASHTAGS_MAX:                # keep the description itself under 15 tags too
+        extra = extra[: max(0, HASHTAGS_MAX - len(present))]
+    if extra:
+        desc = (desc + "\n\n" if desc else "") + " ".join("#" + t for t in extra)
+    script["description"] = desc[:DESCRIPTION_MAX]
+    return script
+
 
 def custom_script(text: str, *, title: str = "", description: str = "", hashtags: list[str] | None = None,
                   keywords: list[str] | None = None, qa_blueprint: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -99,7 +143,7 @@ def custom_script(text: str, *, title: str = "", description: str = "", hashtags
                                                             "why_it_works": "user-written script"})
     except Exception as exc:  # noqa: BLE001 - QA is advisory for user scripts
         log.warning("TypeSafe QA skipped for custom script: %s", exc)
-    return script
+    return finalize_metadata(script)
 
 
 def pick_backend(preference: str = "auto") -> str:
@@ -149,7 +193,7 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
         script["qa"] = qa
         script["qa_problems"] = []
         if qa is None:
-            return script  # no TypeSafe key: accept as written
+            return finalize_metadata(script)  # no TypeSafe key: accept as written
         problems = []
         hook = qa["hook_strength"]["score"]
         if hook < min_hook_score:
@@ -164,15 +208,17 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
             problems.append("sentences are too long or jumpy for a fast voiceover")
         if original_text is not None and qa.get("faithful", {}).get("noul", 1.0) < 0.6:
             problems.append("it changed or invented facts, or lost the point of the original; keep every claim from the original")
+        if len(script["title"]) > TITLE_MAX:
+            problems.append(f"the title is {len(script['title'])} characters; YouTube allows 100 and shows about 70, so make it shorter")
         script["qa_problems"] = problems
         if best is None or len(problems) < len(best["qa_problems"]):
             best = script
         if not problems:
-            return script
+            return finalize_metadata(script)
         log.info("script attempt %d rejected: %s", attempt, "; ".join(problems))
         feedback = "\n\nA reviewer rejected the previous draft because: " + "; ".join(problems) + ". Rewrite it."
     assert best is not None
-    return best
+    return finalize_metadata(best)
 
 
 def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angle: str | None = None,

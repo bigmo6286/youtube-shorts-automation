@@ -229,16 +229,15 @@ async function loadOutputs() {
   $("#outputs").innerHTML = outs.map((o) => `<div class="out">
       ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"></video>` : `<div class="novideo">no video</div>`}
       <div class="outbody">
-        <h3>${esc(o.title)}</h3>
+        <h3>${esc(o.title)} <span class="tag ${o.title.length <= 100 ? "ok" : "warn"}" title="YouTube title limit is 100 characters; Shorts show about 70">${o.title.length}/100</span></h3>
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
         ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}</div>` : ""}
         <details><summary>Script</summary><p>${esc(o.script_text)}</p></details>
         ${o.original_text ? `<details><summary>Your original</summary><p class="muted">${esc(o.original_text)}</p></details>` : ""}
         <details><summary>Description &amp; hashtags</summary><p class="pre">${esc(o.description)}</p><p>${esc(tagLine(o))}</p></details>
         <div class="row tight">
-          <button data-copy="title" data-dir="${o.dir}">Copy title</button>
-          <button data-copy="desc" data-dir="${o.dir}">Copy description + hashtags</button>
-          <button data-copy="all" data-dir="${o.dir}">Copy all for upload</button>
+          <button data-copy="title" data-dir="${o.dir}" title="goes in YouTube's title box (100 char limit)">Copy title</button>
+          <button data-copy="desc" data-dir="${o.dir}" title="goes in YouTube's description box">Copy description + hashtags</button>
           <button data-telegram="${o.dir}">Send to Telegram</button>
           ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
         </div>
@@ -250,9 +249,8 @@ async function loadOutputs() {
   $$("button[data-telegram]").forEach((b) => b.addEventListener("click", () => startJob("telegram", { action: "send", path: `output/${b.dataset.telegram}` })));
   $$("button[data-copy]").forEach((b) => b.addEventListener("click", () => {
     const o = state.outputs[b.dataset.dir]; const kind = b.dataset.copy;
-    if (kind === "title") copyText(o.title, "Title");
-    else if (kind === "desc") copyText(descPack(o), "Description and hashtags");
-    else copyText(uploadPack(o), "Title, description and hashtags");
+    if (kind === "title") copyText(o.title.slice(0, 100), "Title");
+    else copyText(descPack(o), "Description and hashtags");
   }));
 }
 

@@ -67,24 +67,32 @@ def upload_text(meta: dict[str, Any]) -> str:
     return body if body.lower().startswith(title.lower()) else f"{title}\n\n{body}"
 
 
+def description_text(meta: dict[str, Any]) -> str:
+    """Description plus any hashtags it does not already contain: paste into YouTube's description box."""
+    desc = (meta.get("description") or "").strip()
+    tags = ["#" + t.lstrip("#") for t in meta.get("hashtags") or []]
+    missing = [t for t in tags if t.lower() not in desc.lower()]
+    return desc + ("\n\n" + " ".join(missing) if missing else "")
+
+
 def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "") -> None:
-    """Send the video with its upload text as caption; long text follows as a separate message."""
+    """Three messages, each copyable on its own: the video with a short note, the TITLE alone (fits
+    YouTube's 100-character box), then the description with hashtags for the description box."""
     if not telegram_configured():
         raise RuntimeError("Telegram is not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Settings")
-    text = upload_text(meta)
-    if note:
-        text = f"{note}\n\n{text}"
-    caption = text if len(text) <= CAPTION_LIMIT else meta.get("title", "")[:CAPTION_LIMIT]
+    title = (meta.get("title") or "")[:100]
+    desc = description_text(meta)
+    caption = (note + "\n\n" if note else "") + f"Title ({len(title)}/100) and description follow as separate messages, copy each one as-is."
     size = video_path.stat().st_size
     if size > VIDEO_LIMIT:
         log.warning("video is %.1f MB, above Telegram's 50 MB bot limit; sending text only", size / 1e6)
-        send_message(f"{text}\n\n(video too large for Telegram: {video_path})")
-        return
-    with open(video_path, "rb") as f:
-        _check(requests.post(_api("sendVideo"),
-                             data={"chat_id": env("TELEGRAM_CHAT_ID"), "caption": caption, "supports_streaming": "true",
-                                   "width": 1080, "height": 1920},
-                             files={"video": (video_path.name, f, "video/mp4")}, timeout=300))
-    if caption != text:
-        send_message(text)
+        send_message(f"(video too large for Telegram: {video_path})")
+    else:
+        with open(video_path, "rb") as f:
+            _check(requests.post(_api("sendVideo"),
+                                 data={"chat_id": env("TELEGRAM_CHAT_ID"), "caption": caption[:CAPTION_LIMIT],
+                                       "supports_streaming": "true", "width": 1080, "height": 1920},
+                                 files={"video": (video_path.name, f, "video/mp4")}, timeout=300))
+    send_message(title)
+    send_message(desc or "(no description)")
     log.info("sent to Telegram chat %s", env("TELEGRAM_CHAT_ID"))
