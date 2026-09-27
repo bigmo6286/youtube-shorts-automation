@@ -95,4 +95,9 @@ def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "") -> Non
                                  files={"video": (video_path.name, f, "video/mp4")}, timeout=300))
     send_message(title)
     send_message(desc or "(no description)")
+    thumb = meta.get("thumbnail")
+    if thumb and Path(thumb).exists():
+        with open(thumb, "rb") as f:
+            _check(requests.post(_api("sendPhoto"), data={"chat_id": env("TELEGRAM_CHAT_ID"), "caption": "Thumbnail"},
+                                 files={"photo": (Path(thumb).name, f, "image/jpeg")}, timeout=120))
     log.info("sent to Telegram chat %s", env("TELEGRAM_CHAT_ID"))

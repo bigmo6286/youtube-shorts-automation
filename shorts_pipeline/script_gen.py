@@ -32,6 +32,8 @@ class ShortScript(BaseModel):
     hashtags: list[str] = Field(description="3-6 hashtags without the # sign, first one shorts, never more than 15")
     visual_fallback: str = Field(description=(
         "One literal stock-footage term for the video's overall subject (2-4 plain words), used when a line's own term finds nothing"))
+    thumbnail_text: str = Field(description=(
+        "3-6 punchy words for the thumbnail, the most curiosity-provoking idea in the video, no punctuation needed, e.g. 'ONE HEART STOPS'"))
 
 
 SYSTEM = """You write scripts for faceless YouTube Shorts: an AI voice reads the script over stock footage with
@@ -134,6 +136,7 @@ def custom_script(text: str, *, title: str = "", description: str = "", hashtags
         tags.insert(0, "shorts")
     script: dict[str, Any] = {
         "title": title, "hook": hook, "lines": lines, "cta": cta, "visual_fallback": keywords[0],
+        "thumbnail_text": " ".join(re.sub(r"[^\w' ]+", " ", title).split()[:6]),
         "description": description.strip() or f"{title}\n\n" + " ".join("#" + t for t in tags),
         "hashtags": tags, "full_text": text, "word_count": len(text.split()),
         "attempt": 1, "backend": "custom", "qa": None, "qa_problems": [],

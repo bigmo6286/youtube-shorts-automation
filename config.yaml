@@ -58,6 +58,10 @@ production:
     handle: ""                # e.g. "@yourchannel", shown under the outro text
     seconds: 2.0
     clip: assets/outro.mp4
+  thumbnail:
+    enabled: true             # 1080x1920 thumbnail.jpg per video: first footage frame + dark band + 3-6 word line
+    band: true                # dark band behind the text
+    handle: ""                # shown small at the bottom; empty = use outro.handle
   music:
     default: random           # none | random | part of a file name or title in assets/music
     volume_db: -18            # music level relative to the voice; -14 louder, -22 quieter

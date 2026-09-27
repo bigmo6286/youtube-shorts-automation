@@ -65,6 +65,13 @@ def youtube_service(interactive: bool = True):
     return build("youtube", "v3", credentials=_credentials(interactive=interactive))
 
 
+def set_thumbnail(video_id: str, image_path: Path) -> None:
+    from googleapiclient.http import MediaFileUpload
+
+    youtube = youtube_service()
+    youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(image_path), mimetype="image/jpeg")).execute()
+
+
 def upload_video(video_path: Path, *, title: str, description: str, tags: list[str],
                  privacy: str = "private", category_id: str = "22") -> dict[str, Any]:
     from googleapiclient.http import MediaFileUpload

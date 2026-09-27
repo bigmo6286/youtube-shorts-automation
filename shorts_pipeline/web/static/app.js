@@ -227,7 +227,7 @@ async function loadOutputs() {
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
   const writer = (o) => o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API";
   $("#outputs").innerHTML = outs.map((o) => `<div class="out">
-      ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"></video>` : `<div class="novideo">no video</div>`}
+      ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"${o.thumbnail_url ? ` poster="${o.thumbnail_url}"` : ""}></video>` : `<div class="novideo">no video</div>`}
       <div class="outbody">
         <h3>${esc(o.title)} <span class="tag ${o.title.length <= 100 ? "ok" : "warn"}" title="YouTube title limit is 100 characters; Shorts show about 70">${o.title.length}/100</span></h3>
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
@@ -240,6 +240,7 @@ async function loadOutputs() {
           <button data-copy="desc" data-dir="${o.dir}" title="goes in YouTube's description box">Copy description + hashtags</button>
           <button data-telegram="${o.dir}">Send to Telegram</button>
           ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
+          ${o.thumbnail_url ? `<a class="btn" href="${o.thumbnail_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}_thumbnail.jpg" title="${esc(o.thumbnail_text || "")}">Download thumbnail</a>` : ""}
         </div>
         <div class="muted small">${esc(o.folder)}</div>
         ${o.youtube_id ? `<a class="tag ok" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>`
@@ -440,6 +441,10 @@ async function loadSettings() {
   set("schedule.start_hour", sc.start_hour ?? 6); set("schedule.end_hour", sc.end_hour ?? 24); set("schedule.blueprints_to_rotate", sc.blueprints_to_rotate ?? 5);
   set("schedule.selection", sc.selection || "weighted"); set("schedule.min_share_pct", Math.round((sc.min_share ?? 0.25) * 100));
   $(`[name="schedule.skip_stretch"]`).checked = sc.skip_stretch !== false;
+  const th = c.production.thumbnail || {};
+  $(`[name="production.thumbnail.enabled"]`).checked = th.enabled !== false;
+  $(`[name="production.thumbnail.band"]`).checked = th.band !== false;
+  set("production.thumbnail.handle", th.handle || "");
   const intro = c.production.intro || {}, outro = c.production.outro || {};
   $(`[name="production.intro.enabled"]`).checked = intro.enabled !== false;
   set("production.intro.text", intro.text ?? "{title}"); set("production.intro.seconds", intro.seconds ?? 1.5);
@@ -467,6 +472,8 @@ $("#cfgform").addEventListener("submit", async (ev) => {
       music: { default: g("production.music.default"), volume_db: num("production.music.volume_db"),
         fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked },
       captions: capRead(),
+      thumbnail: { enabled: $(`[name="production.thumbnail.enabled"]`).checked, band: $(`[name="production.thumbnail.band"]`).checked,
+        handle: g("production.thumbnail.handle") },
       ai_images: { enabled: g("production.ai_images.mode") !== "never", mode: g("production.ai_images.mode"),
         provider: g("production.ai_images.provider"), style: g("production.ai_images.style"), model: g("production.ai_images.model") },
       intro: { ...(state.settings.config.production.intro || {}), enabled: $(`[name="production.intro.enabled"]`).checked,

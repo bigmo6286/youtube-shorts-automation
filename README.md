@@ -187,6 +187,14 @@ python main.py channel sync
 python main.py channel report
 ```
 
+## Thumbnails
+
+Every Short gets `thumbnail.jpg` (1080x1920): a frame from the first footage clip, a dark band, and a
+3-6 word line Claude writes for it (your own scripts use the first words of the title), in the caption
+style, plus your handle. It is the video poster in Studio with a download button, arrives in Telegram
+as a photo after the description, and is set on YouTube automatically when the tool uploads (YouTube
+only accepts custom thumbnails on phone-verified channels; otherwise the upload still succeeds).
+
 ## Intro and outro
 
 Every Short gets a short generated title card at the start (the video title over a motion

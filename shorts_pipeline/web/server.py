@@ -493,6 +493,8 @@ def list_outputs() -> list[dict[str, Any]]:
             "hashtags": meta.get("hashtags", []), "duration": meta.get("duration"),
             "blueprint": {k: meta.get("blueprint", {}).get(k) for k in ("format", "topic", "hook_style")},
             "video_url": f"/outputs/{d.name}/short.mp4" if (d / "short.mp4").exists() else None,
+            "thumbnail_url": f"/outputs/{d.name}/thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
+            "thumbnail_text": meta.get("thumbnail_text"),
             "youtube_id": meta.get("youtube_id"),
             "channel_stats": meta.get("channel_stats"),
             "mode": meta.get("mode", "blueprint"),

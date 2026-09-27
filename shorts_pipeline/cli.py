@@ -241,6 +241,13 @@ def cmd_produce(args) -> Path:
             description = description.rstrip() + "\n\n" + credit
     else:
         log.info("music: none%s", "" if music.list_tracks() else " (assets/music is empty: fetch or upload tracks in Settings)")
+    thumb = None
+    thumb_cfg = cfg.get("thumbnail") or {}
+    if thumb_cfg.get("enabled", True):
+        from . import thumbnail
+        thumb = thumbnail.make_thumbnail(script, segments, out_dir, style=_caption_style(cfg),
+                                         handle=thumb_cfg.get("handle") or (cfg.get("outro") or {}).get("handle", ""),
+                                         band=thumb_cfg.get("band", True))
     video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
                           music_path=Path(track["path"]) if track else None,
                           music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
@@ -249,7 +256,8 @@ def cmd_produce(args) -> Path:
             "title": script["title"], "description": description,
             "hashtags": script["hashtags"], "duration": total,
             "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
-            "intro": bool(intro), "outro": bool(outro),
+            "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None,
+            "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
     print(f"\nRendered {video}  ({total:.1f}s)")
@@ -389,6 +397,13 @@ def _upload(out_dir: Path) -> None:
     meta["youtube_id"] = vid
     save_json(out_dir / "meta.json", meta)
     print(f"Uploaded as {cfg['privacy']}: https://youtube.com/shorts/{vid}")
+    thumb = meta.get("thumbnail")
+    if thumb and Path(thumb).exists():
+        try:
+            upload.set_thumbnail(vid, Path(thumb))
+            print("Thumbnail set.")
+        except Exception as exc:  # noqa: BLE001 - custom thumbnails need a phone-verified channel
+            log.warning("thumbnail not set: %s (YouTube requires a phone-verified channel for custom thumbnails)", str(exc)[:160])
 
 
 def cmd_upload(args) -> None:
