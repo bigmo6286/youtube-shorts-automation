@@ -10,7 +10,7 @@ from typing import Any
 
 from . import analyze, fetch, judge, rank
 from .config import OUTPUT_DIR, has_typesafe, load_config
-from .storage import latest_run_dir, load_json, new_run_dir, now_iso, save_json
+from .storage import RUNS_DIR, latest_run_dir, load_json, new_run_dir, now_iso, save_json
 
 log = logging.getLogger("shorts")
 
@@ -28,8 +28,14 @@ def _setup_logging(verbose: bool) -> None:
 
 
 def _run_dir(args) -> Path:
-    if getattr(args, "run", None):
-        return Path(args.run)
+    """Accept a full path (data/runs/<id>) or a bare run id (<id>, as the web console sends)."""
+    wanted = getattr(args, "run", None)
+    if wanted:
+        candidates = [Path(wanted), RUNS_DIR / Path(wanted).name]
+        for c in candidates:
+            if (c / "shorts.json").exists():
+                return c
+        sys.exit(f"Run {wanted!r} not found (no shorts.json under {candidates[0]} or {candidates[1]}).")
     d = latest_run_dir()
     if not d:
         sys.exit("No runs yet. Run `python main.py discover` first.")
@@ -136,8 +142,13 @@ def cmd_produce(args) -> Path:
     run_dir = _run_dir(args)
     cfg = load_config()["production"]
     analysis = load_json(run_dir / "analysis.json")
-    if not analysis or not analysis.get("blueprints"):
-        sys.exit("No blueprints in this run. Run `analyze` first (needs TYPESAFE_API_KEY for judgments).")
+    if analysis is None:
+        sys.exit(f"Run {run_dir.name} has not been analysed yet. Run Judge, Rank and Analyze (or `run`) first.")
+    if not analysis.get("blueprints"):
+        sys.exit(f"Run {run_dir.name} was analysed but produced no blueprints: {analysis.get('judged', 0)} Shorts judged, "
+                 f"{analysis.get('usable', 0)} usable. Check that TYPESAFE_API_KEY is set, then re-run Judge, Rank and Analyze.")
+    if not 1 <= args.blueprint <= len(analysis["blueprints"]):
+        sys.exit(f"Blueprint {args.blueprint} does not exist; this run has {len(analysis['blueprints'])}.")
     try:
         script_gen.pick_backend(cfg.get("script_backend", "auto"))
     except RuntimeError as exc:
