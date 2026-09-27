@@ -305,6 +305,9 @@ async function loadSchedule() {
     ? `on: ${c.produces_per_day} Shorts/day, ${c.refresh_per_day} trend refresh/day, ${String(c.start_hour).padStart(2, "0")}:00-${String(c.end_hour).padStart(2, "0")}:00, ${p.done_today}/${c.produces_per_day} done today`
     : "off. Turn it on under Settings.";
   $("#schednext").innerHTML = p.next.length ? "Next: " + p.next.map((n) => `<span class="tag">${n.time} ${esc(n.kind)}</span>`).join(" ") : (c.enabled ? "No more slots today." : "");
+  $("#schedeligible").innerHTML = p.eligible && p.eligible.length
+    ? `Producing from run ${esc(p.run || "")}: ` + p.eligible.map((b) => `<span class="tag" title="opportunity ${b.opportunity}, ${b.count} trending Shorts">#${b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%</span>`).join(" ")
+    : "No eligible blueprints yet (a trend refresh will run first).";
   $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
       <td class="${h.status === "error" ? "err" : ""}">${esc(h.status)}</td><td>${h.params && h.params.blueprint ? h.params.blueprint : "-"}</td></tr>`).join("")
     || `<tr><td colspan="5" class="muted">Nothing scheduled has run yet.</td></tr>`;
@@ -419,6 +422,8 @@ async function loadSettings() {
   $(`[name="schedule.enabled"]`).checked = !!sc.enabled;
   set("schedule.produces_per_day", sc.produces_per_day ?? 20); set("schedule.refresh_per_day", sc.refresh_per_day ?? 1);
   set("schedule.start_hour", sc.start_hour ?? 6); set("schedule.end_hour", sc.end_hour ?? 24); set("schedule.blueprints_to_rotate", sc.blueprints_to_rotate ?? 5);
+  set("schedule.selection", sc.selection || "weighted"); set("schedule.min_share_pct", Math.round((sc.min_share ?? 0.25) * 100));
+  $(`[name="schedule.skip_stretch"]`).checked = sc.skip_stretch !== false;
   const intro = c.production.intro || {}, outro = c.production.outro || {};
   $(`[name="production.intro.enabled"]`).checked = intro.enabled !== false;
   set("production.intro.text", intro.text ?? "{title}"); set("production.intro.seconds", intro.seconds ?? 1.5);
@@ -455,7 +460,8 @@ $("#cfgform").addEventListener("submit", async (ev) => {
     upload: { privacy: g("upload.privacy") },
     schedule: { enabled: $(`[name="schedule.enabled"]`).checked, produces_per_day: num("schedule.produces_per_day") || 20,
       refresh_per_day: num("schedule.refresh_per_day"), start_hour: num("schedule.start_hour"), end_hour: num("schedule.end_hour") || 24,
-      blueprints_to_rotate: num("schedule.blueprints_to_rotate") || 5 },
+      blueprints_to_rotate: num("schedule.blueprints_to_rotate") || 5, selection: g("schedule.selection"),
+      min_share: Math.min(1, Math.max(0, num("schedule.min_share_pct") / 100)), skip_stretch: $(`[name="schedule.skip_stretch"]`).checked },
   };
   try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); loadStatus(); }
   catch (e) { toast(e.message, true); }

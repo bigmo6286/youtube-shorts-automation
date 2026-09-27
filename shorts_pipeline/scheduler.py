@@ -23,10 +23,13 @@ TICK_SECONDS = 20
 DEFAULTS = {
     "enabled": False,
     "produces_per_day": 20,
-    "refresh_per_day": 1,        # discover + judge + rank + analyze
+    "refresh_per_day": 2,        # discover + judge + rank + analyze, so the ranking reflects what is trending now
     "start_hour": 6,             # active window, local time
     "end_hour": 24,
-    "blueprints_to_rotate": 5,   # cycle through the top N blueprints of the latest analysed run
+    "blueprints_to_rotate": 5,   # consider at most the top N blueprints of the latest analysed run
+    "selection": "weighted",     # weighted = pick in proportion to opportunity score | rotate = round robin
+    "min_share": 0.25,           # a blueprint must score at least this fraction of the best one to be produced
+    "skip_stretch": True,        # never auto-produce formats that need a person on camera
     "catch_up": True,            # after downtime, run the most recent missed slot once (never all of them)
 }
 
@@ -35,6 +38,41 @@ def schedule_config() -> dict[str, Any]:
     cfg = dict(DEFAULTS)
     cfg.update((load_config().get("schedule") or {}))
     return cfg
+
+
+def eligible_blueprints(blueprints: list[dict[str, Any]], cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """The blueprints worth producing: top N, not stretch, and within `min_share` of the best score.
+    Each entry gets `index` (1-based, as `produce --blueprint` expects) and `weight`."""
+    top_n = max(1, int(cfg.get("blueprints_to_rotate", 5)))
+    pool = [dict(b, index=i + 1) for i, b in enumerate(blueprints[:top_n])]
+    if cfg.get("skip_stretch", True):
+        pool = [b for b in pool if not b.get("stretch")] or pool[:1]
+    best = max((float(b.get("opportunity") or 0) for b in pool), default=0.0)
+    floor = best * float(cfg.get("min_share", 0.4))
+    pool = [b for b in pool if float(b.get("opportunity") or 0) >= floor] or pool[:1]
+    for b in pool:
+        b["weight"] = round(float(b.get("opportunity") or 0) / best, 3) if best else 1.0
+    return pool
+
+
+def choose_blueprint(blueprints: list[dict[str, Any]], cfg: dict[str, Any], state: dict[str, Any]) -> int | None:
+    """1-based blueprint index for the next produce, or None when there is nothing eligible."""
+    import random
+
+    pool = eligible_blueprints(blueprints, cfg)
+    if not pool:
+        return None
+    if cfg.get("selection", "weighted") == "rotate" or len(pool) == 1:
+        idx = int(state.get("next_blueprint", 0)) % len(pool)
+        state["next_blueprint"] = (idx + 1) % len(pool)
+        return pool[idx]["index"]
+    # weighted by opportunity, with the blueprint produced last time slightly discouraged so a strong
+    # leader still does not turn the whole day into one format
+    last = state.get("last_blueprint_key")
+    weights = [b["weight"] * (0.5 if f"{b['format']}|{b['topic']}" == last and len(pool) > 1 else 1.0) for b in pool]
+    pick = random.choices(pool, weights=weights, k=1)[0]
+    state["last_blueprint_key"] = f"{pick['format']}|{pick['topic']}"
+    return pick["index"]
 
 
 def slots_for(day: datetime, count: int, start_hour: float, end_hour: float) -> list[datetime]:
@@ -81,9 +119,14 @@ class Scheduler:
                     for i, t in enumerate(times)]
         items = describe("produce", produce) + describe("refresh", refresh)
         upcoming = sorted((x for x in items if not x["past"]), key=lambda x: x["time"])
+        run_dir = latest_run_dir()
+        analysis = load_json(run_dir / "analysis.json") if run_dir else None
+        pool = eligible_blueprints((analysis or {}).get("blueprints") or [], cfg)
         return {"config": cfg, "today": items, "next": upcoming[:5],
                 "done_today": sum(1 for x in items if x["done"] and x["kind"] == "produce"),
-                "history": self.state.get("history", [])[-15:][::-1], "running": self._thread is not None}
+                "history": self.state.get("history", [])[-15:][::-1], "running": self._thread is not None,
+                "run": run_dir.name if run_dir else None,
+                "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count")} for b in pool]}
 
     # ---------------------------------------------------------------- execution
     def start(self) -> None:
@@ -159,12 +202,15 @@ class Scheduler:
                     self.state["history"].append({"kind": "refresh (no blueprints yet)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
                                                   "started": datetime.now().strftime("%H:%M:%S"), "job": job["id"], "status": job["status"]})
                 return job is not None
-            n = max(1, min(int(cfg["blueprints_to_rotate"]), len(blueprints)))
-            idx = int(self.state.get("next_blueprint", 0)) % n
-            params = {"run": run_dir.name, "blueprint": idx + 1, "music": "random", "scheduled": True}
+            snapshot = dict(self.state)        # choose_blueprint mutates rotation state; keep it only if the job starts
+            choice = choose_blueprint(blueprints, cfg, snapshot)
+            if choice is None:
+                log.warning("scheduled produce skipped: no eligible blueprint")
+                return False
+            params = {"run": run_dir.name, "blueprint": choice, "music": "random", "scheduled": True}
             job = self._submit("produce", params)
-            if job is not None:                # advance the rotation only when the job really started
-                self.state["next_blueprint"] = (idx + 1) % n
+            if job is not None:
+                self.state.update({k: snapshot[k] for k in ("next_blueprint", "last_blueprint_key") if k in snapshot})
         if job is None:
             return False                       # another job is running; retry on the next tick
         self.state["history"].append({"kind": kind, "slot": slot.strftime("%Y-%m-%d %H:%M"),

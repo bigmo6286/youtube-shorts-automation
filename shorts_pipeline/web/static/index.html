@@ -27,6 +27,7 @@
       <div class="row">
         <div id="schednext" class="muted"></div>
       </div>
+      <div id="schedeligible" class="muted"></div>
       <details><summary>Recent scheduled runs</summary><div class="tablewrap"><table id="schedhistory"><thead><tr><th>slot</th><th>kind</th><th>started</th><th>status</th><th>blueprint</th></tr></thead><tbody></tbody></table></div></details>
     </div>
     <div class="grid2">
@@ -175,7 +176,12 @@
             <label>Trend refreshes per day<input type="number" min="0" max="6" name="schedule.refresh_per_day"></label>
             <label>From hour<input type="number" min="0" max="23" name="schedule.start_hour"></label>
             <label>To hour (24 = midnight)<input type="number" min="1" max="24" name="schedule.end_hour"></label>
-            <label>Rotate top N blueprints<input type="number" min="1" max="8" name="schedule.blueprints_to_rotate"></label>
+            <label>Consider top N blueprints<input type="number" min="1" max="8" name="schedule.blueprints_to_rotate"></label>
+          </div>
+          <div class="row">
+            <label>Pick blueprints<select name="schedule.selection"><option value="weighted">by opportunity score (best gets most videos)</option><option value="rotate">round robin</option></select></label>
+            <label>Minimum share of the best score (%)<input type="number" min="0" max="100" name="schedule.min_share_pct"></label>
+            <label class="inline"><input type="checkbox" name="schedule.skip_stretch"> skip stretch formats</label>
           </div>
           <p class="muted">Runs are spread evenly over the window and each finished Short goes to Telegram. The scheduler only runs while this console is running: use <code>python main.py autostart install</code> so it starts at logon, and keep the machine awake.</p>
           <h3>AI images</h3>

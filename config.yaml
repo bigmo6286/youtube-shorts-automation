@@ -82,10 +82,13 @@ notifications:
 schedule:
   enabled: false
   produces_per_day: 20        # Shorts to write, render and send per day, evenly spaced over the window below
-  refresh_per_day: 1          # discover + judge + rank + analyze runs per day (keeps blueprints fresh)
+  refresh_per_day: 2          # discover + judge + rank + analyze runs per day (keeps the ranking current)
   start_hour: 6               # active window, local time (24 = midnight)
   end_hour: 24
-  blueprints_to_rotate: 5     # cycle through the top N blueprints so videos vary in format and topic
+  blueprints_to_rotate: 5     # consider at most the top N blueprints of the latest run
+  selection: weighted         # weighted = produce in proportion to opportunity score | rotate = round robin
+  min_share: 0.25             # only blueprints scoring at least 25% of the best one get produced
+  skip_stretch: true          # never auto-produce formats that need a person on camera
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
 
 upload:

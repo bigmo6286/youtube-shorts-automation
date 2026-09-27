@@ -149,9 +149,12 @@ and words per caption. Extra fonts go in `assets/fonts`.
 
 The console has a built-in scheduler (Settings -> Schedule). With it on, it spreads the configured
 number of Shorts evenly across your active hours (default 20 a day between 06:00 and midnight, one
-every 54 minutes), refreshes the trend analysis once a day, rotates through the top blueprints so
-formats and topics vary, avoids subjects used in recent videos, and sends every finished Short to
-Telegram. If the console was off, it runs the single most recent missed slot when it comes back,
+every 54 minutes), refreshes the trend analysis twice a day so the ranking reflects what is trending
+now, and produces from the best blueprints of the latest run: only those scoring at least 25% of the
+top opportunity score, never stretch formats, picked in proportion to their score (so the leader gets
+the most videos without taking the whole day). It avoids subjects used in recent videos and sends
+every finished Short to Telegram. The Overview shows which blueprints are currently eligible and their
+share. If the console was off, it runs the single most recent missed slot when it comes back,
 never the whole backlog. Runs and their status are listed on the Overview.
 
 The scheduler only runs while `python main.py web` is running. On Windows:
