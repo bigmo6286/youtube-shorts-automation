@@ -133,7 +133,9 @@ When Pexels has nothing that fits a line, an **AI-generated image** is made from
 term and the sentence itself, then shown with the same slow zoom. The default generator is
 Pollinations (free, no key, about five seconds per image); with a key you can switch to Together AI
 (FLUX) or OpenAI (gpt-image-1) in Settings, and "for every line" turns stock footage off entirely.
-Images are cached under `data/cache/aiimg`.
+Images are cached under `data/cache/aiimg`. The free service throttles to roughly one image every
+40 seconds after the first few, so "for every line" on a long script is slow; the keyed providers
+are faster.
 
 Caption looks are presets plus overrides (Settings -> Captions, with a live preview): bold Impact,
 clean sans, boxed word, pop, minimal, neon; any font, size, colours, outline, highlight mode, position
