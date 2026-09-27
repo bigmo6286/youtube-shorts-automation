@@ -35,6 +35,7 @@ KEY_FIELDS = {
     "YOUTUBE_API_KEY": "YouTube Data API key (optional extra discovery source)",
     "TELEGRAM_BOT_TOKEN": "Telegram bot token from @BotFather (delivery of finished Shorts)",
     "TOGETHER_API_KEY": "Together AI key (optional: FLUX images instead of the free generator)",
+    "HF_TOKEN": "Hugging Face token (optional: FLUX / Stable Diffusion images via the Inference API)",
     "OPENAI_API_KEY": "OpenAI key (optional: gpt-image-1 images instead of the free generator)",
 }
 PATH_FIELDS = {

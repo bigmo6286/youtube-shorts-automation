@@ -67,7 +67,8 @@ production:
   ai_images:
     enabled: true
     mode: fallback            # fallback = only when Pexels has nothing that fits | always = AI image for every line | never
-    provider: pollinations    # pollinations (free, no key) | together (TOGETHER_API_KEY, FLUX) | openai (OPENAI_API_KEY, gpt-image-1)
+    provider: pollinations    # pollinations (free, no key) | together (TOGETHER_API_KEY) | huggingface (HF_TOKEN) | openai (OPENAI_API_KEY, paid)
+    model: ""                 # optional model id for together / huggingface / openai, e.g. black-forest-labs/FLUX.1-schnell
     style: "cinematic photograph, natural light, realistic, sharp detail, vertical composition, no text, no watermark, no logo"
   script_backend: auto        # auto | api | claude_code  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription)
   script_max_attempts: 3      # regenerate if TypeSafe QA says the hook is weak

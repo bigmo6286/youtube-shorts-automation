@@ -3,6 +3,7 @@
 Providers:
   pollinations  free, no key, ~5 s per image (default)
   together      FLUX.1 schnell via api.together.xyz (TOGETHER_API_KEY)
+  huggingface   FLUX.1 schnell (or any text-to-image model) via the HF Inference API (HF_TOKEN)
   openai        gpt-image-1 via api.openai.com (OPENAI_API_KEY)
 Images are cached under data/cache/aiimg by prompt hash.
 """
@@ -47,6 +48,8 @@ def available(provider: str | None = None) -> bool:
         return bool(env("TOGETHER_API_KEY"))
     if p == "openai":
         return bool(env("OPENAI_API_KEY"))
+    if p == "huggingface":
+        return bool(env("HF_TOKEN"))
     return False
 
 
@@ -132,7 +135,44 @@ def _openai(prompt: str, dest: Path) -> Path:
     return dest
 
 
-PROVIDERS = {"pollinations": _pollinations, "together": _together, "openai": _openai}
+HF_DEFAULT_MODEL = "black-forest-labs/FLUX.1-schnell"
+
+
+def _huggingface(prompt: str, dest: Path) -> Path:
+    """Hugging Face serverless Inference API (free token, small monthly allowance). Handles the
+    'model is loading' 503 by waiting, and rate limits by backing off."""
+    model = settings().get("model") or HF_DEFAULT_MODEL
+    headers = {"Authorization": f"Bearer {env('HF_TOKEN')}", "Accept": "image/png"}
+    body = {"inputs": prompt, "parameters": {"width": 768, "height": 1344, "num_inference_steps": 4}}
+    urls = [f"https://router.huggingface.co/hf-inference/models/{model}",
+            f"https://api-inference.huggingface.co/models/{model}"]
+    last = ""
+    for url in urls:
+        for attempt in range(4):
+            r = requests.post(url, headers=headers, json=body, timeout=180)
+            ctype = r.headers.get("content-type", "")
+            if r.status_code == 200 and ctype.startswith("image/"):
+                dest.write_bytes(r.content)
+                return dest
+            last = f"{r.status_code} {r.text[:160]}"
+            if r.status_code == 503:                       # cold model: the body says how long to wait
+                try:
+                    wait = float(r.json().get("estimated_time", 15))
+                except Exception:  # noqa: BLE001
+                    wait = 15.0
+                log.info("huggingface model loading, waiting %.0fs", min(wait, 60))
+                time.sleep(min(wait, 60))
+                continue
+            if r.status_code == 429:
+                time.sleep(10 * (attempt + 1))
+                continue
+            if r.status_code in (400, 401, 402, 403):     # bad token, no credit, gated model: no point retrying
+                raise RuntimeError(f"huggingface {last}")
+            break
+    raise RuntimeError(f"huggingface failed: {last}")
+
+
+PROVIDERS = {"pollinations": _pollinations, "together": _together, "openai": _openai, "huggingface": _huggingface}
 
 
 def generate(line_text: str, keyword: str, subject: str = "") -> Path | None:

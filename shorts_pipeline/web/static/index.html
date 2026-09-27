@@ -181,7 +181,8 @@
           <h3>AI images</h3>
           <div class="row">
             <label>When to use<select name="production.ai_images.mode"><option value="fallback">only when Pexels has nothing that fits</option><option value="always">for every line (no stock footage)</option><option value="never">never</option></select></label>
-            <label>Provider<select name="production.ai_images.provider"><option value="pollinations">Pollinations (free, no key)</option><option value="together">Together AI, FLUX (key)</option><option value="openai">OpenAI gpt-image-1 (key)</option></select></label>
+            <label>Provider<select name="production.ai_images.provider"><option value="pollinations">Pollinations (free, no key)</option><option value="together">Together AI, FLUX (key)</option><option value="huggingface">Hugging Face Inference API (token)</option><option value="openai">OpenAI gpt-image-1 (key, paid)</option></select></label>
+            <label>Model (Together / Hugging Face / OpenAI; blank = provider default)<input name="production.ai_images.model" placeholder="black-forest-labs/FLUX.1-schnell"></label>
           </div>
           <div class="row"><label class="grow">Image style (appended to every prompt)<input name="production.ai_images.style"></label></div>
           <h3>Captions</h3>

@@ -414,6 +414,7 @@ async function loadSettings() {
   set("production.ai_images.mode", ai.enabled === false ? "never" : (ai.mode || "fallback"));
   set("production.ai_images.provider", ai.provider || "pollinations");
   set("production.ai_images.style", ai.style || "");
+  set("production.ai_images.model", ai.model || "");
   const sc = c.schedule || {};
   $(`[name="schedule.enabled"]`).checked = !!sc.enabled;
   set("schedule.produces_per_day", sc.produces_per_day ?? 20); set("schedule.refresh_per_day", sc.refresh_per_day ?? 1);
@@ -446,7 +447,7 @@ $("#cfgform").addEventListener("submit", async (ev) => {
         fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked },
       captions: capRead(),
       ai_images: { enabled: g("production.ai_images.mode") !== "never", mode: g("production.ai_images.mode"),
-        provider: g("production.ai_images.provider"), style: g("production.ai_images.style") },
+        provider: g("production.ai_images.provider"), style: g("production.ai_images.style"), model: g("production.ai_images.model") },
       intro: { ...(state.settings.config.production.intro || {}), enabled: $(`[name="production.intro.enabled"]`).checked,
         text: g("production.intro.text") || "{title}", seconds: num("production.intro.seconds") || 1.5 },
       outro: { ...(state.settings.config.production.outro || {}), enabled: $(`[name="production.outro.enabled"]`).checked,

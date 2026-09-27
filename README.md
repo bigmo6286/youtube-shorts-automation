@@ -132,7 +132,9 @@ depend on a person or original footage, so expect a voiceover remake to underper
 When Pexels has nothing that fits a line, an **AI-generated image** is made from the line's footage
 term and the sentence itself, then shown with the same slow zoom. The default generator is
 Pollinations (free, no key, about five seconds per image); with a key you can switch to Together AI
-(FLUX) or OpenAI (gpt-image-1) in Settings, and "for every line" turns stock footage off entirely.
+(FLUX), the Hugging Face Inference API (a free token gets a small monthly allowance; FLUX.1-schnell
+by default, any text-to-image model id in the Model field) or OpenAI (gpt-image-1, paid per image) in
+Settings, and "for every line" turns stock footage off entirely.
 Images are cached under `data/cache/aiimg`. The free service throttles to roughly one image every
 40 seconds after the first few, so "for every line" on a long script is slow; the keyed providers
 are faster.
