@@ -51,7 +51,10 @@ td:last-child, th:last-child { white-space: normal; } tr.sel td { background: va
 .out { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; }
 .out video { width: 150px; aspect-ratio: 9/16; background: #000; object-fit: cover; flex: none; } .novideo { width: 150px; display: grid; place-items: center; color: var(--muted); }
 .outbody { padding: 12px; min-width: 0; } .outbody h3 { margin: 0 0 4px; font-size: 14px; color: var(--text); text-transform: none; letter-spacing: 0; }
-.qa { font-size: 12px; margin: 6px 0; color: var(--muted); } details p { font-size: 13px; }
+.qa { font-size: 12px; margin: 6px 0; color: var(--muted); } details p { font-size: 13px; } .pre { white-space: pre-wrap; }
+.row.tight { gap: 6px; margin: 8px 0 4px; } .row.tight button, .btn { padding: 4px 9px; font-size: 12px; }
+.btn { display: inline-block; background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+.small { font-size: 11px; word-break: break-all; } label.grow { flex: 1 1 100%; }
 
 .keyrow { flex-direction: column; gap: 4px; margin-bottom: 10px; } .keyrow > span:first-child { display: flex; gap: 8px; align-items: center; }
 .keyinput { display: flex; gap: 6px; } .keyinput button { padding: 4px 8px; }

@@ -57,7 +57,10 @@ Opens a local console at http://127.0.0.1:8787 with four tabs:
 - **Overview**: which keys are configured, the latest run, the blueprints and the top ranked Shorts.
 - **Pipeline**: run everything or one stage at a time, watch the live log, open any run's report.
 - **Studio**: pick a blueprint and an optional angle, produce a Short, preview the video, read the
-  script and its TypeSafe QA scores, upload to YouTube.
+  script and its TypeSafe QA scores, upload to YouTube. Or paste / load your own script: it is voiced,
+  captioned and rendered exactly as written (TypeSafe scores it for information only). Every produced
+  Short has buttons to copy the title, the description with hashtags, or all three for a manual upload,
+  plus a download link for the video.
 - **Settings**: paste API keys (saved to `.env`, shown masked afterwards), upload
   `client_secrets.json`, and edit discovery hashtags, ranking weights, voice, backgrounds and privacy.
 
@@ -70,6 +73,7 @@ python main.py run                 # discover -> judge -> rank -> analyze, print
 python main.py run --produce       # ...and render a Short from the #1 blueprint into output/
 python main.py produce --blueprint 2 --angle "why octopuses have three hearts"
 python main.py produce --upload    # render then upload (private by default, see config.yaml)
+python main.py produce --script-file my_script.txt --title "Why octopuses have three hearts" --hashtags "shorts,facts" --keywords "octopus underwater,ocean"
 python main.py upload output/<dir> # upload something rendered earlier
 python main.py rank --top 30       # re-rank after editing weights in config.yaml (no API calls)
 ```

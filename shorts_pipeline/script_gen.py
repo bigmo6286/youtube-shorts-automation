@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import anthropic
@@ -54,6 +55,44 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None) -
         f"Trending exemplars (for pacing only, do not copy):\n{exemplars}\n\n"
         "Write the script now."
     )
+
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def custom_script(text: str, *, title: str = "", description: str = "", hashtags: list[str] | None = None,
+                  keywords: list[str] | None = None, qa_blueprint: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Wrap a user-written script in the same structure the generator produces, so voice, captions,
+    footage and render need no special casing. Nothing is rewritten; TypeSafe QA runs for information only."""
+    text = re.sub(r"\s+", " ", text.replace("\r", "\n")).strip()
+    if not text:
+        raise ValueError("The script is empty.")
+    sentences = [s.strip() for s in _SENTENCE_SPLIT.split(text) if s.strip()]
+    if len(sentences) == 1:
+        sentences = [text]
+    hook = sentences[0]
+    cta = sentences[-1] if len(sentences) > 1 else ""
+    body = sentences[1:-1] if len(sentences) > 2 else []
+    keywords = [k.strip() for k in (keywords or []) if k.strip()]
+    title = title.strip() or (hook[:70].rstrip(".!? ") if hook else "Untitled Short")
+    if not keywords:
+        keywords = [re.sub(r"[^\w ]", "", title).strip() or "abstract background"]
+    lines = [{"text": s, "visual_keyword": keywords[i % len(keywords)]} for i, s in enumerate(body)]
+    tags = [t.strip().lstrip("#") for t in (hashtags or []) if t.strip()]
+    if "shorts" not in [t.lower() for t in tags]:
+        tags.insert(0, "shorts")
+    script: dict[str, Any] = {
+        "title": title, "hook": hook, "lines": lines, "cta": cta,
+        "description": description.strip() or f"{title}\n\n" + " ".join("#" + t for t in tags),
+        "hashtags": tags, "full_text": text, "word_count": len(text.split()),
+        "attempt": 1, "backend": "custom", "qa": None, "qa_problems": [],
+    }
+    try:
+        script["qa"] = judge_script(script, qa_blueprint or {"format": "custom", "topic": "custom", "hook_style": "custom",
+                                                            "why_it_works": "user-written script"})
+    except Exception as exc:  # noqa: BLE001 - QA is advisory for user scripts
+        log.warning("TypeSafe QA skipped for custom script: %s", exc)
+    return script
 
 
 def _draft_via_api(client: "anthropic.Anthropic", user_prompt: str) -> ShortScript:

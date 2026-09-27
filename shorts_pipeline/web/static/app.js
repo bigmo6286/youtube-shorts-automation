@@ -193,22 +193,72 @@ $$("button[data-job]").forEach((b) => b.addEventListener("click", () => {
 }));
 
 // ---------------------------------------------------------------- studio
+async function copyText(text, what) {
+  try { await navigator.clipboard.writeText(text); toast(`${what} copied`); }
+  catch (_) {
+    const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); toast(ok ? `${what} copied` : "Copy blocked by the browser; select the text manually", !ok);
+  }
+}
+const tagLine = (o) => (o.hashtags || []).map((h) => "#" + h.replace(/^#/, "")).join(" ");
+// Description + hashtags, without repeating tags the description already carries.
+function descPack(o) {
+  const desc = (o.description || "").trim();
+  const missing = (o.hashtags || []).map((h) => "#" + h.replace(/^#/, "")).filter((t) => !desc.toLowerCase().includes(t.toLowerCase()));
+  return missing.length ? `${desc}\n\n${missing.join(" ")}` : desc;
+}
+// Title + description + hashtags for a manual upload, without repeating a title the description opens with.
+function uploadPack(o) {
+  const body = descPack(o);
+  return body.toLowerCase().startsWith((o.title || "").toLowerCase()) ? body : `${o.title}\n\n${body}`;
+}
+
 async function loadOutputs() {
   const outs = await api("/api/outputs");
+  state.outputs = Object.fromEntries(outs.map((o) => [o.dir, o]));
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
+  const writer = (o) => o.mode === "custom" ? "your own script" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API";
   $("#outputs").innerHTML = outs.map((o) => `<div class="out">
       ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"></video>` : `<div class="novideo">no video</div>`}
       <div class="outbody">
         <h3>${esc(o.title)}</h3>
-        <div class="muted">${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · written by ${o.backend === "claude_code" ? "Claude subscription" : "Anthropic API"}</div>
+        <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}</div>
         ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}</div>` : ""}
         <details><summary>Script</summary><p>${esc(o.script_text)}</p></details>
-        <div class="muted">${(o.hashtags || []).map((h) => "#" + esc(h)).join(" ")}</div>
+        <details><summary>Description &amp; hashtags</summary><p class="pre">${esc(o.description)}</p><p>${esc(tagLine(o))}</p></details>
+        <div class="row tight">
+          <button data-copy="title" data-dir="${o.dir}">Copy title</button>
+          <button data-copy="desc" data-dir="${o.dir}">Copy description + hashtags</button>
+          <button data-copy="all" data-dir="${o.dir}">Copy all for upload</button>
+          ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
+        </div>
+        <div class="muted small">${esc(o.folder)}</div>
         ${o.youtube_id ? `<a class="tag ok" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube: ${o.youtube_id}</a>`
           : `<button data-upload="${o.dir}">Upload to YouTube</button>`}
       </div></div>`).join("") || `<p class="muted">Nothing produced yet.</p>`;
   $$("button[data-upload]").forEach((b) => b.addEventListener("click", () => startJob("upload", { path: `output/${b.dataset.upload}` })));
+  $$("button[data-copy]").forEach((b) => b.addEventListener("click", () => {
+    const o = state.outputs[b.dataset.dir]; const kind = b.dataset.copy;
+    if (kind === "title") copyText(o.title, "Title");
+    else if (kind === "desc") copyText(descPack(o), "Description and hashtags");
+    else copyText(uploadPack(o), "Title, description and hashtags");
+  }));
 }
+
+// custom script: load a .txt into the textarea, then produce without generation
+$("#cs-file").addEventListener("change", (ev) => {
+  const f = ev.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => { $("#cs-text").value = String(reader.result || ""); if (!$("#cs-title").value) $("#cs-title").value = f.name.replace(/\.[^.]+$/, ""); toast(`Loaded ${f.name}`); };
+  reader.readAsText(f);
+});
+$("#cs-produce").addEventListener("click", () => {
+  const text = $("#cs-text").value.trim();
+  if (text.split(/\s+/).length < 5) return toast("Paste a script first (at least a few sentences)", true);
+  toast("Producing your script");
+  startJob("produce", { script_text: text, title: $("#cs-title").value, description: $("#cs-desc").value,
+    hashtags: $("#cs-tags").value, keywords: $("#cs-keywords").value, upload: $("#cs-upload").checked });
+});
 
 // ---------------------------------------------------------------- settings
 async function loadSettings() {

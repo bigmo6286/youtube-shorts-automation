@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -141,36 +142,55 @@ def cmd_produce(args) -> Path:
 
     if not tools.ensure_ffmpeg_on_path():     # check before spending a script generation
         sys.exit(tools.MISSING_HELP)
-    run_dir = _run_dir(args)
     cfg = load_config()["production"]
-    analysis = load_json(run_dir / "analysis.json")
-    if analysis is None:
-        sys.exit(f"Run {run_dir.name} has not been analysed yet. Run Judge, Rank and Analyze (or `run`) first.")
-    if not analysis.get("blueprints"):
-        sys.exit(f"Run {run_dir.name} was analysed but produced no blueprints: {analysis.get('judged', 0)} Shorts judged, "
-                 f"{analysis.get('usable', 0)} usable. Check that TYPESAFE_API_KEY is set, then re-run Judge, Rank and Analyze.")
-    if not 1 <= args.blueprint <= len(analysis["blueprints"]):
-        sys.exit(f"Blueprint {args.blueprint} does not exist; this run has {len(analysis['blueprints'])}.")
-    try:
-        script_gen.pick_backend(cfg.get("script_backend", "auto"))
-    except RuntimeError as exc:
-        sys.exit(str(exc))
-    blueprint = analysis["blueprints"][args.blueprint - 1]
-    log.info("blueprint %d: %s x %s (%s hook)", args.blueprint, blueprint["format"], blueprint["topic"], blueprint["hook_style"])
 
-    out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{blueprint['topic']}"
+    script_text = _read_custom_script(args)
+    if script_text:
+        # User-written script: no blueprint or run needed, nothing is generated or rewritten.
+        try:
+            script = script_gen.custom_script(
+                script_text, title=getattr(args, "title", "") or "", description=getattr(args, "description", "") or "",
+                hashtags=_listify(getattr(args, "hashtags", None)), keywords=_listify(getattr(args, "keywords", None)))
+        except ValueError as exc:
+            sys.exit(str(exc))
+        blueprint = {"format": "custom", "topic": "custom", "hook_style": "custom", "why_it_works": "user-written script"}
+        run_name = "custom"
+        log.info("custom script: %d words, title %r", script["word_count"], script["title"])
+        out_dir = OUTPUT_DIR / f"{now_iso()}_custom"
+    else:
+        run_dir = _run_dir(args)
+        analysis = load_json(run_dir / "analysis.json")
+        if analysis is None:
+            sys.exit(f"Run {run_dir.name} has not been analysed yet. Run Judge, Rank and Analyze (or `run`) first.")
+        if not analysis.get("blueprints"):
+            sys.exit(f"Run {run_dir.name} was analysed but produced no blueprints: {analysis.get('judged', 0)} Shorts judged, "
+                     f"{analysis.get('usable', 0)} usable. Check that TYPESAFE_API_KEY is set, then re-run Judge, Rank and Analyze.")
+        if not 1 <= args.blueprint <= len(analysis["blueprints"]):
+            sys.exit(f"Blueprint {args.blueprint} does not exist; this run has {len(analysis['blueprints'])}.")
+        try:
+            script_gen.pick_backend(cfg.get("script_backend", "auto"))
+        except RuntimeError as exc:
+            sys.exit(str(exc))
+        blueprint = analysis["blueprints"][args.blueprint - 1]
+        run_name = run_dir.name
+        log.info("blueprint %d: %s x %s (%s hook)", args.blueprint, blueprint["format"], blueprint["topic"], blueprint["hook_style"])
+        out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{blueprint['topic']}"
+        try:
+            script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
+                                                max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
+                                                backend=cfg.get("script_backend", "auto"))
+        except RuntimeError as exc:
+            sys.exit(f"Script writing failed: {exc}")
+
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
-                                            max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
-                                            backend=cfg.get("script_backend", "auto"))
-    except RuntimeError as exc:
-        sys.exit(f"Script writing failed: {exc}")
     save_json(out_dir / "script.json", script)
     print(f"\nTITLE: {script['title']}\n\n{script['full_text']}\n")
     if script.get("qa_problems"):
         log.warning("script accepted with remaining QA notes: %s", "; ".join(script["qa_problems"]))
+    if script.get("backend") == "custom" and script.get("qa"):
+        qa = script["qa"]
+        log.info("TypeSafe read of your script (advisory): hook %.1f/3, clarity %.1f/2, payoff %.0f%%, policy risk %.0f%%",
+                 qa["hook_strength"]["score"], qa["clarity"]["score"], qa["has_payoff"]["noul"] * 100, qa["policy_risk"]["noul"] * 100)
 
     voice_path = out_dir / "voice.mp3"
     words = tts.synthesize(script["full_text"], voice_path, voice=cfg["voice"], rate=cfg["voice_rate"])
@@ -181,13 +201,33 @@ def cmd_produce(args) -> Path:
     segments = footage.plan_backgrounds(script, words, total, cfg["background_source"], out_dir)
     video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4",
                           music_volume_db=cfg["music_volume_db"], total_seconds=total)
-    save_json(out_dir / "meta.json", {"run": run_dir.name, "blueprint": blueprint, "video": str(video),
+    save_json(out_dir / "meta.json", {"run": run_name, "blueprint": blueprint, "video": str(video),
                                       "title": script["title"], "description": script["description"],
-                                      "hashtags": script["hashtags"], "duration": total})
+                                      "hashtags": script["hashtags"], "duration": total,
+                                      "mode": "custom" if script.get("backend") == "custom" else "blueprint"})
     print(f"\nRendered {video}  ({total:.1f}s)")
     if args.upload:
         _upload(out_dir)
     return out_dir
+
+
+def _read_custom_script(args) -> str:
+    text = getattr(args, "script_text", None) or ""
+    path = getattr(args, "script_file", None)
+    if path:
+        p = Path(path)
+        if not p.exists():
+            sys.exit(f"Script file not found: {p}")
+        text = p.read_text(encoding="utf-8", errors="replace")
+    return text.strip()
+
+
+def _listify(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [v for v in re.split(r"[,\n]", value) if v.strip()]
+    return list(value)
 
 
 def _upload(out_dir: Path) -> None:
@@ -250,6 +290,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("produce", help="write, voice, caption and render a Short from a blueprint")
     pr.add_argument("--run"); pr.add_argument("--blueprint", type=int, default=1, help="1-based index from analyze")
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
+    pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")
+    pr.add_argument("--title"); pr.add_argument("--description")
+    pr.add_argument("--hashtags", help="comma separated, for --script-file")
+    pr.add_argument("--keywords", help="comma separated stock-footage search terms, for --script-file")
     pr.add_argument("--upload", action="store_true")
     pr.set_defaults(func=cmd_produce)
 

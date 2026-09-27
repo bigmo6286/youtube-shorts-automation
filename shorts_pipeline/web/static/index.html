@@ -76,6 +76,26 @@
       </div>
       <p class="muted">Uses the Anthropic key if set, otherwise your Claude subscription token. TypeSafe QA rejects weak hooks and asks for a rewrite, up to the attempt limit in config.</p>
     </div>
+    <div class="panel">
+      <h2>Or use your own script</h2>
+      <p class="muted">Nothing is generated or rewritten: your text is voiced, captioned and rendered as-is. The first sentence is the hook, the last is the call to action. TypeSafe still scores it, for information only.</p>
+      <div class="row">
+        <label class="grow">Script<textarea id="cs-text" rows="7" placeholder="Paste your script here, or load a .txt file."></textarea></label>
+      </div>
+      <div class="row">
+        <input type="file" id="cs-file" accept=".txt,.md,text/plain">
+        <label>Title (optional, defaults to the first sentence)<input id="cs-title" maxlength="100"></label>
+      </div>
+      <div class="row">
+        <label class="grow">Description (optional)<textarea id="cs-desc" rows="2"></textarea></label>
+      </div>
+      <div class="row">
+        <label>Hashtags, comma separated<input id="cs-tags" placeholder="shorts, facts, history"></label>
+        <label>Footage keywords, comma separated (Pexels)<input id="cs-keywords" placeholder="ocean waves, city at night"></label>
+        <label class="inline"><input type="checkbox" id="cs-upload"> upload when done</label>
+        <button class="primary" id="cs-produce">Voice and render my script</button>
+      </div>
+    </div>
     <div id="outputs" class="outputs"></div>
   </section>
 

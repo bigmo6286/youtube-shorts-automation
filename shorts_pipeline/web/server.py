@@ -141,8 +141,10 @@ def _args(job: Job) -> SimpleNamespace:
     p = job.params
     return SimpleNamespace(
         run=p.get("run") or None, force=bool(p.get("force")), top=int(p.get("top", 20)),
-        api=bool(p.get("api")), produce=bool(p.get("produce")), blueprint=int(p.get("blueprint", 1)),
+        api=bool(p.get("api")), produce=bool(p.get("produce")), blueprint=int(p.get("blueprint") or 1),
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
+        script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
+        description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
     )
 
 
@@ -370,6 +372,8 @@ def list_outputs() -> list[dict[str, Any]]:
             "blueprint": {k: meta.get("blueprint", {}).get(k) for k in ("format", "topic", "hook_style")},
             "video_url": f"/outputs/{d.name}/short.mp4" if (d / "short.mp4").exists() else None,
             "youtube_id": meta.get("youtube_id"),
+            "mode": meta.get("mode", "blueprint"),
+            "folder": str(d),
             "script_text": (script or {}).get("full_text"),
             "backend": (script or {}).get("backend"),
             "qa": {"hook_strength": qa.get("hook_strength", {}).get("score"), "clarity": qa.get("clarity", {}).get("score"),
