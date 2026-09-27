@@ -170,6 +170,23 @@ and set Windows power options so the machine does not sleep. `python main.py sch
 Settings changed in the console are written to `config.local.yaml` (untracked), so `git pull` never
 conflicts with them; `config.yaml` holds the defaults.
 
+## Your channel's performance feeds back into the ranking
+
+Add a YouTube Data API key (read-only, no OAuth: Google Cloud console -> enable YouTube Data API v3 ->
+Credentials -> API key) and your channel handle in Settings. On every trend refresh, and on "Sync channel
+now", the tool reads your uploads' public statistics, matches them to the Shorts it produced (by our
+upload record, or by title when you uploaded manually with the generated title), and computes each
+format x topic's median views per hour relative to your channel's median. That ratio, clamped to 0.3-3
+and only once a blueprint has two or more videos older than six hours, multiplies the blueprint's trend
+score before the scheduler picks what to make. So a format that trends globally but flops on your
+channel gets fewer videos, and one that over-performs for you gets more. The Overview shows the
+per-blueprint factors and each produced Short's live view count.
+
+```bash
+python main.py channel sync
+python main.py channel report
+```
+
 ## Intro and outro
 
 Every Short gets a short generated title card at the start (the video title over a motion

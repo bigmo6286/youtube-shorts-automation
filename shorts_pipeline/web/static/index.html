@@ -28,6 +28,7 @@
         <div id="schednext" class="muted"></div>
       </div>
       <div id="schedeligible" class="muted"></div>
+      <div id="channelpanel" class="muted"></div>
       <details><summary>Recent scheduled runs</summary><div class="tablewrap"><table id="schedhistory"><thead><tr><th>slot</th><th>kind</th><th>started</th><th>status</th><th>blueprint</th></tr></thead><tbody></tbody></table></div></details>
     </div>
     <div class="grid2">
@@ -130,6 +131,13 @@
           </ol></details>
         <h3>Claude subscription instead of an API key</h3>
         <p class="muted">Run <code>claude setup-token</code> in a terminal (it opens a browser), paste the token above as the subscription token.</p>
+        <h3>Channel performance feedback</h3>
+        <p class="muted">With a YouTube Data API key and your channel handle (both above), the tool reads your uploads' public view counts, matches them to the Shorts it produced (by title, so keep the generated titles when uploading), and gives blueprints that perform well on <i>your</i> channel a bigger share of production. Synced with every trend refresh.</p>
+        <div class="row"><button id="channelsync">Sync channel now</button><span id="channelstatus" class="muted"></span></div>
+        <details class="muted"><summary>How to get a YouTube Data API key (read-only, no OAuth)</summary>
+          <ol><li>console.cloud.google.com → your project → APIs &amp; Services → Enable <b>YouTube Data API v3</b></li>
+          <li>Credentials → Create credentials → <b>API key</b> → copy it into the YouTube Data API key field</li>
+          <li>Put your channel handle (e.g. @yourname) in the channel field, save, then Sync.</li></ol></details>
         <h3>Telegram delivery</h3>
         <p class="muted">Every finished Short is sent to a Telegram chat with its title, description and hashtags. Create a bot with <b>@BotFather</b>, paste its token above, send the bot any message, then:</p>
         <div class="row">

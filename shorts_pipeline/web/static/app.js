@@ -160,6 +160,7 @@ async function pollJob() {
   loadStatus(); loadRuns(); loadJobPicker();
   if (j.kind === "produce" || j.kind === "upload") loadOutputs();
   if (j.kind === "fetch_music") loadMusic();
+  if (j.kind === "channel") { loadSchedule(); loadOutputs(); }
 }
 async function loadJobPicker() {
   const jobs = await api("/api/jobs");
@@ -242,7 +243,7 @@ async function loadOutputs() {
           ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
         </div>
         <div class="muted small">${esc(o.folder)}</div>
-        ${o.youtube_id ? `<a class="tag ok" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube: ${o.youtube_id}</a>`
+        ${o.youtube_id ? `<a class="tag ok" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>`
           : `<button data-upload="${o.dir}">Upload to YouTube</button>`}
       </div></div>`).join("") || `<p class="muted">Nothing produced yet.</p>`;
   $$("button[data-upload]").forEach((b) => b.addEventListener("click", () => startJob("upload", { path: `output/${b.dataset.upload}` })));
@@ -306,12 +307,27 @@ async function loadSchedule() {
     : "off. Turn it on under Settings.";
   $("#schednext").innerHTML = p.next.length ? "Next: " + p.next.map((n) => `<span class="tag">${n.time} ${esc(n.kind)}</span>`).join(" ") : (c.enabled ? "No more slots today." : "");
   $("#schedeligible").innerHTML = p.eligible && p.eligible.length
-    ? `Producing from run ${esc(p.run || "")}: ` + p.eligible.map((b) => `<span class="tag" title="opportunity ${b.opportunity}, ${b.count} trending Shorts">#${b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%</span>`).join(" ")
+    ? `Producing from run ${esc(p.run || "")}: ` + p.eligible.map((b) => `<span class="tag" title="opportunity ${b.opportunity}, ${b.count} trending Shorts${b.channel_videos ? `, your channel: ${b.channel_videos} videos, factor x${b.channel_factor}` : ""}">#${b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%${b.channel_videos ? ` <span class="${b.channel_factor >= 1 ? "ok" : "warn"}">(you: x${b.channel_factor})</span>` : ""}</span>`).join(" ")
     : "No eligible blueprints yet (a trend refresh will run first).";
+  loadChannel();
   $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
       <td class="${h.status === "error" ? "err" : ""}">${esc(h.status)}</td><td>${h.params && h.params.blueprint ? h.params.blueprint : "-"}</td></tr>`).join("")
     || `<tr><td colspan="5" class="muted">Nothing scheduled has run yet.</td></tr>`;
 }
+
+// ---------------------------------------------------------------- channel feedback
+async function loadChannel() {
+  const c = await api("/api/channel");
+  const el = $("#channelpanel");
+  if (!c.configured) { el.innerHTML = `Channel feedback off: add a YouTube API key and your channel handle in Settings.`; return; }
+  const r = c.report;
+  if (!r) { el.innerHTML = `Channel feedback configured, not synced yet.`; return; }
+  const perf = r.performance;
+  const rows = Object.entries(perf.blueprints).sort((a, b) => b[1].factor - a[1].factor)
+    .map(([k, v]) => `<span class="tag ${v.factor >= 1 ? "ok" : "warn"}" title="${v.videos} videos, median ${v.median_views} views">${esc(k.replace("|", " × "))} · ${v.median_views_per_hour}/h · x${v.factor}${v.provisional ? " (provisional)" : ""}</span>`).join(" ");
+  el.innerHTML = `Your channel <b>${esc(r.channel.title)}</b>: ${r.uploads} Shorts, ${r.matched.length} matched to produced videos, median ${perf.channel_median_vph ?? "-"} views/h (synced ${esc(r.fetched_at)}). ` + (rows || "No matched videos old enough to score yet.");
+}
+$("#channelsync").addEventListener("click", () => startJob("channel", { action: "sync" }));
 
 // ---------------------------------------------------------------- telegram
 $("#tgdiscover").addEventListener("click", async () => {
@@ -412,6 +428,8 @@ async function loadSettings() {
   const tgKey = s.keys.find((k) => k.name === "TELEGRAM_BOT_TOKEN");
   const tgChat = s.paths.find((p) => p.name === "TELEGRAM_CHAT_ID");
   $("#tgstatus").textContent = tgKey && tgKey.set ? (tgChat && tgChat.value ? `Configured for chat ${tgChat.value}.` : "Token saved; now find your chat id.") : "No bot token yet.";
+  const ytKey = s.keys.find((k) => k.name === "YOUTUBE_API_KEY"), ytCh = s.paths.find((p) => p.name === "YOUTUBE_CHANNEL");
+  $("#channelstatus").textContent = ytKey && ytKey.set ? (ytCh && ytCh.value ? `Configured for ${ytCh.value}.` : "API key saved; add your channel handle above and save.") : "No YouTube API key yet.";
   loadCaptions();
   const ai = c.production.ai_images || {};
   set("production.ai_images.mode", ai.enabled === false ? "never" : (ai.mode || "fallback"));

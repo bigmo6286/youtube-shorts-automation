@@ -89,6 +89,7 @@ schedule:
   selection: weighted         # weighted = produce in proportion to opportunity score | rotate = round robin
   min_share: 0.25             # only blueprints scoring at least 25% of the best one get produced
   skip_stretch: true          # never auto-produce formats that need a person on camera
+  channel_feedback: true      # scale weights by how each format x topic performs on your channel (needs YOUTUBE_API_KEY + YOUTUBE_CHANNEL)
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
 
 upload:

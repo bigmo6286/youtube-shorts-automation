@@ -32,13 +32,14 @@ KEY_FIELDS = {
     "ANTHROPIC_API_KEY": "Anthropic API key (script writing, optional if using a subscription token)",
     "CLAUDE_CODE_OAUTH_TOKEN": "Claude subscription token from `claude setup-token`",
     "PEXELS_API_KEY": "Pexels API key (stock footage backgrounds, optional)",
-    "YOUTUBE_API_KEY": "YouTube Data API key (optional extra discovery source)",
+    "YOUTUBE_API_KEY": "YouTube Data API key (channel performance feedback; also an extra discovery source)",
     "TELEGRAM_BOT_TOKEN": "Telegram bot token from @BotFather (delivery of finished Shorts)",
     "TOGETHER_API_KEY": "Together AI key (optional: FLUX images instead of the free generator)",
     "HF_TOKEN": "Hugging Face token (optional: FLUX / Stable Diffusion images via the Inference API)",
     "OPENAI_API_KEY": "OpenAI key (optional: gpt-image-1 images instead of the free generator)",
 }
 PATH_FIELDS = {
+    "YOUTUBE_CHANNEL": "Your YouTube channel handle (e.g. @yourname) or channel id, for performance feedback",
     "TELEGRAM_CHAT_ID": "Telegram chat id to send finished Shorts to (use Find my chat ID below)",
     "FFMPEG_DIR": "Folder containing ffmpeg.exe and ffprobe.exe (optional, auto-detected or auto-installed)",
     "CLAUDE_CODE_BIN": "Path to claude.exe (optional, auto-detected)",
@@ -159,6 +160,7 @@ COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
+    "channel": cli.cmd_channel,
 }
 
 
@@ -377,6 +379,15 @@ def get_schedule() -> dict[str, Any]:
     return SCHEDULER.plan()
 
 
+# ------------------------------------------------------------------------------------ channel feedback
+
+@app.get("/api/channel")
+def channel_report() -> dict[str, Any]:
+    from ..channel import cached_report, configured
+    report = cached_report()
+    return {"configured": configured(), "report": report}
+
+
 # ------------------------------------------------------------------------------------ telegram
 
 @app.get("/api/telegram/discover")
@@ -483,6 +494,7 @@ def list_outputs() -> list[dict[str, Any]]:
             "blueprint": {k: meta.get("blueprint", {}).get(k) for k in ("format", "topic", "hook_style")},
             "video_url": f"/outputs/{d.name}/short.mp4" if (d / "short.mp4").exists() else None,
             "youtube_id": meta.get("youtube_id"),
+            "channel_stats": meta.get("channel_stats"),
             "mode": meta.get("mode", "blueprint"),
             "music": meta.get("music"),
             "intro": meta.get("intro"), "outro": meta.get("outro"),
@@ -519,6 +531,7 @@ def status() -> dict[str, Any]:
         "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
         "music_tracks": len(get_music()),
         "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),
+        "channel": bool(values.get("YOUTUBE_API_KEY") and values.get("YOUTUBE_CHANNEL")),
         "schedule": {k: v for k, v in SCHEDULER.plan().items() if k in ("next", "done_today")} | {"enabled": bool(load_config().get("schedule", {}).get("enabled"))},
         "latest_run": runs[0] if runs else None,
         "outputs": len(list_outputs()),

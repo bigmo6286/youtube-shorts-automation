@@ -30,6 +30,7 @@ DEFAULTS = {
     "selection": "weighted",     # weighted = pick in proportion to opportunity score | rotate = round robin
     "min_share": 0.25,           # a blueprint must score at least this fraction of the best one to be produced
     "skip_stretch": True,        # never auto-produce formats that need a person on camera
+    "channel_feedback": True,    # scale blueprint weights by how each format x topic performs on your channel
     "catch_up": True,            # after downtime, run the most recent missed slot once (never all of them)
 }
 
@@ -47,11 +48,24 @@ def eligible_blueprints(blueprints: list[dict[str, Any]], cfg: dict[str, Any]) -
     pool = [dict(b, index=i + 1) for i, b in enumerate(blueprints[:top_n])]
     if cfg.get("skip_stretch", True):
         pool = [b for b in pool if not b.get("stretch")] or pool[:1]
-    best = max((float(b.get("opportunity") or 0) for b in pool), default=0.0)
-    floor = best * float(cfg.get("min_share", 0.4))
-    pool = [b for b in pool if float(b.get("opportunity") or 0) >= floor] or pool[:1]
+    # channel feedback: scale each blueprint's trend score by how that format x topic performs on YOUR channel
+    factors: dict[str, Any] = {}
+    if cfg.get("channel_feedback", True):
+        try:
+            from .channel import blueprint_performance
+            factors = blueprint_performance().get("blueprints", {})
+        except Exception as exc:  # noqa: BLE001
+            log.debug("channel feedback unavailable: %s", exc)
     for b in pool:
-        b["weight"] = round(float(b.get("opportunity") or 0) / best, 3) if best else 1.0
+        perf = factors.get(f"{b.get('format')}|{b.get('topic')}")
+        b["channel_factor"] = float(perf["factor"]) if perf else 1.0
+        b["channel_videos"] = int(perf["videos"]) if perf else 0
+        b["adjusted"] = float(b.get("opportunity") or 0) * b["channel_factor"]
+    best = max((b["adjusted"] for b in pool), default=0.0)
+    floor = best * float(cfg.get("min_share", 0.25))
+    pool = [b for b in pool if b["adjusted"] >= floor] or pool[:1]
+    for b in pool:
+        b["weight"] = round(b["adjusted"] / best, 3) if best else 1.0
     return pool
 
 
@@ -126,7 +140,8 @@ class Scheduler:
                 "done_today": sum(1 for x in items if x["done"] and x["kind"] == "produce"),
                 "history": self.state.get("history", [])[-15:][::-1], "running": self._thread is not None,
                 "run": run_dir.name if run_dir else None,
-                "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count")} for b in pool]}
+                "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count",
+                                                      "channel_factor", "channel_videos")} for b in pool]}
 
     # ---------------------------------------------------------------- execution
     def start(self) -> None:

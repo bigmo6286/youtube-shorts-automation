@@ -404,8 +404,47 @@ def cmd_run(args) -> None:
     cmd_judge(args)
     cmd_rank(args)
     cmd_analyze(args)
+    _sync_channel_quietly()
     if args.produce:
         cmd_produce(args)
+
+
+def _sync_channel_quietly() -> None:
+    """Refresh your channel's stats as part of a trend refresh, when the API key and channel are set."""
+    from . import channel
+
+    if not channel.configured():
+        return
+    try:
+        report = channel.sync()
+        perf = report["performance"]
+        for key, p in sorted(perf["blueprints"].items(), key=lambda kv: -kv[1]["factor"]):
+            log.info("channel feedback %s: %d videos, %.1f views/h, factor x%.2f%s", key, p["videos"],
+                     p["median_views_per_hour"], p["factor"], " (provisional)" if p["provisional"] else "")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("channel sync failed: %s", exc)
+
+
+def cmd_channel(args) -> None:
+    from . import channel
+
+    if args.action == "sync":
+        if not channel.configured():
+            sys.exit("Set YOUTUBE_API_KEY and YOUTUBE_CHANNEL (your @handle or channel id) in .env or Settings first.")
+        report = channel.sync()
+    else:
+        report = channel.cached_report()
+        if not report:
+            sys.exit("No channel data yet. Run `python main.py channel sync`.")
+    ch, perf = report["channel"], report["performance"]
+    print(f"{ch['title']} ({ch['id']}): {report['uploads']} Shorts on the channel, {len(report['matched'])} matched to produced videos, "
+          f"synced {report['fetched_at']}")
+    print(f"channel median: {perf['channel_median_vph']} views/hour over {perf['videos']} mature videos")
+    for key, p in sorted(perf["blueprints"].items(), key=lambda kv: -kv[1]["factor"]):
+        print(f"  {key:<45} {p['videos']:>2} videos  {p['median_views_per_hour']:>8.1f} views/h  factor x{p['factor']:.2f}"
+              f"{'  (provisional: needs 2+ videos)' if p['provisional'] else ''}")
+    for m in report["matched"][:15]:
+        print(f"  - {m['title'][:60]:<60} {m['views']:>7} views  {m['views_per_hour']:>7.1f}/h  [{m['key']}]")
 
 
 # ----------------------------------------------------------------------------- parser
@@ -470,6 +509,10 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("action", choices=["test", "discover", "send"])
     t.add_argument("path", nargs="?", help="send: output/<dir> or its short.mp4")
     t.set_defaults(func=cmd_telegram)
+
+    ch = sub.add_parser("channel", help="your channel's stats feeding back into the ranking (needs YOUTUBE_API_KEY + YOUTUBE_CHANNEL)")
+    ch.add_argument("action", choices=["sync", "report"])
+    ch.set_defaults(func=cmd_channel)
 
     s = sub.add_parser("schedule", help="show today's scheduled slots (the scheduler itself runs inside `web`)")
     s.set_defaults(func=cmd_schedule)
