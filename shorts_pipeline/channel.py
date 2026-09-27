@@ -118,7 +118,8 @@ def fetch_uploads(max_videos: int = 200) -> dict[str, Any]:
             st = v.get("statistics", {})
             views = int(st.get("viewCount", 0))
             videos.append({
-                "id": v["id"], "title": v["snippet"]["title"], "published": v["snippet"]["publishedAt"],
+                "id": v["id"], "title": v["snippet"]["title"], "description": (v["snippet"].get("description") or "")[:1000],
+                "published": v["snippet"]["publishedAt"], "published_ts": published,
                 "age_hours": round(hours, 1), "duration": seconds, "views": views,
                 "likes": int(st.get("likeCount", 0)), "comments": int(st.get("commentCount", 0)),
                 "views_per_hour": round(views / hours, 2),
@@ -129,35 +130,106 @@ def fetch_uploads(max_videos: int = 200) -> dict[str, Any]:
     return data
 
 
-def _norm(title: str) -> str:
-    return re.sub(r"[^a-z0-9 ]+", "", title.lower()).strip()
+def _norm(text: str) -> str:
+    text = re.sub(r"#\w+", " ", (text or "").lower())            # hashtags are compared separately
+    return re.sub(r"[^a-z0-9 ]+", " ", text).split() and " ".join(re.sub(r"[^a-z0-9 ]+", " ", text).split()) or ""
+
+
+def _tags(*texts: str) -> set[str]:
+    return {t.lower() for text in texts for t in re.findall(r"#(\w+)", text or "")}
+
+
+def _similar(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    if a in b or b in a:
+        return 1.0 if min(len(a), len(b)) >= 25 else 0.9
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _render_ts(dir_name: str) -> float:
+    try:  # output dirs are named <UTC timestamp>_<...>
+        return datetime.strptime(dir_name[:20], "%Y-%m-%dT%H-%M-%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _match_score(meta: dict[str, Any], video: dict[str, Any], dir_name: str) -> float:
+    """How likely `video` is the upload of this produced Short. Uploads happen after the render, and
+    people paste our title, description or hashtags into any of YouTube's fields, so compare them all."""
+    if video.get("published_ts") and video["published_ts"] < _render_ts(dir_name) - 60:
+        return 0.0
+    our_title = _norm(meta.get("title", ""))
+    our_desc = _norm(meta.get("description", ""))
+    our_desc_first = _norm((meta.get("description") or "").split("\n")[0])
+    their_title = _norm(video.get("title", ""))
+    their_desc = _norm(video.get("description", ""))
+    text = max(_similar(our_title, their_title), _similar(our_title, their_desc),
+               _similar(our_desc_first, their_title), _similar(our_desc, their_desc) if len(our_desc) > 30 else 0.0)
+    ours = {t.lower() for t in meta.get("hashtags") or []} | _tags(meta.get("description", ""))
+    theirs = _tags(video.get("title", ""), video.get("description", ""))
+    tag_overlap = len(ours & theirs) / len(ours) if ours else 0.0
+    duration_ok = abs(float(video.get("duration") or 0) - float(meta.get("duration") or -99)) <= 1.5
+    score = text
+    if tag_overlap >= 0.8 and len(ours) >= 3:
+        score = max(score, 0.7 + (0.2 if duration_ok else 0.0))
+    if duration_ok and text >= 0.5:
+        score = max(score, text + 0.15)
+    return min(score, 1.0)
 
 
 def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Attach channel stats to produced Shorts: by our upload id, else by (near-)identical title."""
+    """Attach channel stats to produced Shorts: by our upload id, else by the best text / hashtag /
+    duration match (each channel video is used at most once)."""
     by_id = {v["id"]: v for v in videos}
-    by_title = {_norm(v["title"]): v for v in videos}
-    titles = list(by_title)
     matched: list[dict[str, Any]] = []
     if not OUTPUT_DIR.exists():
         return matched
+    metas = []
     for d in sorted(p for p in OUTPUT_DIR.iterdir() if p.is_dir()):
         meta = load_json(d / "meta.json")
-        if not meta:
-            continue
+        if meta:
+            metas.append((d, meta))
+    taken: set[str] = set()
+    assignments: dict[str, dict[str, Any]] = {}
+    for d, meta in metas:                                   # exact upload records first
         video = by_id.get(meta.get("youtube_id") or "")
-        if not video:
-            key = _norm(meta.get("title", ""))
-            video = by_title.get(key)
-            if not video and key:
-                close = difflib.get_close_matches(key, titles, n=1, cutoff=0.85)
-                video = by_title[close[0]] if close else None
+        if video:
+            assignments[d.name] = video
+            taken.add(video["id"])
+    pairs = []
+    for d, meta in metas:
+        if d.name in assignments:
+            continue
+        for v in videos:
+            if v["id"] in taken:
+                continue
+            s = _match_score(meta, v, d.name)
+            if s >= 0.75:
+                pairs.append((s, d.name, v))
+    for s, name, v in sorted(pairs, key=lambda x: -x[0]):    # best pairs claim their video first
+        if name in assignments or v["id"] in taken:
+            continue
+        assignments[name] = v
+        taken.add(v["id"])
+    # duration + timing fallback for uploads with no usable text (e.g. titled with the date)
+    for d, meta in metas:
+        if d.name in assignments or not meta.get("duration"):
+            continue
+        cands = [v for v in videos if v["id"] not in taken and abs(v["duration"] - meta["duration"]) <= 1.5
+                 and v.get("published_ts", 0) >= _render_ts(d.name) - 60]
+        if len(cands) == 1:
+            assignments[d.name] = cands[0]
+            taken.add(cands[0]["id"])
+    for d, meta in metas:
+        video = assignments.get(d.name)
         if not video:
             continue
         bp = meta.get("blueprint") or {}
         changed = meta.get("youtube_id") != video["id"] or meta.get("channel_stats", {}).get("views") != video["views"]
         meta["youtube_id"] = video["id"]
         meta["channel_stats"] = {k: video[k] for k in ("views", "likes", "comments", "views_per_hour", "age_hours", "published")}
+        meta["channel_stats"]["youtube_title"] = video["title"]
         if changed:
             save_json(d / "meta.json", meta)
         matched.append({"dir": d.name, "title": meta.get("title"), "key": f"{bp.get('format')}|{bp.get('topic')}",
