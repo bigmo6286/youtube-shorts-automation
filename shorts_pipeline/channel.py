@@ -28,11 +28,30 @@ FACTOR_MIN, FACTOR_MAX = 0.3, 3.0
 MIN_AGE_HOURS = 6              # a video younger than this has no meaningful views-per-hour yet
 
 
+def _oauth() -> bool:
+    from .upload import oauth_available
+    return oauth_available()
+
+
 def configured() -> bool:
-    return bool(env("YOUTUBE_API_KEY") and env("YOUTUBE_CHANNEL"))
+    """OAuth client (reads *your* channel, no handle needed) or API key + channel handle."""
+    return _oauth() or bool(env("YOUTUBE_API_KEY") and env("YOUTUBE_CHANNEL"))
+
+
+_SERVICE = None
 
 
 def _get(path: str, **params) -> dict[str, Any]:
+    """channels / playlistItems / videos list call, through OAuth when available, else the API key."""
+    global _SERVICE
+    if _oauth():
+        if _SERVICE is None:
+            from .upload import youtube_service
+            _SERVICE = youtube_service(interactive=True)
+        try:
+            return getattr(_SERVICE, path)().list(**params).execute()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"YouTube API ({path}): {str(exc)[:200]}") from exc
     params["key"] = env("YOUTUBE_API_KEY")
     r = requests.get(f"{API}/{path}", params=params, timeout=30)
     if r.status_code != 200:
@@ -53,14 +72,18 @@ def _iso8601_seconds(s: str) -> int:
 
 
 def resolve_channel(handle_or_id: str) -> dict[str, Any]:
-    value = handle_or_id.strip()
-    if value.startswith("UC") and len(value) >= 20:
+    value = (handle_or_id or "").strip()
+    if not value:
+        if not _oauth():
+            raise RuntimeError("Set YOUTUBE_CHANNEL (your @handle) or add client_secrets.json for OAuth.")
+        data = _get("channels", part="snippet,contentDetails,statistics", mine=True)
+    elif value.startswith("UC") and len(value) >= 20:
         data = _get("channels", part="snippet,contentDetails,statistics", id=value)
     else:
         data = _get("channels", part="snippet,contentDetails,statistics", forHandle=value.lstrip("@"))
     items = data.get("items") or []
     if not items:
-        raise RuntimeError(f"channel {value!r} not found")
+        raise RuntimeError(f"channel {value or 'mine'!r} not found")
     ch = items[0]
     return {"id": ch["id"], "title": ch["snippet"]["title"],
             "uploads_playlist": ch["contentDetails"]["relatedPlaylists"]["uploads"],
@@ -71,8 +94,8 @@ def resolve_channel(handle_or_id: str) -> dict[str, Any]:
 def fetch_uploads(max_videos: int = 200) -> dict[str, Any]:
     """Recent uploads with statistics, Shorts only (<= 180 s). Saved to data/channel_stats.json."""
     if not configured():
-        raise RuntimeError("Set YOUTUBE_API_KEY and YOUTUBE_CHANNEL (your @handle) in Settings first.")
-    channel = resolve_channel(env("YOUTUBE_CHANNEL"))
+        raise RuntimeError("Add client_secrets.json (OAuth) or YOUTUBE_API_KEY + YOUTUBE_CHANNEL in Settings first.")
+    channel = resolve_channel(env("YOUTUBE_CHANNEL") or "")
     ids: list[str] = []
     token = None
     while len(ids) < max_videos:

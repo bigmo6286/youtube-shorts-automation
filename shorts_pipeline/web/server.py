@@ -510,6 +510,11 @@ def list_outputs() -> list[dict[str, Any]]:
     return out
 
 
+def _channel_configured() -> bool:
+    from ..channel import configured
+    return configured()
+
+
 def _ai_images_on() -> bool:
     from ..imagegen import available, settings as ai_settings
     s = ai_settings()
@@ -531,7 +536,7 @@ def status() -> dict[str, Any]:
         "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
         "music_tracks": len(get_music()),
         "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),
-        "channel": bool(values.get("YOUTUBE_API_KEY") and values.get("YOUTUBE_CHANNEL")),
+        "channel": _channel_configured(),
         "schedule": {k: v for k, v in SCHEDULER.plan().items() if k in ("next", "done_today")} | {"enabled": bool(load_config().get("schedule", {}).get("enabled"))},
         "latest_run": runs[0] if runs else None,
         "outputs": len(list_outputs()),

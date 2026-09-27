@@ -9,7 +9,8 @@ from .config import DATA_DIR, ROOT, env
 
 log = logging.getLogger(__name__)
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# upload + read-only: one consent covers uploading Shorts and reading your channel's stats for feedback
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
 TOKEN_PATH = DATA_DIR / "youtube_token.json"
 
 SETUP_HELP = """YouTube upload is not configured yet. One-time setup:
@@ -21,35 +22,54 @@ SETUP_HELP = """YouTube upload is not configured yet. One-time setup:
 """
 
 
-def _credentials():
+def secrets_path() -> Path:
+    secrets = Path(env("YOUTUBE_CLIENT_SECRETS", "client_secrets.json"))
+    return secrets if secrets.is_absolute() else ROOT / secrets
+
+
+def oauth_available() -> bool:
+    """A client file or a cached token exists, so OAuth calls are possible (a consent may still be needed)."""
+    return secrets_path().exists() or TOKEN_PATH.exists()
+
+
+def _credentials(interactive: bool = True):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
 
-    secrets = Path(env("YOUTUBE_CLIENT_SECRETS", "client_secrets.json"))
-    if not secrets.is_absolute():
-        secrets = ROOT / secrets
+    secrets = secrets_path()
     creds = None
     if TOKEN_PATH.exists():
         creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+        if creds and not set(SCOPES).issubset(set(creds.scopes or [])):
+            creds = None                           # token from before the read-only scope was added: re-consent
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
+        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
     if not creds or not creds.valid:
         if not secrets.exists():
             raise FileNotFoundError(SETUP_HELP)
+        if not interactive:
+            raise RuntimeError("YouTube access is not authorised yet: run `python main.py channel sync` (or an upload) "
+                               "once from a terminal and approve the browser prompt.")
         flow = InstalledAppFlow.from_client_secrets_file(str(secrets), SCOPES)
-        creds = flow.run_local_server(port=0)
+        creds = flow.run_local_server(port=0, open_browser=True, authorization_prompt_message=
+                                      "\nApprove access in the browser window that just opened (URL: {url})\n")
         TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
     return creds
 
 
+def youtube_service(interactive: bool = True):
+    from googleapiclient.discovery import build
+    return build("youtube", "v3", credentials=_credentials(interactive=interactive))
+
+
 def upload_video(video_path: Path, *, title: str, description: str, tags: list[str],
                  privacy: str = "private", category_id: str = "22") -> dict[str, Any]:
-    from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
 
-    youtube = build("youtube", "v3", credentials=_credentials())
+    youtube = youtube_service()
     body = {
         "snippet": {"title": title[:100], "description": description[:5000], "tags": tags[:30],
                     "categoryId": category_id},
