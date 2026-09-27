@@ -138,7 +138,7 @@ def cmd_analyze(args) -> Path:
 
 
 def cmd_produce(args) -> Path:
-    from . import captions, footage, render, script_gen, tools, tts
+    from . import captions, footage, music, render, script_gen, tools, tts
 
     if not tools.ensure_ffmpeg_on_path():     # check before spending a script generation
         sys.exit(tools.MISSING_HELP)
@@ -199,11 +199,27 @@ def cmd_produce(args) -> Path:
     ass_path = captions.write_ass(words, out_dir / "captions.ass", words_per_caption=cfg["words_per_caption"],
                                   full_text=script["full_text"], font=cfg["font"], font_size=cfg["font_size"])
     segments = footage.plan_backgrounds(script, words, total, cfg["background_source"], out_dir)
-    video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4",
-                          music_volume_db=cfg["music_volume_db"], total_seconds=total)
+
+    music_cfg = dict(cfg.get("music") or {})
+    if "music_volume_db" in cfg and "volume_db" not in music_cfg:      # older config.yaml
+        music_cfg["volume_db"] = cfg["music_volume_db"]
+    track = music.pick_track(getattr(args, "music", None) or music_cfg.get("default", "random"))
+    description = script["description"]
+    if track:
+        log.info("music: %s (%s%s)", track["file"], track["license"], f", by {track['creator']}" if track.get("creator") else "")
+        credit = music.attribution_line(track)
+        if credit and credit not in description:
+            description = description.rstrip() + "\n\n" + credit
+    else:
+        log.info("music: none%s", "" if music.list_tracks() else " (assets/music is empty: fetch or upload tracks in Settings)")
+    video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
+                          music_path=Path(track["path"]) if track else None,
+                          music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
+                          fade_seconds=float(music_cfg.get("fade_seconds", 1.5)))
     save_json(out_dir / "meta.json", {"run": run_name, "blueprint": blueprint, "video": str(video),
-                                      "title": script["title"], "description": script["description"],
+                                      "title": script["title"], "description": description,
                                       "hashtags": script["hashtags"], "duration": total,
+                                      "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
                                       "mode": "custom" if script.get("backend") == "custom" else "blueprint"})
     print(f"\nRendered {video}  ({total:.1f}s)")
     if args.upload:
@@ -294,6 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--title"); pr.add_argument("--description")
     pr.add_argument("--hashtags", help="comma separated, for --script-file")
     pr.add_argument("--keywords", help="comma separated stock-footage search terms, for --script-file")
+    pr.add_argument("--music", help="none | random | part of a track name (default from config.yaml)")
     pr.add_argument("--upload", action="store_true")
     pr.set_defaults(func=cmd_produce)
 
@@ -310,10 +327,27 @@ def build_parser() -> argparse.ArgumentParser:
     f = sub.add_parser("setup-ffmpeg", help="download a portable ffmpeg into data/bin (Windows)")
     f.set_defaults(func=cmd_setup_ffmpeg)
 
+    m = sub.add_parser("music", help="background music library (assets/music)")
+    m.add_argument("action", choices=["list", "fetch"])
+    m.add_argument("--query", default="lofi chill", help="fetch: what to search for on Openverse (CC0 / CC-BY only)")
+    m.add_argument("--count", type=int, default=5)
+    m.set_defaults(func=cmd_music)
+
     w = sub.add_parser("web", help="start the local web console (keys, settings, runs, studio)")
     w.add_argument("--port", type=int, default=8787); w.add_argument("--host", default="127.0.0.1")
     w.set_defaults(func=cmd_web)
     return p
+
+
+def cmd_music(args) -> None:
+    from . import music
+    if args.action == "fetch":
+        added = music.fetch_tracks(args.query, args.count)
+        print(f"added {len(added)} track(s)")
+    for t in music.list_tracks():
+        credit = music.attribution_line(t)
+        print(f"- {t['file']}  [{t['license']}] {t['title']}{' by ' + t['creator'] if t['creator'] else ''}"
+              f"{'  (credit required)' if credit else ''}")
 
 
 def cmd_setup_ffmpeg(args) -> Path:

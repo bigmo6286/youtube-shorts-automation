@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import json
-import random
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import ASSETS_DIR
 from .tools import ensure_ffmpeg_on_path
 
 ensure_ffmpeg_on_path()
@@ -21,15 +19,18 @@ def probe_duration(path: Path) -> float:
     return float(json.loads(out)["format"]["duration"])
 
 
-def _pick_music() -> Path | None:
-    music_dir = ASSETS_DIR / "music"
-    tracks = sorted(p for p in music_dir.glob("*") if p.suffix.lower() in (".mp3", ".m4a", ".wav", ".ogg"))
-    return random.choice(tracks) if tracks else None
+def probe_channels(path: Path) -> int:
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels",
+                          "-of", "json", str(path)], capture_output=True, text=True, check=True).stdout
+    streams = json.loads(out).get("streams") or [{}]
+    return int(streams[0].get("channels") or 2)
 
 
 def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out_path: Path, *,
-           music_volume_db: float = -18.0, total_seconds: float) -> Path:
-    """Segments are {path, start, end}; each is trimmed/looped to its slot, scaled and cropped to 9:16."""
+           total_seconds: float, music_path: Path | None = None, music_volume_db: float = -18.0,
+           duck: bool = True, fade_seconds: float = 1.5) -> Path:
+    """Segments are {path, start, end}; each is trimmed/looped to its slot, scaled and cropped to 9:16.
+    Music (optional) is looped to the video length, faded in and out, and ducked under the voice."""
     work = out_path.parent.resolve()
     inputs: list[str] = []
     filters: list[str] = []
@@ -49,11 +50,29 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
 
     voice_idx = n
     inputs += ["-i", str(voice_path.resolve())]
-    music = _pick_music()
-    if music:
-        inputs += ["-stream_loop", "-1", "-i", str(music.resolve())]
-        filters.append(f"[{voice_idx + 1}:a]volume={music_volume_db}dB,atrim=duration={total_seconds:.3f}[m]")
-        filters.append(f"[{voice_idx}:a][m]amix=inputs=2:duration=first:dropout_transition=2[aout]")
+    if music_path and Path(music_path).exists():
+        fade = max(0.0, min(fade_seconds, total_seconds / 3))
+        inputs += ["-stream_loop", "-1", "-i", str(Path(music_path).resolve())]
+        music_chain = (f"[{voice_idx + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+                       f"atrim=duration={total_seconds:.3f},asetpts=PTS-STARTPTS,volume={music_volume_db}dB")
+        if fade > 0:
+            music_chain += f",afade=t=in:st=0:d={fade:.2f},afade=t=out:st={max(0.0, total_seconds - fade):.3f}:d={fade:.2f}"
+        filters.append(music_chain + "[m]")
+        # edge-tts voices are mono; aformat's mono->stereo upmix drops 3 dB, so duplicate the channel at unity
+        if probe_channels(voice_path) == 1:
+            voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000,pan=stereo|c0=c0|c1=c0"
+        else:
+            voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo"
+        filters.append(voice_chain + ",asplit=2[vo][vsc]")
+        if duck:
+            # sidechaincompress lowers the music while the voice is loud, so words stay intelligible
+            filters.append("[m][vsc]sidechaincompress=threshold=0.02:ratio=6:attack=20:release=500:makeup=1[md]")
+            mix_in = "[vo][md]"
+        else:
+            filters.append("[vsc]anullsink")
+            mix_in = "[vo][m]"
+        # normalize=0: keep the voice at its own level instead of amix halving every input
+        filters.append(f"{mix_in}amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]")
         amap = "[aout]"
     else:
         amap = f"{voice_idx}:a"

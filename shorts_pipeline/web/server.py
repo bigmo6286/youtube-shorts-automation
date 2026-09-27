@@ -145,13 +145,15 @@ def _args(job: Job) -> SimpleNamespace:
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
+        music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
+        count=int(p.get("count") or 5),
     )
 
 
 COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
-    "setup_ffmpeg": cli.cmd_setup_ffmpeg,
+    "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music,
 }
 
 
@@ -310,6 +312,39 @@ async def upload_client_secrets(file: UploadFile) -> dict[str, Any]:
     return get_settings()
 
 
+# ------------------------------------------------------------------------------------ music
+
+@app.get("/api/music")
+def get_music() -> list[dict[str, Any]]:
+    from ..music import attribution_line, list_tracks
+    tracks = list_tracks()
+    for t in tracks:
+        t["credit"] = attribution_line(t)
+    return tracks
+
+
+@app.post("/api/music/upload")
+async def upload_music(file: UploadFile) -> list[dict[str, Any]]:
+    from ..music import AUDIO_EXTS, MUSIC_DIR
+    name = Path(file.filename or "track.mp3").name
+    if Path(name).suffix.lower() not in AUDIO_EXTS:
+        raise HTTPException(400, f"unsupported audio type; use one of {', '.join(AUDIO_EXTS)}")
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    data = await file.read()
+    if len(data) > 60 * 1024 * 1024:
+        raise HTTPException(400, "file too large (60 MB max)")
+    (MUSIC_DIR / name).write_bytes(data)
+    return get_music()
+
+
+@app.delete("/api/music/{file_name}")
+def remove_music(file_name: str) -> list[dict[str, Any]]:
+    from ..music import delete_track
+    if not delete_track(file_name):
+        raise HTTPException(404, "no such track")
+    return get_music()
+
+
 # ------------------------------------------------------------------------------------ runs and outputs
 
 def _run_summary(run_dir: Path) -> dict[str, Any]:
@@ -373,6 +408,7 @@ def list_outputs() -> list[dict[str, Any]]:
             "video_url": f"/outputs/{d.name}/short.mp4" if (d / "short.mp4").exists() else None,
             "youtube_id": meta.get("youtube_id"),
             "mode": meta.get("mode", "blueprint"),
+            "music": meta.get("music"),
             "folder": str(d),
             "script_text": (script or {}).get("full_text"),
             "backend": (script or {}).get("backend"),
@@ -395,6 +431,7 @@ def status() -> dict[str, Any]:
         "script_backend": "api" if values.get("ANTHROPIC_API_KEY") else ("claude_code" if values.get("CLAUDE_CODE_OAUTH_TOKEN") else None),
         "pexels": bool(values.get("PEXELS_API_KEY")),
         "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
+        "music_tracks": len(get_music()),
         "latest_run": runs[0] if runs else None,
         "outputs": len(list_outputs()),
         "job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None,
@@ -402,7 +439,9 @@ def status() -> dict[str, Any]:
 
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+(ROOT / "assets" / "music").mkdir(parents=True, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
+app.mount("/music", StaticFiles(directory=str(ROOT / "assets" / "music")), name="music")
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
 

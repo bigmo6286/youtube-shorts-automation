@@ -39,8 +39,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 $$("nav button").forEach((b) => b.addEventListener("click", () => {
   $$("nav button").forEach((x) => x.classList.toggle("active", x === b));
   $$(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${b.dataset.tab}`));
-  if (b.dataset.tab === "settings") loadSettings();
-  if (b.dataset.tab === "studio") loadOutputs();
+  if (b.dataset.tab === "settings") { loadSettings(); loadMusic(); }
+  if (b.dataset.tab === "studio") { loadOutputs(); loadMusic(); }
 }));
 
 // ---------------------------------------------------------------- overview
@@ -52,6 +52,7 @@ async function loadStatus() {
     card("TypeSafe", s.typesafe, s.typesafe ? "connected" : "key missing"),
     card("Script writer", !!s.script_backend, s.script_backend === "api" ? "Anthropic API" : s.script_backend === "claude_code" ? "Claude subscription" : "not configured"),
     card("Backgrounds", s.pexels, s.pexels ? "Pexels footage" : "generated gradient"),
+    card("Music", s.music_tracks > 0, s.music_tracks > 0 ? `${s.music_tracks} track${s.music_tracks === 1 ? "" : "s"}` : "no tracks (Settings)"),
     card("YouTube upload", s.youtube_upload, s.youtube_upload ? "ready" : "client secrets missing"),
     card("Latest run", !!s.latest_run, s.latest_run ? `${s.latest_run.shorts} Shorts, ${s.latest_run.blueprints} blueprints` : "none yet"),
     card("Produced", s.outputs > 0, `${s.outputs} Shorts`),
@@ -152,7 +153,9 @@ async function pollJob() {
   if (j.error) toast(`${j.kind} failed: ${j.error.split("\n")[0]}`, true); else toast(`${j.kind} finished`);
   state.job = null;
   setTimeout(() => pill.classList.add("hidden"), 6000);
-  loadStatus(); loadRuns(); loadJobPicker(); if (j.kind === "produce" || j.kind === "upload") loadOutputs();
+  loadStatus(); loadRuns(); loadJobPicker();
+  if (j.kind === "produce" || j.kind === "upload") loadOutputs();
+  if (j.kind === "fetch_music") loadMusic();
 }
 async function loadJobPicker() {
   const jobs = await api("/api/jobs");
@@ -185,7 +188,7 @@ $$("button[data-job]").forEach((b) => b.addEventListener("click", () => {
     const blueprint = Number(bpSel.value || 1);
     const label = bpSel.selectedOptions[0] ? bpSel.selectedOptions[0].textContent : `#${blueprint}`;
     toast(`Producing ${label}`);
-    return startJob("produce", { run, blueprint, angle: $("#prod-angle").value, upload: $("#prod-upload").checked });
+    return startJob("produce", { run, blueprint, angle: $("#prod-angle").value, music: $("#prod-music").value, upload: $("#prod-upload").checked });
   }
   const params = { force: $("#opt-force").checked, api: $("#opt-api").checked };
   if (["judge", "rank", "analyze"].includes(kind) && state.currentRun) params.run = state.currentRun;
@@ -222,7 +225,7 @@ async function loadOutputs() {
       ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"></video>` : `<div class="novideo">no video</div>`}
       <div class="outbody">
         <h3>${esc(o.title)}</h3>
-        <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}</div>
+        <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
         ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}</div>` : ""}
         <details><summary>Script</summary><p>${esc(o.script_text)}</p></details>
         <details><summary>Description &amp; hashtags</summary><p class="pre">${esc(o.description)}</p><p>${esc(tagLine(o))}</p></details>
@@ -245,6 +248,38 @@ async function loadOutputs() {
   }));
 }
 
+// ---------------------------------------------------------------- music library
+async function loadMusic() {
+  const tracks = await api("/api/music");
+  state.music = tracks;
+  const opts = `<option value="random">music: random</option><option value="none">music: none</option>`
+    + tracks.map((t) => `<option value="${esc(t.file)}">music: ${esc(t.title).slice(0, 40)}</option>`).join("");
+  $$(".musicpick").forEach((sel) => { const keep = sel.value; sel.innerHTML = opts; if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep; });
+  const list = $("#musiclist");
+  if (!list) return;
+  list.innerHTML = tracks.map((t) => `<div class="track">
+      <audio controls preload="none" src="/music/${encodeURIComponent(t.file)}"></audio>
+      <span class="name" title="${esc(t.file)}">${esc(t.title)}${t.creator ? ` <span class="muted">by ${esc(t.creator)}</span>` : ""}</span>
+      <span class="tag ${t.license === "own" || t.license === "cc0" ? "ok" : ""}">${esc(t.license)}</span>
+      ${t.duration ? `<span class="muted">${Math.round(t.duration)}s</span>` : ""}
+      <button data-deltrack="${esc(t.file)}" title="delete">✕</button></div>`).join("")
+    || `<p class="muted">No tracks yet. Upload a file or fetch free ones.</p>`;
+  $$("button[data-deltrack]").forEach((b) => b.addEventListener("click", async () => {
+    await api(`/api/music/${encodeURIComponent(b.dataset.deltrack)}`, { method: "DELETE" }); toast("Track removed"); loadMusic(); loadStatus();
+  }));
+}
+$("#musicupload").addEventListener("click", async () => {
+  const f = $("#musicfile").files[0]; if (!f) return toast("Choose an audio file first", true);
+  const fd = new FormData(); fd.append("file", f);
+  const res = await fetch("/api/music/upload", { method: "POST", body: fd });
+  if (!res.ok) return toast((await res.json()).detail, true);
+  toast(`Added ${f.name}`); $("#musicfile").value = ""; loadMusic(); loadStatus();
+});
+$("#musicfetch").addEventListener("click", () => {
+  const query = $("#musicquery").value.trim() || "lofi chill";
+  startJob("fetch_music", { action: "fetch", query, count: Number($("#musiccount").value || 5) });
+});
+
 // custom script: load a .txt into the textarea, then produce without generation
 $("#cs-file").addEventListener("change", (ev) => {
   const f = ev.target.files[0]; if (!f) return;
@@ -257,7 +292,8 @@ $("#cs-produce").addEventListener("click", () => {
   if (text.split(/\s+/).length < 5) return toast("Paste a script first (at least a few sentences)", true);
   toast("Producing your script");
   startJob("produce", { script_text: text, title: $("#cs-title").value, description: $("#cs-desc").value,
-    hashtags: $("#cs-tags").value, keywords: $("#cs-keywords").value, upload: $("#cs-upload").checked });
+    hashtags: $("#cs-tags").value, keywords: $("#cs-keywords").value, music: $("#cs-music").value,
+    upload: $("#cs-upload").checked });
 });
 
 // ---------------------------------------------------------------- settings
@@ -287,6 +323,11 @@ async function loadSettings() {
   set("discovery.hashtags", (c.discovery.hashtags || []).join(", "));
   set("discovery.max_age_days", c.discovery.max_age_days); set("discovery.channels_to_follow", c.discovery.channels_to_follow); set("discovery.workers", c.discovery.workers);
   Object.entries(c.ranking.weights || {}).forEach(([k, v]) => set(`ranking.weights.${k}`, v));
+  const m = c.production.music || {};
+  set("production.music.default", m.default === "none" ? "none" : "random");
+  set("production.music.volume_db", m.volume_db ?? c.production.music_volume_db ?? -18);
+  set("production.music.fade_seconds", m.fade_seconds ?? 1.5);
+  $(`[name="production.music.duck"]`).checked = m.duck !== false;
   set("production.voice", c.production.voice); set("production.target_seconds", c.production.target_seconds);
   set("production.background_source", c.production.background_source); set("production.script_backend", c.production.script_backend || "auto");
   set("upload.privacy", c.upload.privacy);
@@ -300,7 +341,9 @@ $("#cfgform").addEventListener("submit", async (ev) => {
       max_age_days: num("discovery.max_age_days"), channels_to_follow: num("discovery.channels_to_follow"), workers: num("discovery.workers") },
     ranking: { weights: Object.fromEntries(["velocity", "engagement", "replicable", "hook", "evergreen"].map((k) => [k, num(`ranking.weights.${k}`)])) },
     production: { voice: g("production.voice"), target_seconds: num("production.target_seconds"),
-      background_source: g("production.background_source"), script_backend: g("production.script_backend") },
+      background_source: g("production.background_source"), script_backend: g("production.script_backend"),
+      music: { default: g("production.music.default"), volume_db: num("production.music.volume_db"),
+        fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked } },
     upload: { privacy: g("upload.privacy") },
   };
   try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); }
@@ -315,5 +358,5 @@ $("#secretsbtn").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- boot
-loadStatus(); loadRuns(); loadOutputs(); loadJobPicker();
+loadStatus(); loadRuns(); loadOutputs(); loadJobPicker(); loadMusic();
 setInterval(loadStatus, 10000);

@@ -71,6 +71,7 @@
         <select id="prod-run"></select>
         <select id="prod-blueprint"></select>
         <input id="prod-angle" placeholder="optional angle, e.g. why octopuses have three hearts" size="48">
+        <select id="prod-music" class="musicpick" title="background music"></select>
         <label class="inline"><input type="checkbox" id="prod-upload"> upload when done</label>
         <button class="primary" data-job="produce">Write, voice and render</button>
       </div>
@@ -92,6 +93,7 @@
       <div class="row">
         <label>Hashtags, comma separated<input id="cs-tags" placeholder="shorts, facts, history"></label>
         <label>Footage keywords, comma separated (Pexels)<input id="cs-keywords" placeholder="ocean waves, city at night"></label>
+        <label>Music<select id="cs-music" class="musicpick"></select></label>
         <label class="inline"><input type="checkbox" id="cs-upload"> upload when done</label>
         <button class="primary" id="cs-produce">Voice and render my script</button>
       </div>
@@ -119,6 +121,18 @@
           </ol></details>
         <h3>Claude subscription instead of an API key</h3>
         <p class="muted">Run <code>claude setup-token</code> in a terminal (it opens a browser), paste the token above as the subscription token.</p>
+        <h3>Music library</h3>
+        <p class="muted">Tracks in <code>assets/music</code>. Upload your own, or fetch free Creative-Commons music (CC0 and CC-BY only; CC-BY credits are added to the video description automatically).</p>
+        <div class="row">
+          <input type="file" id="musicfile" accept="audio/*,.mp3,.m4a,.wav,.ogg,.oga,.flac">
+          <button id="musicupload">Upload track</button>
+        </div>
+        <div class="row">
+          <input id="musicquery" placeholder="lofi chill / ambient / upbeat / piano / cinematic" size="30">
+          <input id="musiccount" type="number" value="5" min="1" max="20" style="width:70px">
+          <button id="musicfetch">Fetch free tracks</button>
+        </div>
+        <div id="musiclist" class="tracks"></div>
       </div>
       <div class="panel">
         <h2>Pipeline settings</h2>
@@ -137,6 +151,13 @@
             <label>Replicable<input type="number" step="0.05" name="ranking.weights.replicable"></label>
             <label>Hook<input type="number" step="0.05" name="ranking.weights.hook"></label>
             <label>Evergreen<input type="number" step="0.05" name="ranking.weights.evergreen"></label>
+          </div>
+          <h3>Background music</h3>
+          <div class="row">
+            <label>Default<select name="production.music.default"><option value="random">random track</option><option value="none">none</option></select></label>
+            <label>Volume (dB, -14 loud … -24 quiet)<input type="number" step="1" name="production.music.volume_db"></label>
+            <label>Fade (seconds)<input type="number" step="0.5" min="0" name="production.music.fade_seconds"></label>
+            <label class="inline"><input type="checkbox" name="production.music.duck"> duck under the voice</label>
           </div>
           <h3>Production</h3>
           <div class="row">

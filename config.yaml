@@ -40,7 +40,11 @@ production:
   words_per_caption: 3        # caption chunk size
   font: Impact
   font_size: 96
-  music_volume_db: -18        # background music level if assets/music/*.mp3 exist
+  music:
+    default: random           # none | random | part of a file name or title in assets/music
+    volume_db: -18            # music level relative to the voice; -14 louder, -22 quieter
+    duck: true                # lower the music automatically while the voice speaks
+    fade_seconds: 1.5
   background_source: auto     # auto | pexels | generated
   script_backend: auto        # auto | api | claude_code  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription)
   script_max_attempts: 3      # regenerate if TypeSafe QA says the hook is weak

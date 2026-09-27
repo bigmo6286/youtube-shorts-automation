@@ -1,0 +1,38 @@
+{
+  "Lofi_chill_melody.mp3": {
+    "title": "Lofi chill melody",
+    "creator": "nowherengl",
+    "license": "cc0",
+    "source": "freesound",
+    "source_url": "https://freesound.org/people/nowherengl/sounds/691948",
+    "duration": 34.4,
+    "query": "lofi chill"
+  },
+  "Lofi_Jazz_Organ_Loop_95_BPMwav.mp3": {
+    "title": "Lofi Jazz Organ Loop 95 BPM.wav",
+    "creator": "holizna",
+    "license": "cc0",
+    "source": "freesound",
+    "source_url": "https://freesound.org/people/holizna/sounds/629154",
+    "duration": 40.4,
+    "query": "lofi chill"
+  },
+  "Lofi_Guitar_Loop_EM_119_BPM3wav.mp3": {
+    "title": "Lofi Guitar Loop EM 119 BPM(3).wav",
+    "creator": "holizna",
+    "license": "cc0",
+    "source": "freesound",
+    "source_url": "https://freesound.org/people/holizna/sounds/629150",
+    "duration": 38.3,
+    "query": "lofi chill"
+  },
+  "Chill_Lofi_Melody_Loop_95_BPMwav.mp3": {
+    "title": "Chill Lofi Melody Loop 95 BPM.wav",
+    "creator": "holizna",
+    "license": "cc0",
+    "source": "freesound",
+    "source_url": "https://freesound.org/people/holizna/sounds/629147",
+    "duration": 40.4,
+    "query": "lofi chill"
+  }
+}

@@ -122,7 +122,24 @@ depend on a person or original footage, so expect a voiceover remake to underper
 2. `tts.py` voices it with edge-tts and keeps per-word timings.
 3. `captions.py` turns the timings into an ASS subtitle track with the spoken word highlighted.
 4. `footage.py` fetches a portrait Pexels clip per line (if a key exists) or generates a motion background.
-5. `render.py` assembles everything with ffmpeg at 1080x1920, mixing in any track from `assets/music/`.
+5. `render.py` assembles everything with ffmpeg at 1080x1920 and mixes in background music: the
+   track is looped to the video length, faded in and out, and ducked under the voice so words stay clear.
+
+## Background music
+
+Tracks live in `assets/music/`. Fill it from the console's Settings tab (upload your own files, or
+"Fetch free tracks", which searches Openverse for CC0 / CC-BY music from Freesound, Jamendo and
+Wikimedia Commons), or from the command line:
+
+```bash
+python main.py music fetch --query "lofi chill" --count 5
+python main.py music list
+```
+
+Only licences that allow commercial use and remixing are accepted (CC0, CC-BY, CC-BY-SA, public domain).
+A CC-BY track gets its credit line appended to the video description automatically, so the "copy
+description" buttons already include it. Pick a track per video in Studio (random, none, or a specific
+file) or set the default, volume, fade and ducking under Settings.
 
 ## YouTube upload setup (one time)
 
