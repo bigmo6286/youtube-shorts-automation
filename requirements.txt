@@ -1,5 +1,5 @@
 yt-dlp>=2026.8
-typesafe-sdk>=1.0
+typesafe-sdk>=0.7.1
 anthropic>=1.8
 edge-tts>=7.2
 python-dotenv>=1.0
