@@ -86,7 +86,7 @@
     </div>
     <div class="panel">
       <h2>Or use your own script</h2>
-      <p class="muted">Nothing is generated or rewritten: your text is voiced, captioned and rendered as-is. The first sentence is the hook, the last is the call to action. TypeSafe still scores it, for information only.</p>
+      <p class="muted">By default your script is <b>enhanced</b>: Claude adds a scroll-stopping hook, tightens the flow for a fast voiceover and makes sure the ending pays off, keeping every fact and your point. TypeSafe checks the hook, clarity, payoff, policy risk and that nothing was changed or invented, and sends weak drafts back for another pass. Tick "as written" to voice your text exactly as it is.</p>
       <div class="row">
         <label class="grow">Script<textarea id="cs-text" rows="7" placeholder="Paste your script here, or load a .txt file."></textarea></label>
       </div>
@@ -101,6 +101,7 @@
         <label>Hashtags, comma separated<input id="cs-tags" placeholder="shorts, facts, history"></label>
         <label>Footage keywords, comma separated (Pexels)<input id="cs-keywords" placeholder="ocean waves, city at night"></label>
         <label>Music<select id="cs-music" class="musicpick"></select></label>
+        <label class="inline"><input type="checkbox" id="cs-aswritten"> as written (no enhancement)</label>
         <label class="inline"><input type="checkbox" id="cs-upload"> upload when done</label>
         <button class="primary" id="cs-produce">Voice and render my script</button>
       </div>

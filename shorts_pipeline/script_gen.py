@@ -97,26 +97,6 @@ def custom_script(text: str, *, title: str = "", description: str = "", hashtags
     return script
 
 
-def _draft_via_api(client: "anthropic.Anthropic", user_prompt: str) -> ShortScript:
-    response = client.messages.parse(
-        model=MODEL,
-        max_tokens=4000,
-        system=SYSTEM,
-        messages=[{"role": "user", "content": user_prompt}],
-        output_format=ShortScript,
-    )
-    if response.stop_reason == "refusal":
-        details = getattr(response, "stop_details", None)
-        raise RuntimeError(f"Claude declined to write this script: {getattr(details, 'explanation', '')}")
-    return response.parsed_output
-
-
-def _draft_via_claude_code(user_prompt: str) -> ShortScript:
-    from . import claude_code_backend
-    data = claude_code_backend.generate_json(SYSTEM, user_prompt, ShortScript.model_json_schema())
-    return ShortScript.model_validate(data)
-
-
 def pick_backend(preference: str = "auto") -> str:
     """'api' needs ANTHROPIC_API_KEY; 'claude_code' uses Claude Code headless on a Pro/Max subscription."""
     from .config import has_anthropic
@@ -129,24 +109,38 @@ def pick_backend(preference: str = "auto") -> str:
                        "CLAUDE_CODE_OAUTH_TOKEN (see README).")
 
 
-def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angle: str | None = None,
-                    max_attempts: int = 3, min_hook_score: float = 2.0, backend: str = "auto",
-                    avoid_titles: list[str] | None = None) -> dict[str, Any]:
+def _draft(client, system: str, user_prompt: str) -> ShortScript:
+    if client is not None:
+        response = client.messages.parse(model=MODEL, max_tokens=4000, system=system,
+                                         messages=[{"role": "user", "content": user_prompt}], output_format=ShortScript)
+        if response.stop_reason == "refusal":
+            details = getattr(response, "stop_details", None)
+            raise RuntimeError(f"Claude declined to write this script: {getattr(details, 'explanation', '')}")
+        return response.parsed_output
+    from . import claude_code_backend
+    data = claude_code_backend.generate_json(system, user_prompt, ShortScript.model_json_schema())
+    return ShortScript.model_validate(data)
+
+
+def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], backend: str, max_attempts: int,
+                   min_hook_score: float, original_text: str | None = None) -> dict[str, Any]:
+    """Draft, have TypeSafe judge it, send the reviewer notes back, up to `max_attempts` times."""
     backend = pick_backend(backend)
     log.info("script backend: %s", backend)
     client = anthropic.Anthropic() if backend == "api" else None
     feedback = ""
     best: dict[str, Any] | None = None
     for attempt in range(1, max_attempts + 1):
-        user_prompt = _prompt(blueprint, target_seconds, angle, avoid_titles) + feedback
-        parsed = _draft_via_api(client, user_prompt) if client else _draft_via_claude_code(user_prompt)
+        parsed = _draft(client, system, user_prompt + feedback)
         script = parsed.model_dump()
         script["backend"] = backend
         script["full_text"] = " ".join([script["hook"], *[ln["text"] for ln in script["lines"]], script["cta"]])
         script["word_count"] = len(script["full_text"].split())
         script["attempt"] = attempt
+        if original_text is not None:
+            script["original_text"] = original_text
 
-        qa = judge_script(script, blueprint)
+        qa = judge_script(script, blueprint, original_text=original_text)
         script["qa"] = qa
         script["qa_problems"] = []
         if qa is None:
@@ -157,12 +151,14 @@ def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angl
             problems.append(f"the hook scored {hook:.1f}/3 for scroll-stopping power; make it more specific and surprising")
         if qa["policy_risk"]["noul"] > 0.5:
             problems.append("the script risks violating YouTube policy; remove any risky claim or instruction")
-        if qa["matches_format"]["noul"] < 0.5:
+        if original_text is None and qa["matches_format"]["noul"] < 0.5:
             problems.append(f"it drifted away from the {blueprint['format']} format / {blueprint['hook_style']} hook")
         if qa["has_payoff"]["noul"] < 0.5:
             problems.append("it never pays off what the hook promised; end with the answer")
         if qa["clarity"]["score"] < 1.0:
             problems.append("sentences are too long or jumpy for a fast voiceover")
+        if original_text is not None and qa.get("faithful", {}).get("noul", 1.0) < 0.6:
+            problems.append("it changed or invented facts, or lost the point of the original; keep every claim from the original")
         script["qa_problems"] = problems
         if best is None or len(problems) < len(best["qa_problems"]):
             best = script
@@ -172,3 +168,46 @@ def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angl
         feedback = "\n\nA reviewer rejected the previous draft because: " + "; ".join(problems) + ". Rewrite it."
     assert best is not None
     return best
+
+
+def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angle: str | None = None,
+                    max_attempts: int = 3, min_hook_score: float = 2.0, backend: str = "auto",
+                    avoid_titles: list[str] | None = None) -> dict[str, Any]:
+    return _write_with_qa(system=SYSTEM, user_prompt=_prompt(blueprint, target_seconds, angle, avoid_titles),
+                          blueprint=blueprint, backend=backend, max_attempts=max_attempts, min_hook_score=min_hook_score)
+
+
+ENHANCE_SYSTEM = SYSTEM + """
+You are now EDITING a script the creator wrote themselves. Keep every fact, number, claim and the creator's
+point exactly; you may reorder, cut filler, tighten wording and add connective phrasing so it flows when spoken.
+Never invent facts or examples that are not in the original. Add a scroll-stopping hook as the first sentence
+(built from the most surprising idea already in the script), make sure the ending pays off the hook, and finish
+with a short call to action. Keep the creator's voice."""
+
+
+def enhance_script(text: str, *, title: str = "", description: str = "", hashtags: list[str] | None = None,
+                   keywords: list[str] | None = None, target_seconds: int | None = None, max_attempts: int = 3,
+                   min_hook_score: float = 2.0, backend: str = "auto") -> dict[str, Any]:
+    """Rewrite a user script into a stronger Short without changing its substance."""
+    text = re.sub(r"\s+", " ", text.replace("\r", "\n")).strip()
+    if not text:
+        raise ValueError("The script is empty.")
+    words = len(text.split())
+    target = target_seconds or max(20, min(60, round(words / 2.6)))
+    hints = []
+    if title.strip():
+        hints.append(f"Preferred title (keep or improve slightly): {title.strip()}")
+    if hashtags:
+        hints.append("Include these hashtags: " + ", ".join(h.strip().lstrip("#") for h in hashtags if h.strip()))
+    if keywords:
+        hints.append("Preferred stock-footage search terms to use for visual_keyword where they fit: " + ", ".join(keywords))
+    if description.strip():
+        hints.append(f"Base the description on this: {description.strip()}")
+    user_prompt = (f"Original script written by the creator:\n\"\"\"\n{text}\n\"\"\"\n\n"
+                   f"Target length: about {target} seconds ({int(target * 2.6)} spoken words); the original is {words} words.\n"
+                   + ("\n".join(hints) + "\n" if hints else "")
+                   + "Rewrite it now as the JSON script.")
+    blueprint = {"format": "creator script", "topic": "creator's own subject", "hook_style": "strongest idea first",
+                 "why_it_works": "the creator's own material, edited for a stronger open, flow and payoff"}
+    return _write_with_qa(system=ENHANCE_SYSTEM, user_prompt=user_prompt, blueprint=blueprint, backend=backend,
+                          max_attempts=max_attempts, min_hook_score=min_hook_score, original_text=text)

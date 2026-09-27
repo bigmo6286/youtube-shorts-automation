@@ -57,8 +57,10 @@ Opens a local console at http://127.0.0.1:8787 with four tabs:
 - **Overview**: which keys are configured, the latest run, the blueprints and the top ranked Shorts.
 - **Pipeline**: run everything or one stage at a time, watch the live log, open any run's report.
 - **Studio**: pick a blueprint and an optional angle, produce a Short, preview the video, read the
-  script and its TypeSafe QA scores, upload to YouTube. Or paste / load your own script: it is voiced,
-  captioned and rendered exactly as written (TypeSafe scores it for information only). Every produced
+  script and its TypeSafe QA scores, upload to YouTube. Or paste / load your own script: by default it is
+  **enhanced** (a scroll-stopping hook, tighter flow, a payoff and call to action, every fact and your
+  point kept; TypeSafe checks hook, clarity, payoff, policy and faithfulness to your original and sends
+  weak drafts back), or tick "as written" to voice it verbatim. Every produced
   Short has buttons to copy the title, the description with hashtags, or all three for a manual upload,
   plus a download link for the video.
 - **Settings**: paste API keys (saved to `.env`, shown masked afterwards), upload

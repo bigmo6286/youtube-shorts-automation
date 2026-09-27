@@ -147,7 +147,7 @@ def _args(job: Job) -> SimpleNamespace:
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
         count=int(p.get("count") or 5), intro=p.get("intro"), outro=p.get("outro"),
-        scheduled=bool(p.get("scheduled")),
+        scheduled=bool(p.get("scheduled")), enhance=p.get("enhance", True) is not False,
     )
 
 
@@ -448,10 +448,12 @@ def list_outputs() -> list[dict[str, Any]]:
             "intro": meta.get("intro"), "outro": meta.get("outro"),
             "folder": str(d),
             "script_text": (script or {}).get("full_text"),
+            "original_text": (script or {}).get("original_text"),
             "backend": (script or {}).get("backend"),
             "qa": {"hook_strength": qa.get("hook_strength", {}).get("score"), "clarity": qa.get("clarity", {}).get("score"),
                    "matches_format": qa.get("matches_format", {}).get("noul"), "has_payoff": qa.get("has_payoff", {}).get("noul"),
-                   "policy_risk": qa.get("policy_risk", {}).get("noul")} if qa else None,
+                   "policy_risk": qa.get("policy_risk", {}).get("noul"),
+                   "faithful": qa.get("faithful", {}).get("noul")} if qa else None,
         })
     return out
 

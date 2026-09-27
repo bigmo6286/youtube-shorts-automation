@@ -147,16 +147,33 @@ def cmd_produce(args) -> Path:
 
     script_text = _read_custom_script(args)
     if script_text:
-        # User-written script: no blueprint or run needed, nothing is generated or rewritten.
+        # User-written script: no blueprint or run needed. Enhanced (hook, flow, payoff; facts kept) unless --as-written.
+        kwargs = dict(title=getattr(args, "title", "") or "", description=getattr(args, "description", "") or "",
+                      hashtags=_listify(getattr(args, "hashtags", None)), keywords=_listify(getattr(args, "keywords", None)))
+        enhance = getattr(args, "enhance", True)
         try:
-            script = script_gen.custom_script(
-                script_text, title=getattr(args, "title", "") or "", description=getattr(args, "description", "") or "",
-                hashtags=_listify(getattr(args, "hashtags", None)), keywords=_listify(getattr(args, "keywords", None)))
-        except ValueError as exc:
-            sys.exit(str(exc))
-        blueprint = {"format": "custom", "topic": "custom", "hook_style": "custom", "why_it_works": "user-written script"}
+            if enhance:
+                try:
+                    script_gen.pick_backend(cfg.get("script_backend", "auto"))
+                except RuntimeError as exc:
+                    sys.exit(str(exc))
+                log.info("enhancing your script (%d words): adding a hook, tightening flow, keeping every fact", len(script_text.split()))
+                script = script_gen.enhance_script(script_text, max_attempts=cfg["script_max_attempts"],
+                                                   min_hook_score=cfg["script_min_hook_score"],
+                                                   backend=cfg.get("script_backend", "auto"), **kwargs)
+                qa = script.get("qa") or {}
+                if qa:
+                    log.info("enhanced script: hook %.1f/3, clarity %.1f/2, payoff %.0f%%, faithful to original %.0f%%",
+                             qa["hook_strength"]["score"], qa["clarity"]["score"], qa["has_payoff"]["noul"] * 100,
+                             qa.get("faithful", {}).get("noul", 1.0) * 100)
+            else:
+                script = script_gen.custom_script(script_text, **kwargs)
+        except (ValueError, RuntimeError) as exc:
+            sys.exit(f"Script preparation failed: {exc}")
+        blueprint = {"format": "custom", "topic": "custom", "hook_style": "enhanced" if enhance else "as written",
+                     "why_it_works": "user-written script" + (" edited for hook, flow and payoff" if enhance else "")}
         run_name = "custom"
-        log.info("custom script: %d words, title %r", script["word_count"], script["title"])
+        log.info("custom script%s: %d words, title %r", " (enhanced)" if enhance else " (as written)", script["word_count"], script["title"])
         out_dir = OUTPUT_DIR / f"{now_iso()}_custom"
     else:
         run_dir = _run_dir(args)
@@ -192,6 +209,8 @@ def cmd_produce(args) -> Path:
         qa = script["qa"]
         log.info("TypeSafe read of your script (advisory): hook %.1f/3, clarity %.1f/2, payoff %.0f%%, policy risk %.0f%%",
                  qa["hook_strength"]["score"], qa["clarity"]["score"], qa["has_payoff"]["noul"] * 100, qa["policy_risk"]["noul"] * 100)
+    if script.get("original_text"):
+        print(f"ORIGINAL:\n{script['original_text']}\n")
 
     voice_path = out_dir / "voice.mp3"
     words = tts.synthesize(script["full_text"], voice_path, voice=cfg["voice"], rate=cfg["voice_rate"])
@@ -232,7 +251,7 @@ def cmd_produce(args) -> Path:
             "hashtags": script["hashtags"], "duration": total,
             "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
             "intro": bool(intro), "outro": bool(outro),
-            "mode": "custom" if script.get("backend") == "custom" else "blueprint"}
+            "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
     print(f"\nRendered {video}  ({total:.1f}s)")
     if args.upload:
@@ -402,6 +421,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--run"); pr.add_argument("--blueprint", type=int, default=1, help="1-based index from analyze")
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
     pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")
+    pr.add_argument("--as-written", dest="enhance", action="store_false", default=True,
+                    help="with --script-file: voice the text exactly as written instead of enhancing hook and flow")
     pr.add_argument("--title"); pr.add_argument("--description")
     pr.add_argument("--hashtags", help="comma separated, for --script-file")
     pr.add_argument("--keywords", help="comma separated stock-footage search terms, for --script-file")

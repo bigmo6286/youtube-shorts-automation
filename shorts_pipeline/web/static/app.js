@@ -224,14 +224,15 @@ async function loadOutputs() {
   const outs = await api("/api/outputs");
   state.outputs = Object.fromEntries(outs.map((o) => [o.dir, o]));
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
-  const writer = (o) => o.mode === "custom" ? "your own script" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API";
+  const writer = (o) => o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API";
   $("#outputs").innerHTML = outs.map((o) => `<div class="out">
       ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"></video>` : `<div class="novideo">no video</div>`}
       <div class="outbody">
         <h3>${esc(o.title)}</h3>
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
-        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}</div>` : ""}
+        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}</div>` : ""}
         <details><summary>Script</summary><p>${esc(o.script_text)}</p></details>
+        ${o.original_text ? `<details><summary>Your original</summary><p class="muted">${esc(o.original_text)}</p></details>` : ""}
         <details><summary>Description &amp; hashtags</summary><p class="pre">${esc(o.description)}</p><p>${esc(tagLine(o))}</p></details>
         <div class="row tight">
           <button data-copy="title" data-dir="${o.dir}">Copy title</button>
@@ -331,7 +332,7 @@ $("#cs-produce").addEventListener("click", () => {
   toast("Producing your script");
   startJob("produce", { script_text: text, title: $("#cs-title").value, description: $("#cs-desc").value,
     hashtags: $("#cs-tags").value, keywords: $("#cs-keywords").value, music: $("#cs-music").value,
-    upload: $("#cs-upload").checked });
+    enhance: !$("#cs-aswritten").checked, upload: $("#cs-upload").checked });
 });
 
 // ---------------------------------------------------------------- settings

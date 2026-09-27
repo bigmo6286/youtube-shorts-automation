@@ -118,6 +118,16 @@ SHORT_QUESTIONS: dict[str, dict[str, Any]] = {
 
 SCORE_LEVELS = {"hook_strength": 4, "replicable": 4, "evergreen": 4, "clarity": 3}
 
+ENHANCE_QA_QUESTIONS: dict[str, dict[str, Any]] = {
+    "faithful": _q("noul", {
+        "question": "Does the rewritten `script` keep every fact, claim and the core message of `original_script`, adding nothing untrue?",
+        "note": "Rewording, reordering, cutting filler and adding a hook or call to action are fine. Inventing facts, changing numbers or shifting the point is not.",
+    }, {
+        "true": "Same facts and message, only the delivery changed",
+        "false": "New or changed claims, or the point of the original was lost",
+    }),
+}
+
 SCRIPT_QA_QUESTIONS: dict[str, dict[str, Any]] = {
     "hook_strength": SHORT_QUESTIONS["hook_strength"],
     "clarity": _q("score", "How easy is this script to follow when heard once as a fast voiceover?", [
@@ -184,7 +194,7 @@ def judge_short(meta: dict[str, Any], *, use_cache: bool = True) -> dict[str, An
     return plain
 
 
-def judge_script(script: dict[str, Any], blueprint: dict[str, Any]) -> dict[str, Any] | None:
+def judge_script(script: dict[str, Any], blueprint: dict[str, Any], original_text: str | None = None) -> dict[str, Any] | None:
     if not has_typesafe():
         return None
     state = {
@@ -193,8 +203,12 @@ def judge_script(script: dict[str, Any], blueprint: dict[str, Any]) -> dict[str,
         "transcript": script.get("full_text", ""),  # the shared hook_strength question reads `transcript`
         "title": script.get("title", ""),
     }
+    questions = dict(SCRIPT_QA_QUESTIONS)
+    if original_text:
+        state["original_script"] = original_text
+        questions.update(ENHANCE_QA_QUESTIONS)
     with _client() as client:
-        response = client.system_one(state=state, questions=SCRIPT_QA_QUESTIONS)
+        response = client.system_one(state=state, questions=questions)
     return _answers_to_plain(response)
 
 
