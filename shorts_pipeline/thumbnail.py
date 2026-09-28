@@ -45,8 +45,14 @@ def source_for_output(out_dir: Path, meta: dict[str, Any] | None) -> tuple[Path 
         return Path(segs[0]["path"]), -1.0
     video = out_dir / "short.mp4"
     if video.exists():
-        intro = 1.5 if (meta or {}).get("intro") else 0.0
-        return video, intro + 0.35
+        # the body ends 0.4 s after the last spoken word, so that moment has footage but no caption;
+        # the outro card (2 s by default) follows it
+        try:
+            total = probe_duration(video)
+        except Exception:  # noqa: BLE001
+            total = float((meta or {}).get("duration") or 0)
+        outro = 2.0 if (meta or {}).get("outro") else 0.0
+        return video, max(0.0, total - outro - 0.22)
     return None, 0.0
 
 
