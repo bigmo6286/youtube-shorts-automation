@@ -158,7 +158,7 @@ async function pollJob() {
   state.job = null;
   setTimeout(() => pill.classList.add("hidden"), 6000);
   loadStatus(); loadRuns(); loadJobPicker();
-  if (j.kind === "produce" || j.kind === "upload") loadOutputs();
+  if (j.kind === "produce" || j.kind === "upload" || j.kind === "publish") loadOutputs();
   if (j.kind === "fetch_music") loadMusic();
   if (j.kind === "channel") { loadSchedule(); loadOutputs(); }
 }
@@ -243,11 +243,15 @@ async function loadOutputs() {
           ${o.thumbnail_url ? `<a class="btn" href="${o.thumbnail_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}_thumbnail.jpg" title="${esc(o.thumbnail_text || "")}">Download thumbnail</a>` : ""}
         </div>
         <div class="muted small">${esc(o.folder)}</div>
-        ${o.youtube_id ? `<a class="tag ok" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>`
+        ${o.youtube_id ? `<a class="tag ${o.privacy === "private" ? "warn" : "ok"}" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.privacy ? ` (${o.privacy})` : ""}${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>
+             ${o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="public">Make public</button>` : ""}
+             ${o.privacy !== "unlisted" && o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="unlisted">Unlisted</button>` : ""}
+             ${o.privacy === "public" ? `<button data-publish="${o.dir}" data-privacy="private">Make private</button>` : ""}`
           : `<button data-upload="${o.dir}">Upload to YouTube</button>`}
       </div></div>`).join("") || `<p class="muted">Nothing produced yet.</p>`;
   $$("button[data-upload]").forEach((b) => b.addEventListener("click", () => startJob("upload", { path: `output/${b.dataset.upload}` })));
   $$("button[data-telegram]").forEach((b) => b.addEventListener("click", () => startJob("telegram", { action: "send", path: `output/${b.dataset.telegram}` })));
+  $$("button[data-publish]").forEach((b) => b.addEventListener("click", () => startJob("publish", { path: `output/${b.dataset.publish}`, privacy: b.dataset.privacy })));
   $$("button[data-copy]").forEach((b) => b.addEventListener("click", () => {
     const o = state.outputs[b.dataset.dir]; const kind = b.dataset.copy;
     if (kind === "title") copyText(o.title.slice(0, 100), "Title");

@@ -152,7 +152,7 @@ def _args(job: Job) -> SimpleNamespace:
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
         count=int(p.get("count") or 5), intro=p.get("intro"), outro=p.get("outro"),
         scheduled=bool(p.get("scheduled")), enhance=p.get("enhance", True) is not False,
-        telegram=p.get("telegram", True) is not False,
+        telegram=p.get("telegram", True) is not False, privacy=p.get("privacy") or None,
     )
 
 
@@ -160,7 +160,7 @@ COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
-    "channel": cli.cmd_channel,
+    "channel": cli.cmd_channel, "publish": cli.cmd_publish,
 }
 
 
@@ -496,6 +496,7 @@ def list_outputs() -> list[dict[str, Any]]:
             "thumbnail_url": f"/outputs/{d.name}/thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
             "thumbnail_text": meta.get("thumbnail_text"),
             "youtube_id": meta.get("youtube_id"),
+            "privacy": meta.get("privacy"),
             "channel_stats": meta.get("channel_stats"),
             "mode": meta.get("mode", "blueprint"),
             "music": meta.get("music"),

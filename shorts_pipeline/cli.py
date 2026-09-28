@@ -395,8 +395,12 @@ def _upload(out_dir: Path) -> None:
                                privacy=cfg["privacy"], category_id=cfg["category_id"])
     vid = resp.get("id")
     meta["youtube_id"] = vid
+    meta["privacy"] = cfg["privacy"]
     save_json(out_dir / "meta.json", meta)
     print(f"Uploaded as {cfg['privacy']}: https://youtube.com/shorts/{vid}")
+    if cfg["privacy"] == "private":
+        print("It is PRIVATE until you publish it: use 'Make public' on the card, `python main.py publish <dir>`, "
+              "or set upload.privacy to public in Settings to skip the review step.")
     thumb = meta.get("thumbnail")
     if thumb and Path(thumb).exists():
         try:
@@ -410,6 +414,22 @@ def cmd_upload(args) -> None:
     target = Path(args.path)
     out_dir = target if target.is_dir() else target.parent
     _upload(out_dir)
+
+
+def cmd_publish(args) -> None:
+    """Change the visibility of an already uploaded Short (private -> public after you reviewed it)."""
+    from . import upload
+
+    target = Path(args.path)
+    out_dir = target if target.is_dir() else target.parent
+    meta = load_json(out_dir / "meta.json")
+    if not meta or not meta.get("youtube_id"):
+        sys.exit(f"{out_dir.name} has not been uploaded yet.")
+    privacy = getattr(args, "privacy", None) or "public"
+    upload.set_privacy(meta["youtube_id"], privacy)
+    meta["privacy"] = privacy
+    save_json(out_dir / "meta.json", meta)
+    print(f"{meta['youtube_id']} is now {privacy}: https://youtube.com/shorts/{meta['youtube_id']}")
 
 
 def cmd_run(args) -> None:
@@ -504,6 +524,10 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("upload", help="upload a produced Short (output/<dir> or its short.mp4)")
     u.add_argument("path")
     u.set_defaults(func=cmd_upload)
+
+    pb = sub.add_parser("publish", help="change an uploaded Short's visibility (default: public)")
+    pb.add_argument("path"); pb.add_argument("--privacy", choices=["private", "unlisted", "public"], default="public")
+    pb.set_defaults(func=cmd_publish)
 
     ru = sub.add_parser("run", help="discover -> judge -> rank -> analyze [-> produce]")
     ru.add_argument("--api", action="store_true"); ru.add_argument("--top", type=int, default=20)

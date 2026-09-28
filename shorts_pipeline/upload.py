@@ -1,6 +1,7 @@
 """Upload a rendered Short with the YouTube Data API v3 (OAuth installed-app flow)."""
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,8 @@ from .config import DATA_DIR, ROOT, env
 
 log = logging.getLogger(__name__)
 
-# upload + read-only: one consent covers uploading Shorts and reading your channel's stats for feedback
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
+# Full YouTube scope: upload, read the channel's stats, and change a video's visibility after review.
+SCOPES = ["https://www.googleapis.com/auth/youtube"]
 TOKEN_PATH = DATA_DIR / "youtube_token.json"
 
 SETUP_HELP = """YouTube upload is not configured yet. One-time setup:
@@ -40,9 +41,14 @@ def _credentials(interactive: bool = True):
     secrets = secrets_path()
     creds = None
     if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
-        if creds and not set(SCOPES).issubset(set(creds.scopes or [])):
-            creds = None                           # token from before the read-only scope was added: re-consent
+        try:
+            saved = set(json.loads(TOKEN_PATH.read_text(encoding="utf-8")).get("scopes") or [])
+        except (ValueError, OSError):
+            saved = set()
+        if set(SCOPES).issubset(saved):
+            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+        else:
+            log.info("stored YouTube token lacks %s; a new consent is needed", sorted(set(SCOPES) - saved))
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
         TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
@@ -63,6 +69,26 @@ def _credentials(interactive: bool = True):
 def youtube_service(interactive: bool = True):
     from googleapiclient.discovery import build
     return build("youtube", "v3", credentials=_credentials(interactive=interactive))
+
+
+def set_privacy(video_id: str, privacy: str) -> dict[str, Any]:
+    """Change an uploaded video's visibility: private | unlisted | public."""
+    if privacy not in ("private", "unlisted", "public"):
+        raise ValueError("privacy must be private, unlisted or public")
+    youtube = youtube_service()
+    return youtube.videos().update(part="status", body={"id": video_id, "status": {"privacyStatus": privacy,
+                                                                                 "selfDeclaredMadeForKids": False}}).execute()
+
+
+def video_status(video_ids: list[str]) -> dict[str, dict[str, Any]]:
+    youtube = youtube_service(interactive=False)
+    out: dict[str, dict[str, Any]] = {}
+    for i in range(0, len(video_ids), 50):
+        r = youtube.videos().list(part="status,statistics", id=",".join(video_ids[i:i + 50])).execute()
+        for v in r.get("items", []):
+            out[v["id"]] = {"privacy": v["status"].get("privacyStatus"), "upload": v["status"].get("uploadStatus"),
+                            "views": int(v.get("statistics", {}).get("viewCount", 0))}
+    return out
 
 
 def set_thumbnail(video_id: str, image_path: Path) -> None:
