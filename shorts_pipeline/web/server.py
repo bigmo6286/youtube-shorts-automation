@@ -153,6 +153,7 @@ def _args(job: Job) -> SimpleNamespace:
         count=int(p.get("count") or 5), intro=p.get("intro"), outro=p.get("outro"),
         scheduled=bool(p.get("scheduled")), enhance=p.get("enhance", True) is not False,
         telegram=p.get("telegram", True) is not False, privacy=p.get("privacy") or None,
+        regenerate=p.get("regenerate", True) is not False, set=p.get("set", True) is not False,
     )
 
 
@@ -160,7 +161,7 @@ COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
-    "channel": cli.cmd_channel, "publish": cli.cmd_publish,
+    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "thumbnail": cli.cmd_thumbnail,
 }
 
 

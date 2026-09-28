@@ -37,28 +37,48 @@ def _thumb_ass(text: str, handle: str, style: dict[str, Any], out_path: Path) ->
     return out_path
 
 
+def source_for_output(out_dir: Path, meta: dict[str, Any] | None) -> tuple[Path | None, float]:
+    """Best still source for an existing output: its recorded first footage clip, else the rendered video
+    just after the intro (captions are burned in there, so the band is made more opaque by the caller)."""
+    segs = (meta or {}).get("segments") or []
+    if segs and Path(segs[0]["path"]).exists():
+        return Path(segs[0]["path"]), -1.0
+    video = out_dir / "short.mp4"
+    if video.exists():
+        intro = 1.5 if (meta or {}).get("intro") else 0.0
+        return video, intro + 0.35
+    return None, 0.0
+
+
 def make_thumbnail(script: dict[str, Any], segments: list[dict[str, Any]], out_dir: Path, *,
-                   style: dict[str, Any] | None = None, handle: str = "", band: bool = True) -> Path | None:
+                   style: dict[str, Any] | None = None, handle: str = "", band: bool = True,
+                   source: Path | None = None, seek_at: float = -1.0, band_alpha: float = 0.7) -> Path | None:
     """Write out_dir/thumbnail.jpg (1080x1920). Returns None if anything fails; a thumbnail is optional."""
-    if not segments:
+    if source is not None:
+        src = source
+    elif segments:
+        src = Path(segments[0]["path"])
+    else:
         return None
-    src = Path(segments[0]["path"])
     if not src.exists():
         return None
     st = resolve_style(style)
     text = thumbnail_text(script)
     ass = _thumb_ass(text, handle, st, out_dir / "thumbnail.ass")
-    try:
-        seek = max(0.0, min(1.0, probe_duration(src) / 2))
-    except Exception:  # noqa: BLE001
-        seek = 0.5
+    if seek_at >= 0:
+        seek = seek_at
+    else:
+        try:
+            seek = max(0.0, min(1.0, probe_duration(src) / 2))
+        except Exception:  # noqa: BLE001
+            seek = 0.5
     base = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},eq=contrast=1.08:saturation=1.15"
     inputs = ["-ss", f"{seek:.2f}", "-i", str(src.resolve())]
     if band:
         # soft dark gradient over the lower half so the text reads on any footage
         inputs += ["-f", "lavfi", "-i",
                    f"color=black:s={W}x{H}:d=1,format=rgba,"
-                   f"geq=r=0:g=0:b=0:a='if(lt(Y,{int(H * 0.40)}),0,min(255,255*(Y-{int(H * 0.40)})/{int(H * 0.30)}))*0.7'"]
+                   f"geq=r=0:g=0:b=0:a='if(lt(Y,{int(H * 0.40)}),0,min(255,255*(Y-{int(H * 0.40)})/{int(H * 0.30)}))*{band_alpha:.2f}'"]
         graph = base + "[b];[b][1:v]overlay=0:0:format=auto[g];[g]" + subtitles_filter(ass) + "[out]"
     else:
         graph = base + "[g];[g]" + subtitles_filter(ass) + "[out]"

@@ -257,6 +257,7 @@ def cmd_produce(args) -> Path:
             "hashtags": script["hashtags"], "duration": total,
             "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
             "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None,
+            "segments": segments,
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
@@ -416,6 +417,39 @@ def cmd_upload(args) -> None:
     _upload(out_dir)
 
 
+def cmd_thumbnail(args) -> None:
+    """Regenerate an output's thumbnail (also for videos made before thumbnails existed) and, when the
+    video is on YouTube, set it there."""
+    from . import thumbnail, upload
+
+    target = Path(args.path)
+    out_dir = target if target.is_dir() else target.parent
+    meta = load_json(out_dir / "meta.json")
+    script = load_json(out_dir / "script.json") or {}
+    if not meta:
+        sys.exit(f"No meta.json in {out_dir}")
+    cfg = load_config()["production"]
+    thumb_cfg = cfg.get("thumbnail") or {}
+    if getattr(args, "regenerate", True) or not (out_dir / "thumbnail.jpg").exists():
+        src, seek = thumbnail.source_for_output(out_dir, meta)
+        if not src:
+            sys.exit("nothing to build a thumbnail from")
+        legacy = src.name == "short.mp4"
+        thumb = thumbnail.make_thumbnail(script or {"title": meta.get("title", "")}, meta.get("segments") or [], out_dir,
+                                         style=_caption_style(cfg), handle=thumb_cfg.get("handle") or (cfg.get("outro") or {}).get("handle", ""),
+                                         band=thumb_cfg.get("band", True), source=src, seek_at=seek,
+                                         band_alpha=0.88 if legacy else 0.7)
+        if not thumb:
+            sys.exit("thumbnail generation failed")
+        meta["thumbnail"] = str(thumb)
+        meta["thumbnail_text"] = thumbnail.thumbnail_text(script or {"title": meta.get("title", "")})
+        save_json(out_dir / "meta.json", meta)
+        print(f"thumbnail written: {thumb}{' (from the rendered video)' if legacy else ''}")
+    if meta.get("youtube_id") and getattr(args, "set", True):
+        upload.set_thumbnail(meta["youtube_id"], Path(meta["thumbnail"]))
+        print(f"thumbnail set on https://youtube.com/shorts/{meta['youtube_id']} (YouTube can take a few minutes to show it)")
+
+
 def cmd_publish(args) -> None:
     """Change the visibility of an already uploaded Short (private -> public after you reviewed it)."""
     from . import upload
@@ -524,6 +558,11 @@ def build_parser() -> argparse.ArgumentParser:
     u = sub.add_parser("upload", help="upload a produced Short (output/<dir> or its short.mp4)")
     u.add_argument("path")
     u.set_defaults(func=cmd_upload)
+
+    tn = sub.add_parser("thumbnail", help="regenerate an output's thumbnail and set it on YouTube if uploaded")
+    tn.add_argument("path"); tn.add_argument("--keep", dest="regenerate", action="store_false", default=True, help="keep the existing thumbnail.jpg")
+    tn.add_argument("--no-set", dest="set", action="store_false", default=True, help="do not push it to YouTube")
+    tn.set_defaults(func=cmd_thumbnail)
 
     pb = sub.add_parser("publish", help="change an uploaded Short's visibility (default: public)")
     pb.add_argument("path"); pb.add_argument("--privacy", choices=["private", "unlisted", "public"], default="public")

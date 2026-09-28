@@ -158,7 +158,7 @@ async function pollJob() {
   state.job = null;
   setTimeout(() => pill.classList.add("hidden"), 6000);
   loadStatus(); loadRuns(); loadJobPicker();
-  if (j.kind === "produce" || j.kind === "upload" || j.kind === "publish") loadOutputs();
+  if (j.kind === "produce" || j.kind === "upload" || j.kind === "publish" || j.kind === "thumbnail") loadOutputs();
   if (j.kind === "fetch_music") loadMusic();
   if (j.kind === "channel") { loadSchedule(); loadOutputs(); }
 }
@@ -241,6 +241,7 @@ async function loadOutputs() {
           <button data-telegram="${o.dir}">Send to Telegram</button>
           ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
           ${o.thumbnail_url ? `<a class="btn" href="${o.thumbnail_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}_thumbnail.jpg" title="${esc(o.thumbnail_text || "")}">Download thumbnail</a>` : ""}
+          <button data-thumb="${o.dir}" title="${o.thumbnail_url ? "rebuild the thumbnail" : "build a thumbnail for this video"}${o.youtube_id ? " and set it on YouTube" : ""}">${o.thumbnail_url ? "Rebuild" : "Make"} thumbnail${o.youtube_id ? " + set on YouTube" : ""}</button>
         </div>
         <div class="muted small">${esc(o.folder)}</div>
         ${o.youtube_id ? `<a class="tag ${o.privacy === "private" ? "warn" : "ok"}" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.privacy ? ` (${o.privacy})` : ""}${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>
@@ -252,6 +253,7 @@ async function loadOutputs() {
   $$("button[data-upload]").forEach((b) => b.addEventListener("click", () => startJob("upload", { path: `output/${b.dataset.upload}` })));
   $$("button[data-telegram]").forEach((b) => b.addEventListener("click", () => startJob("telegram", { action: "send", path: `output/${b.dataset.telegram}` })));
   $$("button[data-publish]").forEach((b) => b.addEventListener("click", () => startJob("publish", { path: `output/${b.dataset.publish}`, privacy: b.dataset.privacy })));
+  $$("button[data-thumb]").forEach((b) => b.addEventListener("click", () => startJob("thumbnail", { path: `output/${b.dataset.thumb}` })));
   $$("button[data-copy]").forEach((b) => b.addEventListener("click", () => {
     const o = state.outputs[b.dataset.dir]; const kind = b.dataset.copy;
     if (kind === "title") copyText(o.title.slice(0, 100), "Title");
