@@ -405,8 +405,10 @@ def _upload(out_dir: Path) -> None:
     thumb = meta.get("thumbnail")
     if thumb and Path(thumb).exists():
         try:
-            upload.set_thumbnail(vid, Path(thumb))
-            print("Thumbnail set.")
+            if _set_thumbnail_or_defer(out_dir, meta):
+                print("Thumbnail set.")
+            else:
+                print("Thumbnail deferred: YouTube's daily custom-thumbnail limit is reached; it will be set on a later refresh.")
         except Exception as exc:  # noqa: BLE001 - custom thumbnails need a phone-verified channel
             log.warning("thumbnail not set: %s (YouTube requires a phone-verified channel for custom thumbnails)", str(exc)[:160])
 
@@ -446,8 +448,50 @@ def cmd_thumbnail(args) -> None:
         save_json(out_dir / "meta.json", meta)
         print(f"thumbnail written: {thumb}{' (from the rendered video)' if legacy else ''}")
     if meta.get("youtube_id") and getattr(args, "set", True):
+        if _set_thumbnail_or_defer(out_dir, meta):
+            print(f"thumbnail set on https://youtube.com/shorts/{meta['youtube_id']} (YouTube can take a few minutes to show it)")
+        else:
+            print("YouTube's daily limit for custom thumbnails is reached; this one is marked pending and will be set "
+                  "automatically on a later trend refresh (or run `thumbnail --keep` again tomorrow).")
+
+
+def _set_thumbnail_or_defer(out_dir: Path, meta: dict) -> bool:
+    """Set the thumbnail on YouTube; on the daily rate limit (HTTP 429) mark it pending for a later retry."""
+    from . import upload
+
+    try:
         upload.set_thumbnail(meta["youtube_id"], Path(meta["thumbnail"]))
-        print(f"thumbnail set on https://youtube.com/shorts/{meta['youtube_id']} (YouTube can take a few minutes to show it)")
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc)
+        if "429" in msg or "RateLimit" in msg or "rateLimit" in msg:
+            meta["thumbnail_pending"] = True
+            save_json(out_dir / "meta.json", meta)
+            return False
+        raise
+    meta.pop("thumbnail_pending", None)
+    meta["thumbnail_set"] = True
+    save_json(out_dir / "meta.json", meta)
+    return True
+
+
+def retry_pending_thumbnails(limit: int = 10) -> int:
+    """Set thumbnails that were deferred by YouTube's daily limit. Stops at the first new 429."""
+    done = 0
+    for d in sorted(OUTPUT_DIR.iterdir()) if OUTPUT_DIR.exists() else []:
+        meta = load_json(d / "meta.json")
+        if not meta or not meta.get("thumbnail_pending") or not meta.get("youtube_id") or not meta.get("thumbnail"):
+            continue
+        if not Path(meta["thumbnail"]).exists():
+            continue
+        if _set_thumbnail_or_defer(d, meta):
+            done += 1
+            log.info("pending thumbnail set for %s", meta["youtube_id"])
+            if done >= limit:
+                break
+        else:
+            log.info("thumbnail limit still reached; %s stays pending", meta["youtube_id"])
+            break
+    return done
 
 
 def cmd_publish(args) -> None:
@@ -484,6 +528,12 @@ def _sync_channel_quietly() -> None:
 
     if not channel.configured():
         return
+    try:
+        n = retry_pending_thumbnails()
+        if n:
+            log.info("set %d pending thumbnail(s) on YouTube", n)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("pending thumbnails: %s", str(exc)[:160])
     try:
         report = channel.sync()
         perf = report["performance"]
