@@ -41,7 +41,8 @@ big on-screen captions. Rules:
 - Total spoken length must fit the target seconds at about 2.6 words per second.
 - Every line is one short sentence. No "number one, number two" unless the format is a listicle.
 - The hook is the first sentence and must be specific and surprising, in the requested hook style.
-- Everything factual must be true and verifiable; if unsure, say "reportedly" or choose a different fact.
+- Everything factual must be true and verifiable from your own knowledge; if unsure, say "reportedly" or choose a
+  different fact. You cannot look anything up, so never try to search or browse.
 - No medical, legal or financial advice stated as fact. No hate, harassment, or dangerous instructions.
 - Do not copy the exemplar Shorts. Use them only to understand the pacing and format that works.
 - Write for speech: contractions, plain words, no emojis, no markdown."""

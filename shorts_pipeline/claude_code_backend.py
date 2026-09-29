@@ -65,44 +65,63 @@ def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: 
     if not binary:
         raise RuntimeError("Claude Code binary not found; set CLAUDE_CODE_BIN in .env or install Claude Code.")
     schema_text = json.dumps(schema)
+    no_tools = ("\n\nYou have NO tools in this session: no web search, no file access, no shell. Do not try to call any. "
+                "Answer from your own knowledge in one reply.")
     full_prompt = (prompt + "\n\nRespond with a single JSON object matching this JSON Schema and nothing else, "
                    "no code fence, no commentary:\n" + schema_text)
-    cmd = [binary, "-p", full_prompt,
-           "--output-format", "json",
-           "--json-schema", schema_text,
-           "--system-prompt", system,
-           "--max-turns", "3",                 # structured output shows up as a tool_use stop; leave headroom
-           "--tools", ""]                      # pure text generation, no file or shell tools
     child_env = dict(os.environ)
     child_env.pop("CLAUDECODE", None)           # allow running from inside another Claude Code session
     token = env("CLAUDE_CODE_OAUTH_TOKEN")
     if token:
         child_env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     log.info("claude code: %s (token %s)", binary, "set" if token else "not set, using CLI login")
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=timeout, env=child_env)
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"Claude Code did not answer within {timeout}s") from exc
-    raw = (proc.stdout or "").strip()
-    stderr = (proc.stderr or "").strip()
-    log.info("claude code exited %s; stdout %d chars, stderr %d chars", proc.returncode, len(raw), len(stderr))
-    if stderr:
-        log.info("claude code stderr: %s", stderr[:600])
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Claude Code returned non-JSON output (exit {proc.returncode}). "
-                           f"stdout: {raw[:400]!r} stderr: {stderr[:400]!r}") from exc
-    if isinstance(result, list):              # some versions emit an array of events; the result is last
-        result = next((r for r in reversed(result) if isinstance(r, dict) and r.get("type") == "result"), result[-1])
-    log.info("claude code result keys: %s | subtype=%s stop=%s", sorted(result.keys())[:14],
-             result.get("subtype"), result.get("stop_reason"))
+
+    result: dict[str, Any] = {}
+    for attempt in (1, 2):
+        cmd = [binary, "-p", full_prompt,
+               "--output-format", "json",
+               "--json-schema", schema_text,
+               "--system-prompt", system + no_tools,
+               "--max-turns", "6" if attempt == 1 else "10",   # the structured answer itself costs a tool_use turn
+               "--tools", ""]                                  # pure text generation, no file or shell tools
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  timeout=timeout, env=child_env)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"Claude Code did not answer within {timeout}s") from exc
+        raw = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+        log.info("claude code exited %s; stdout %d chars, stderr %d chars", proc.returncode, len(raw), len(stderr))
+        if stderr:
+            log.info("claude code stderr: %s", stderr[:600])
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Claude Code returned non-JSON output (exit {proc.returncode}). "
+                               f"stdout: {raw[:400]!r} stderr: {stderr[:400]!r}") from exc
+        if isinstance(result, list):          # some versions emit an array of events; the result is last
+            result = next((r for r in reversed(result) if isinstance(r, dict) and r.get("type") == "result"), result[-1])
+        log.info("claude code result keys: %s | subtype=%s stop=%s turns=%s", sorted(result.keys())[:14],
+                 result.get("subtype"), result.get("stop_reason"), result.get("num_turns"))
+        if not result.get("is_error"):
+            break
+        details = {k: result.get(k) for k in ("subtype", "num_turns", "errors", "permission_denials") if result.get(k)}
+        log.warning("claude code attempt %d failed: %s", attempt, json.dumps(details)[:600])
+        if result.get("subtype") == "error_max_turns" and attempt == 1:
+            full_prompt += "\n\nIMPORTANT: reply immediately with the JSON object. Do not call tools, do not search."
+            continue
+        break
     if result.get("is_error"):
-        msg = str(result.get("result", ""))
+        msg = str(result.get("result") or "")
+        details = {k: result.get(k) for k in ("subtype", "num_turns", "errors", "permission_denials") if result.get(k)}
+        if details:
+            msg = (msg + " " if msg else "") + json.dumps(details)[:500]
         if "authenticate" in msg.lower() or "oauth" in msg.lower():
             msg += ("\n  Run `claude setup-token` once in your own terminal (it opens a browser), then put the "
                     "token in .env as CLAUDE_CODE_OAUTH_TOKEN.")
+        if result.get("subtype") == "error_max_turns":
+            msg += ("\n  The model kept trying to use tools instead of answering. If this repeats, check ~/.claude/settings.json "
+                    "on this machine for hooks or permission rules that interfere with headless runs.")
         raise RuntimeError(f"Claude Code failed: {msg}")
     structured = result.get("structured_output")
     if isinstance(structured, str):

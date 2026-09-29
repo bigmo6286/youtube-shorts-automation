@@ -44,23 +44,31 @@ _SERVICE = None
 def _get(path: str, **params) -> dict[str, Any]:
     """channels / playlistItems / videos list call, through OAuth when available, else the API key."""
     global _SERVICE
-    if _oauth():
-        if _SERVICE is None:
-            from .upload import youtube_service
-            _SERVICE = youtube_service(interactive=True)
+    last: Exception | None = None
+    for attempt in range(3):                       # transient TLS / connection hiccups are common on flaky links
         try:
-            return getattr(_SERVICE, path)().list(**params).execute()
+            if _oauth():
+                if _SERVICE is None:
+                    from .upload import youtube_service
+                    _SERVICE = youtube_service(interactive=True)
+                return getattr(_SERVICE, path)().list(**params).execute()
+            r = requests.get(f"{API}/{path}", params={**params, "key": env("YOUTUBE_API_KEY")}, timeout=30)
+            if r.status_code != 200:
+                try:
+                    msg = r.json()["error"]["message"]
+                except Exception:  # noqa: BLE001
+                    msg = r.text[:200]
+                raise RuntimeError(f"YouTube API {r.status_code}: {msg}")
+            return r.json()
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"YouTube API ({path}): {str(exc)[:200]}") from exc
-    params["key"] = env("YOUTUBE_API_KEY")
-    r = requests.get(f"{API}/{path}", params=params, timeout=30)
-    if r.status_code != 200:
-        try:
-            msg = r.json()["error"]["message"]
-        except Exception:  # noqa: BLE001
-            msg = r.text[:200]
-        raise RuntimeError(f"YouTube API {r.status_code}: {msg}")
-    return r.json()
+            last = exc
+            text = str(exc)
+            transient = any(k in text for k in ("EOF", "SSL", "Connection", "timed out", "Timeout", "503", "500", "RemoteDisconnected"))
+            if not transient or attempt == 2:
+                break
+            _SERVICE = None                        # rebuild the HTTP session before retrying
+            time.sleep(3 * (attempt + 1))
+    raise RuntimeError(f"YouTube API ({path}): {str(last)[:200]}") from last
 
 
 def _iso8601_seconds(s: str) -> int:
