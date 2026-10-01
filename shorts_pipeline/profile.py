@@ -90,8 +90,9 @@ def add_profile(url_or_handle: str, *, max_videos: int = 24, min_views: int = 10
     fetch.configure(cfg)
     handle = handle_from(url_or_handle)
     base = f"https://www.youtube.com/channel/{handle}" if handle.startswith("UC") else f"https://www.youtube.com/{handle}"
+    max_videos = max(4, min(int(max_videos), 150))
     log.info("profile: reading %s/shorts", base)
-    flat = fetch._flat_entries(f"{base}/shorts", 60)
+    flat = fetch._flat_entries(f"{base}/shorts", max(120, max_videos * 2))
     if not flat:
         raise RuntimeError(f"no Shorts found for {handle}; check the handle or channel id")
     flat.sort(key=lambda e: e.get("view_count") or 0, reverse=True)
@@ -99,7 +100,8 @@ def add_profile(url_or_handle: str, *, max_videos: int = 24, min_views: int = 10
     if len(picked) < max_videos:                 # small channels: top up with the next most-viewed Shorts
         seen = {e["id"] for e in picked}
         picked += [e for e in flat if e["id"] not in seen][: max_videos - len(picked)]
-    log.info("profile: %d Shorts listed, fetching metadata and transcripts for the top %d", len(flat), len(picked))
+    log.info("profile: %d Shorts listed, fetching metadata and transcripts for the top %d (about %d s per video, "
+             "YouTube allows roughly 300 fetches an hour)", len(flat), len(picked), 2)
     shorts = fetch.enrich(picked, max_candidates=max_videos, workers=min(3, cfg.get("workers", 3)),
                           want_transcript=True, transcript_chars=1200)
     shorts = [s for s in shorts if fetch.is_short(s, cfg["max_duration_seconds"])]

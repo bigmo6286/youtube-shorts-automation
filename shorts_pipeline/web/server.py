@@ -122,6 +122,8 @@ class _JobLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if record.name.startswith("typesafe_sdk") and record.levelno < logging.WARNING:
             return                       # one line per request is noise here
+        if record.name in ("asyncio", "uvicorn.error", "uvicorn.access", "httpx", "httpx2", "googleapiclient.discovery_cache"):
+            return                       # the web server's own chatter (browser connections closing) is not job output
         self.job.log.append(self.format(record))
         if record.exc_info:
             self.job.log.extend(traceback.format_exception(*record.exc_info)[-6:])
@@ -585,7 +587,15 @@ async def _unhandled(_, exc: Exception) -> JSONResponse:
     return JSONResponse({"detail": f"{type(exc).__name__}: {exc}"}, status_code=500)
 
 
+class _QuietConnectionResets(logging.Filter):
+    """Windows' proactor loop logs every client that drops a keep-alive connection as an ERROR."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "_call_connection_lost" not in record.getMessage() and "ConnectionResetError" not in record.getMessage()
+
+
 def serve(host: str = "127.0.0.1", port: int = 8787) -> None:
     import uvicorn
+    logging.getLogger("asyncio").addFilter(_QuietConnectionResets())
     print(f"Shorts console: http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")
