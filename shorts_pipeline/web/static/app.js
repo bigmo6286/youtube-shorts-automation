@@ -161,6 +161,7 @@ async function pollJob() {
   if (j.kind === "produce" || j.kind === "upload" || j.kind === "publish" || j.kind === "thumbnail") loadOutputs();
   if (j.kind === "fetch_music") loadMusic();
   if (j.kind === "channel") { loadSchedule(); loadOutputs(); }
+  if (j.kind === "profile") loadProfiles();
 }
 async function loadJobPicker() {
   const jobs = await api("/api/jobs");
@@ -312,7 +313,8 @@ async function loadSchedule() {
     : "off. Turn it on under Settings.";
   $("#schednext").innerHTML = p.next.length ? "Next: " + p.next.map((n) => `<span class="tag">${n.time} ${esc(n.kind)}</span>`).join(" ") : (c.enabled ? "No more slots today." : "");
   $("#schedeligible").innerHTML = p.eligible && p.eligible.length
-    ? `Producing from run ${esc(p.run || "")}: ` + p.eligible.map((b) => `<span class="tag" title="opportunity ${b.opportunity}, ${b.count} trending Shorts${b.channel_videos ? `, your channel: ${b.channel_videos} videos, factor x${b.channel_factor}` : ""}">#${b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%${b.channel_videos ? ` <span class="${b.channel_factor >= 1 ? "ok" : "warn"}">(you: x${b.channel_factor})</span>` : ""}</span>`).join(" ")
+    ? (p.source === "profile" && p.profile ? `Producing in the style of <b>${esc(p.profile)}</b> (Settings → Schedule → Source). Trend blueprints for reference: ` : `Producing from run ${esc(p.run || "")}: `)
+      + p.eligible.map((b) => `<span class="tag" title="opportunity ${b.opportunity}, ${b.count} trending Shorts${b.channel_videos ? `, your channel: ${b.channel_videos} videos (${b.channel_basis}), factor x${b.channel_factor}` : ""}">#${b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%${b.channel_videos ? ` <span class="${b.channel_factor >= 1 ? "ok" : "warn"}">(you: x${b.channel_factor})</span>` : ""}</span>`).join(" ")
     : "No eligible blueprints yet (a trend refresh will run first).";
   loadChannel();
   $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
@@ -351,6 +353,38 @@ $("#tgtest").addEventListener("click", () => startJob("telegram", { action: "tes
 $("#tg-onproduce").addEventListener("change", async (ev) => {
   try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config: { notifications: { telegram: { on_produce: ev.target.checked } } } }) }); toast(ev.target.checked ? "Automatic Telegram delivery on" : "Automatic Telegram delivery off"); }
   catch (e) { toast(e.message, true); }
+});
+
+// ---------------------------------------------------------------- style profiles
+async function loadProfiles() {
+  const ps = await api("/api/profiles"); state.profiles = ps;
+  const opts = ps.map((p) => `<option value="${esc(p.handle)}">${esc(p.channel || p.handle)} · ${(p.top_formats || []).slice(0, 2).map((f) => f.name).join(", ")}</option>`).join("");
+  const sel = $("#pf-select"); const keep = sel.value;
+  sel.innerHTML = opts || `<option value="">no profiles yet</option>`;
+  if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  const sched = $(`[name="schedule.profile"]`);
+  if (sched) { const k = sched.value; sched.innerHTML = `<option value="">(none)</option>` + ps.map((p) => `<option value="${esc(p.handle)}">${esc(p.channel || p.handle)}</option>`).join(""); if (k) sched.value = k; }
+  showProfileSummary();
+}
+async function showProfileSummary() {
+  const h = $("#pf-select").value; const el = $("#pf-summary");
+  if (!h) { el.textContent = ""; return; }
+  try {
+    const p = await api(`/api/profiles/${encodeURIComponent(h)}`);
+    const sg = p.style_guide;
+    el.innerHTML = `<b>${esc(p.channel)}</b>: ${p.videos} Shorts, ~${p.typical_seconds}s · formats ${(p.top_formats || []).map((f) => `${esc(f.name)} ${Math.round(f.share * 100)}%`).join(", ")} · topics ${(p.top_topics || []).slice(0, 4).map((t) => `${esc(t.name)} ${Math.round(t.share * 100)}%`).join(", ")}`
+      + (sg ? `<details><summary>Style guide</summary><p><b>Voice:</b> ${esc(sg.voice_and_tone)}</p><p><b>Hooks:</b> ${esc((sg.hook_patterns || []).join(" · "))}</p><p><b>Structure:</b> ${esc(sg.structure)}</p><p><b>Pacing:</b> ${esc(sg.pacing_and_sentences)}</p><p><b>Endings:</b> ${esc(sg.ending_and_cta)}</p><p><b>Do:</b> ${esc((sg.dos || []).join(" · "))}</p><p><b>Never:</b> ${esc((sg.donts || []).join(" · "))}</p></details>` : " · no style guide (transcripts unavailable)");
+  } catch (_) { el.textContent = ""; }
+}
+$("#pf-select").addEventListener("change", showProfileSummary);
+$("#pf-add").addEventListener("click", () => {
+  const t = $("#pf-target").value.trim(); if (!t) return toast("Paste a channel URL or @handle", true);
+  startJob("profile", { action: "add", target: t, videos: Number($("#pf-videos").value || 24) });
+});
+$("#pf-produce").addEventListener("click", () => {
+  const h = $("#pf-select").value; if (!h) return toast("Analyse a channel first", true);
+  toast(`Producing in the style of ${h}`);
+  startJob("produce", { profile: h, angle: $("#pf-angle").value, music: $("#pf-music").value, upload: $("#pf-upload").checked });
 });
 
 // ---------------------------------------------------------------- music library
@@ -446,6 +480,7 @@ async function loadSettings() {
   set("schedule.produces_per_day", sc.produces_per_day ?? 20); set("schedule.refresh_per_day", sc.refresh_per_day ?? 1);
   set("schedule.start_hour", sc.start_hour ?? 6); set("schedule.end_hour", sc.end_hour ?? 24); set("schedule.blueprints_to_rotate", sc.blueprints_to_rotate ?? 5);
   set("schedule.selection", sc.selection || "weighted"); set("schedule.min_share_pct", Math.round((sc.min_share ?? 0.25) * 100));
+  set("schedule.source", sc.source || "trends"); loadProfiles().then(() => set("schedule.profile", sc.profile || ""));
   $(`[name="schedule.skip_stretch"]`).checked = sc.skip_stretch !== false;
   const th = c.production.thumbnail || {};
   $(`[name="production.thumbnail.enabled"]`).checked = th.enabled !== false;
@@ -490,7 +525,8 @@ $("#cfgform").addEventListener("submit", async (ev) => {
     schedule: { enabled: $(`[name="schedule.enabled"]`).checked, produces_per_day: num("schedule.produces_per_day") || 20,
       refresh_per_day: num("schedule.refresh_per_day"), start_hour: num("schedule.start_hour"), end_hour: num("schedule.end_hour") || 24,
       blueprints_to_rotate: num("schedule.blueprints_to_rotate") || 5, selection: g("schedule.selection"),
-      min_share: Math.min(1, Math.max(0, num("schedule.min_share_pct") / 100)), skip_stretch: $(`[name="schedule.skip_stretch"]`).checked },
+      min_share: Math.min(1, Math.max(0, num("schedule.min_share_pct") / 100)), skip_stretch: $(`[name="schedule.skip_stretch"]`).checked,
+      source: g("schedule.source"), profile: g("schedule.profile") },
   };
   try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); loadStatus(); }
   catch (e) { toast(e.message, true); }
@@ -504,5 +540,5 @@ $("#secretsbtn").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- boot
-loadStatus(); loadRuns(); loadOutputs(); loadJobPicker(); loadMusic();
+loadStatus(); loadRuns(); loadOutputs(); loadJobPicker(); loadMusic(); loadProfiles();
 setInterval(loadStatus, 10000);

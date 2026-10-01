@@ -87,6 +87,23 @@
       <p class="muted">Uses the Anthropic key if set, otherwise your Claude subscription token. TypeSafe QA rejects weak hooks and asks for a rewrite, up to the attempt limit in config.</p>
     </div>
     <div class="panel">
+      <h2>Or clone a channel's style</h2>
+      <p class="muted">Paste a channel URL or @handle. The tool reads its most-viewed Shorts, classifies them, and has Claude distil a style guide (voice, hooks, structure, pacing). Videos produced from a profile use that style with new subjects.</p>
+      <div class="row">
+        <input id="pf-target" placeholder="https://www.youtube.com/@channel  or  @channel" size="44">
+        <label>Shorts to analyse<input type="number" id="pf-videos" value="24" min="6" max="60" style="width:80px"></label>
+        <button id="pf-add">Analyse channel</button>
+      </div>
+      <div class="row">
+        <select id="pf-select"></select>
+        <input id="pf-angle" placeholder="optional subject for the video" size="36">
+        <select id="pf-music" class="musicpick"></select>
+        <label class="inline"><input type="checkbox" id="pf-upload"> upload when done</label>
+        <button class="primary" id="pf-produce">Produce in this style</button>
+      </div>
+      <div id="pf-summary" class="muted"></div>
+    </div>
+    <div class="panel">
       <h2>Or use your own script</h2>
       <p class="muted">By default your script is <b>enhanced</b>: Claude adds a scroll-stopping hook, tightens the flow for a fast voiceover and makes sure the ending pays off, keeping every fact and your point. TypeSafe checks the hook, clarity, payoff, policy risk and that nothing was changed or invented, and sends weak drafts back for another pass. Tick "as written" to voice your text exactly as it is.</p>
       <div class="row">
@@ -187,6 +204,8 @@
             <label>Consider top N blueprints<input type="number" min="1" max="8" name="schedule.blueprints_to_rotate"></label>
           </div>
           <div class="row">
+            <label>Source<select name="schedule.source"><option value="trends">trend blueprints (+ your channel feedback)</option><option value="profile">a cloned channel style</option></select></label>
+            <label>Profile (when source = cloned style)<select name="schedule.profile"></select></label>
             <label>Pick blueprints<select name="schedule.selection"><option value="weighted">by opportunity score (best gets most videos)</option><option value="rotate">round robin</option></select></label>
             <label>Minimum share of the best score (%)<input type="number" min="0" max="100" name="schedule.min_share_pct"></label>
             <label class="inline"><input type="checkbox" name="schedule.skip_stretch"> skip stretch formats</label>

@@ -170,17 +170,37 @@ and set Windows power options so the machine does not sleep. `python main.py sch
 Settings changed in the console are written to `config.local.yaml` (untracked), so `git pull` never
 conflicts with them; `config.yaml` holds the defaults.
 
+## Clone a channel's style
+
+Paste any channel into Studio ("Clone a channel's style") or run
+`python main.py profile add https://www.youtube.com/@somechannel`. The tool reads the channel's
+most-viewed Shorts with yt-dlp, classifies them with TypeSafe (same formats, topics and hook styles as
+the trend ranking), and asks Claude to distil a style guide from the transcripts: voice and tone, hook
+patterns, structure, pacing, recurring phrases, endings, dos and don'ts. Patterns only, never their
+sentences. The profile is saved under `data/profiles/`.
+
+"Produce in this style" (or `produce --profile @somechannel`) picks one of the channel's top
+format x topic pairs by share, uses its typical length, and writes a new script following the style
+guide, with the rest of the pipeline unchanged. Settings -> Schedule -> Source lets the scheduler produce
+from a profile instead of the trend blueprints.
+
 ## Your channel's performance feeds back into the ranking
 
 Add a YouTube Data API key (read-only, no OAuth: Google Cloud console -> enable YouTube Data API v3 ->
 Credentials -> API key) and your channel handle in Settings. On every trend refresh, and on "Sync channel
 now", the tool reads your uploads' public statistics, matches them to the Shorts it produced (by our
 upload record, or by title when you uploaded manually with the generated title), and computes each
-format x topic's median views per hour relative to your channel's median. That ratio, clamped to 0.3-3
-and only once a blueprint has two or more videos older than six hours, multiplies the blueprint's trend
-score before the scheduler picks what to make. So a format that trends globally but flops on your
-channel gets fewer videos, and one that over-performs for you gets more. The Overview shows the
-per-blueprint factors and each produced Short's live view count.
+format x topic's, each format's and each topic's median views per hour relative to your channel's
+median. That ratio (0.2-4, pulled toward neutral while only one or two videos support it; videos count
+after three hours) is the channel factor. The scheduler normalises the trend score, square-roots it so it
+cannot dominate, and multiplies by the channel factor, so once you have uploads, what YOUR viewers watch
+decides the mix: a format that trends globally but flops on your channel gets a fraction of the videos,
+one that over-performs for you gets several times more. Pairs you have never tried inherit their format's
+and topic's factors. The Overview shows every eligible blueprint's weight, factor and basis, and each
+produced Short's live view count.
+
+The taxonomy has 35 formats and 49 topics (`judge.py`); changing it re-judges cached Shorts on the next
+refresh.
 
 ```bash
 python main.py channel sync

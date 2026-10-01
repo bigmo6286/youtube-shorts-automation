@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -175,6 +176,28 @@ def cmd_produce(args) -> Path:
         run_name = "custom"
         log.info("custom script%s: %d words, title %r", " (enhanced)" if enhance else " (as written)", script["word_count"], script["title"])
         out_dir = OUTPUT_DIR / f"{now_iso()}_custom"
+    elif getattr(args, "profile", None):
+        # Clone a channel's style: blueprint comes from the analysed profile, not from the trend run.
+        from . import profile as profiles
+
+        prof = profiles.load_profile(args.profile)
+        if not prof:
+            sys.exit(f"No profile for {args.profile!r}. Run `python main.py profile add <channel url or @handle>` first.")
+        try:
+            script_gen.pick_backend(cfg.get("script_backend", "auto"))
+        except RuntimeError as exc:
+            sys.exit(str(exc))
+        blueprint = profiles.blueprint_for(prof)
+        run_name = f"profile:{prof['handle']}"
+        log.info("style of %s: %s x %s (%s hook)", prof.get("channel"), blueprint["format"], blueprint["topic"], blueprint["hook_style"])
+        out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{blueprint['topic']}"
+        target = int(getattr(args, "seconds", None) or blueprint.get("typical_seconds") or cfg["target_seconds"])
+        try:
+            script = script_gen.generate_script(blueprint, target_seconds=max(20, min(90, target)), angle=args.angle,
+                                                max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
+        except RuntimeError as exc:
+            sys.exit(f"Script writing failed: {exc}")
     else:
         run_dir = _run_dir(args)
         analysis = load_json(run_dir / "analysis.json")
@@ -544,6 +567,33 @@ def _sync_channel_quietly() -> None:
         log.warning("channel sync failed: %s", exc)
 
 
+def cmd_profile(args) -> None:
+    from . import profile as profiles
+
+    if args.action == "add":
+        if not args.target:
+            sys.exit("give a channel URL, @handle or channel id")
+        p = profiles.add_profile(args.target, max_videos=args.videos)
+        print(f"Profile {p['handle']} ({p['channel']}): {p['videos']} Shorts analysed, typical length {p['typical_seconds']}s")
+        print("  formats:", ", ".join(f"{f['name']} {f['share']:.0%}" for f in p["top_formats"]))
+        print("  topics: ", ", ".join(f"{t['name']} {t['share']:.0%}" for t in p["top_topics"]))
+        print("  hooks:  ", ", ".join(f"{h['name']} {h['share']:.0%}" for h in p["top_hooks"]))
+        if p.get("style_guide"):
+            print("  voice:  ", p["style_guide"]["voice_and_tone"])
+        print(f"Produce in this style:  python main.py produce --profile {p['handle']}")
+    elif args.action == "list":
+        for p in profiles.list_profiles():
+            print(f"- {p['handle']:<28} {p['channel'] or '':<30} {p['videos']} videos, ~{p['typical_seconds']}s, "
+                  f"{', '.join(f['name'] for f in (p['top_formats'] or [])[:2])}")
+        if not profiles.list_profiles():
+            print("no profiles yet: python main.py profile add <channel url or @handle>")
+    else:
+        p = profiles.load_profile(args.target or "")
+        if not p:
+            sys.exit("no such profile")
+        print(json.dumps({k: v for k, v in p.items() if k != "exemplars"}, indent=2, ensure_ascii=False))
+
+
 def cmd_channel(args) -> None:
     from . import channel
 
@@ -592,6 +642,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("produce", help="write, voice, caption and render a Short from a blueprint")
     pr.add_argument("--run"); pr.add_argument("--blueprint", type=int, default=1, help="1-based index from analyze")
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
+    pr.add_argument("--profile", help="produce in the style of an analysed channel (see `profile add`)")
+    pr.add_argument("--seconds", type=int, help="target length for --profile (default: the channel's typical length)")
     pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")
     pr.add_argument("--as-written", dest="enhance", action="store_false", default=True,
                     help="with --script-file: voice the text exactly as written instead of enhancing hook and flow")
@@ -637,6 +689,12 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("action", choices=["test", "discover", "send"])
     t.add_argument("path", nargs="?", help="send: output/<dir> or its short.mp4")
     t.set_defaults(func=cmd_telegram)
+
+    pf = sub.add_parser("profile", help="analyse a YouTube channel's style so videos can be made in that style")
+    pf.add_argument("action", choices=["add", "list", "show"])
+    pf.add_argument("target", nargs="?", help="channel URL, @handle or channel id")
+    pf.add_argument("--videos", type=int, default=24, help="add: how many of its most-viewed Shorts to analyse")
+    pf.set_defaults(func=cmd_profile)
 
     ch = sub.add_parser("channel", help="your channel's stats feeding back into the ranking (needs YOUTUBE_API_KEY + YOUTUBE_CHANNEL)")
     ch.add_argument("action", choices=["sync", "report"])

@@ -154,6 +154,8 @@ def _args(job: Job) -> SimpleNamespace:
         scheduled=bool(p.get("scheduled")), enhance=p.get("enhance", True) is not False,
         telegram=p.get("telegram", True) is not False, privacy=p.get("privacy") or None,
         regenerate=p.get("regenerate", True) is not False, set=p.get("set", True) is not False,
+        profile=p.get("profile") or None, seconds=p.get("seconds") or None, target=p.get("target") or None,
+        videos=int(p.get("videos") or 24),
     )
 
 
@@ -161,7 +163,7 @@ COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
-    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "thumbnail": cli.cmd_thumbnail,
+    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
 }
 
 
@@ -378,6 +380,23 @@ def _start_scheduler() -> None:
 @app.get("/api/schedule")
 def get_schedule() -> dict[str, Any]:
     return SCHEDULER.plan()
+
+
+# ------------------------------------------------------------------------------------ style profiles
+
+@app.get("/api/profiles")
+def get_profiles() -> list[dict[str, Any]]:
+    from ..profile import list_profiles
+    return list_profiles()
+
+
+@app.get("/api/profiles/{handle}")
+def get_profile(handle: str) -> dict[str, Any]:
+    from ..profile import load_profile
+    p = load_profile(handle)
+    if not p:
+        raise HTTPException(404, "no such profile")
+    return p
 
 
 # ------------------------------------------------------------------------------------ channel feedback

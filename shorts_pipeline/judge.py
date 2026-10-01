@@ -14,44 +14,110 @@ from .storage import JsonCache
 
 log = logging.getLogger(__name__)
 
+# Bump when FORMATS / TOPICS / HOOKS change so cached judgments are redone with the new labels.
+TAXONOMY_VERSION = "v2"
+
 FORMATS = {
-    "listicle_facts": "Rapid facts, tips or a numbered list read over footage or images",
-    "storytime": "A narrated story or anecdote with a beginning, tension and payoff",
+    # narration-led (faceless-friendly)
+    "single_fact": "One surprising fact or statistic, explained in a few sentences",
+    "listicle_facts": "Several rapid facts, tips or items in a numbered or implied list",
     "explainer": "Explains how or why something works; educational tone",
+    "myth_busting": "States a common belief and shows why it is wrong",
+    "storytime": "A narrated story or anecdote with a beginning, tension and payoff",
+    "history_story": "A dramatic story from history, told as a narrative",
+    "true_crime_story": "A narrated real crime, case or disappearance",
+    "mystery_unsolved": "An unexplained event, artifact or phenomenon presented as a mystery",
+    "horror_scary_story": "A creepy or scary story told for chills",
+    "reddit_confession_story": "A first-person confession or drama story, often from Reddit-style posts",
+    "quote_wisdom": "A quote, aphorism or short piece of wisdom with brief commentary",
+    "motivational": "Motivational or inspirational message or speech",
+    "life_hack_tip": "A practical trick, hack or tip to do something better",
+    "psychology_trick": "A psychological effect, bias or persuasion trick explained",
+    "quiz_riddle": "Asks the viewer a question, riddle or test and reveals the answer",
+    "ranking_top_list": "Ranks things from worst to best, or counts down a top list",
+    "comparison_versus": "Compares two or more things side by side (X vs Y)",
+    "then_vs_now": "How something changed over time, before and after",
+    "movie_tv_recap": "Recaps or explains a film, show, scene or plot",
     "tutorial_howto": "Step-by-step instructions to do or make something",
-    "motivational": "Motivational or inspirational message, quote or speech",
+    "recipe_cooking": "Preparing a dish, step by step",
+    "product_review": "Reviewing, unboxing or demonstrating a product",
+    "news_current_events": "Reporting or summarising a current news event",
+    "conspiracy_speculation": "Speculative or conspiracy-style theory presented for intrigue",
+    # performance-led (needs a person, original footage or a game)
     "comedy_skit": "Scripted joke, skit or meme performed on camera",
     "reaction_commentary": "A person reacting to or commenting on a clip, news or post",
     "talking_head_opinion": "One person speaking directly to camera giving an opinion or advice",
+    "vlog_day_in_life": "Personal vlog or day-in-the-life footage",
+    "prank_challenge": "Prank, dare or challenge performed on camera",
     "gameplay_clip": "Video game footage, highlights or streamer moments",
     "sports_highlight": "Real sports play, highlight or athlete moment",
     "music_dance": "Music performance, lip-sync or dance",
     "satisfying_visual": "Satisfying, ASMR, art process or oddly-satisfying visuals with little speech",
-    "animal_cute": "Pets or animals doing something cute or funny",
-    "product_review": "Reviewing, unboxing or demonstrating a product",
-    "news_current_events": "Reporting or summarising a current news event",
+    "animal_cute": "Pets or animals doing something cute or funny on camera",
     "other": "None of the above fits",
 }
 
 TOPICS = {
-    "money_finance": "Money, investing, side hustles, business, wealth",
-    "tech_ai": "Technology, gadgets, software, AI",
-    "science_nature": "Science, space, nature, how the world works",
-    "history": "Historical events, people or eras",
-    "psychology_relationships": "Human behaviour, dating, relationships, social dynamics",
-    "health_fitness": "Health, diet, fitness, body",
-    "self_improvement": "Productivity, discipline, habits, mindset",
-    "entertainment_celebrity": "Movies, TV, celebrities, pop culture",
+    "money_finance": "Personal finance, saving, debt, wealth habits",
+    "investing_crypto": "Stocks, investing, crypto, markets",
+    "business_entrepreneurship": "Business, startups, marketing, entrepreneurs",
+    "side_hustles_online_income": "Side hustles, freelancing, making money online",
+    "tech_gadgets": "Consumer technology, phones, gadgets, software",
+    "ai_future": "Artificial intelligence, robots, the future",
+    "programming_coding": "Programming, developers, software engineering",
+    "science_general": "Science and how the world works",
+    "space_astronomy": "Space, planets, astronomy, rockets",
+    "biology_human_body": "The human body, biology, medicine facts",
+    "physics_chemistry": "Physics, chemistry, engineering",
+    "nature_environment": "Nature, weather, climate, oceans, environment",
+    "animals_wildlife": "Wild animals and creatures",
+    "pets": "Dogs, cats and other pets",
+    "history_ancient": "Ancient and medieval history",
+    "history_modern": "Modern history, 1800s to today",
+    "war_military": "Wars, battles, military",
+    "geography_countries": "Countries, cities, maps, cultures of the world",
+    "psychology_mind": "Psychology, the mind, behaviour, mental tricks",
+    "relationships_dating": "Dating, relationships, marriage, friendship",
+    "family_parenting": "Parents, children, family life",
+    "self_improvement": "Habits, discipline, productivity, mindset",
+    "motivation_success": "Motivation, success, ambition, achievement stories",
+    "philosophy_stoicism": "Philosophy, stoicism, meaning of life",
+    "health_medical": "Health, illness, doctors, medical facts",
+    "fitness_gym": "Exercise, gym, training, sports science",
+    "nutrition_diet": "Food science, diets, nutrition",
+    "cooking_recipes": "Cooking, recipes, restaurants",
+    "travel_places": "Travel, destinations, places to visit",
+    "cars_vehicles": "Cars, motorcycles, planes, vehicles",
+    "true_crime": "Real crimes, criminals, cases",
+    "mysteries_paranormal": "Unsolved mysteries, paranormal, unexplained events",
+    "movies_tv": "Films, series, streaming, characters",
+    "celebrities_pop_culture": "Celebrities, fame, pop culture, gossip",
+    "music": "Music, artists, songs",
     "gaming": "Video games",
     "sports": "Sports and athletes",
-    "food": "Food, cooking, restaurants",
-    "travel_places": "Travel, places, geography",
-    "animals": "Animals and pets",
+    "football_soccer": "Football (soccer), clubs, players",
     "comedy_general": "Comedy with no specific subject",
-    "true_crime_mystery": "Crime, mysteries, unsolved cases, creepy stories",
+    "memes_internet_culture": "Memes, internet trends, creators",
+    "education_general_knowledge": "General knowledge, school subjects, trivia",
+    "law_rights": "Law, legal rights, courts",
+    "religion_spirituality": "Religion, faith, spirituality",
+    "art_design": "Art, design, architecture, creativity",
+    "fashion_beauty": "Fashion, style, beauty, skincare",
+    "home_diy": "Home, DIY, cleaning, organisation",
+    "language_words": "Languages, words, etymology, grammar",
     "news_politics": "News, politics, society",
     "other": "None of the above fits",
 }
+
+# old labels (cached judgments, produced videos, channel feedback) mapped onto the new taxonomy
+LEGACY_TOPICS = {"tech_ai": "tech_gadgets", "science_nature": "science_general", "history": "history_modern",
+                 "psychology_relationships": "psychology_mind", "health_fitness": "health_medical",
+                 "entertainment_celebrity": "celebrities_pop_culture", "food": "cooking_recipes", "animals": "animals_wildlife",
+                 "true_crime_mystery": "true_crime"}
+
+
+def canonical_topic(topic: str) -> str:
+    return LEGACY_TOPICS.get(topic, topic)
 
 HOOKS = {
     "question": "Opens by asking the viewer a question",
@@ -74,9 +140,13 @@ def _q(kind: str, instructions: Any, criteria: Any = None) -> dict[str, Any]:
 SHORT_QUESTIONS: dict[str, dict[str, Any]] = {
     "format": _q("choice", {
         "question": "Which content format is this Short?",
-        "focus": "Judge the delivery format, not the subject matter.",
+        "focus": "Judge the delivery format, not the subject matter. Pick the most specific option that fits; "
+                 "use the broader one (storytime, explainer, listicle_facts) only when no specific one does.",
     }, FORMATS),
-    "topic": _q("choice", "Which subject area is this Short mainly about?", TOPICS),
+    "topic": _q("choice", {
+        "question": "Which subject area is this Short mainly about?",
+        "focus": "Pick the most specific option; 'other' only when nothing fits at all.",
+    }, TOPICS),
     "hook_style": _q("choice", {
         "question": "How does this Short try to grab attention in its first seconds?",
         "evidence": "Use the opening of `transcript` when present, otherwise `title` and `description`.",
@@ -182,7 +252,7 @@ def judge_short(meta: dict[str, Any], *, use_cache: bool = True) -> dict[str, An
     """One TypeSafe request per Short answering every question at once."""
     if not has_typesafe():
         return None
-    key = meta["id"] + ("+t" if meta.get("transcript") else "")
+    key = meta["id"] + ("+t" if meta.get("transcript") else "") + "+" + TAXONOMY_VERSION
     if use_cache:
         cached = _JUDGE_CACHE.get(key)
         if cached:

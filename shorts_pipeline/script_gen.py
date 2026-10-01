@@ -57,6 +57,20 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
     angle_line = f"Specific angle or subject to use: {angle}\n" if angle else "Pick a fresh, specific subject inside the topic.\n"
     if avoid:
         angle_line += "Recently made videos, do not repeat these subjects or angles:\n" + "\n".join(f"- {t}" for t in avoid[:20]) + "\n"
+    style = blueprint.get("style_guide")
+    if style:
+        angle_line += (
+            f"\nWrite in the STYLE of the channel {blueprint.get('style_of', '')}. Imitate how they write, with a new subject and "
+            "your own sentences; never reuse their lines.\n"
+            f"- Voice and tone: {style.get('voice_and_tone', '')}\n"
+            f"- Hook patterns they use: {'; '.join(style.get('hook_patterns') or [])}\n"
+            f"- Structure: {style.get('structure', '')}\n"
+            f"- Pacing: {style.get('pacing_and_sentences', '')}\n"
+            f"- Recurring phrases: {', '.join(style.get('vocabulary_and_phrases') or [])}\n"
+            f"- Endings: {style.get('ending_and_cta', '')}\n"
+            f"- Do: {'; '.join(style.get('dos') or [])}\n"
+            f"- Never: {'; '.join(style.get('donts') or [])}\n"
+        )
     return (
         f"Format: {blueprint['format']}\nTopic: {blueprint['topic']}\nHook style: {blueprint['hook_style']}\n"
         f"Why this works right now: {blueprint.get('why_it_works', '')}\n"

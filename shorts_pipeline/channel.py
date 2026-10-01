@@ -23,9 +23,9 @@ log = logging.getLogger(__name__)
 
 API = "https://www.googleapis.com/youtube/v3"
 STATS_PATH = DATA_DIR / "channel_stats.json"
-MIN_VIDEOS_PER_BLUEPRINT = 2
-FACTOR_MIN, FACTOR_MAX = 0.3, 3.0
-MIN_AGE_HOURS = 6              # a video younger than this has no meaningful views-per-hour yet
+MIN_VIDEOS_PER_BLUEPRINT = 1   # one video already counts, shrunk toward neutral until more arrive
+FACTOR_MIN, FACTOR_MAX = 0.2, 4.0
+MIN_AGE_HOURS = 3              # a video younger than this has no meaningful views-per-hour yet
 
 
 def _oauth() -> bool:
@@ -245,28 +245,66 @@ def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return matched
 
 
+def _shrunk_factor(vph: float, channel_median: float, n: int) -> float:
+    """views/hour ratio to the channel median, pulled toward 1.0 when few videos support it:
+    1 video -> half-way, 2 -> two thirds, 3 -> three quarters..."""
+    if channel_median <= 0 or n <= 0:
+        return 1.0
+    raw = max(FACTOR_MIN, min(FACTOR_MAX, vph / channel_median))
+    weight = n / (n + 1.0)
+    return 1.0 + (raw - 1.0) * weight
+
+
+def _group_stats(items: list[dict[str, Any]], channel_median: float) -> dict[str, Any]:
+    vph = median(i["views_per_hour"] for i in items)
+    return {"videos": len(items), "median_views_per_hour": round(vph, 2), "median_views": int(median(i["views"] for i in items)),
+            "factor": round(_shrunk_factor(vph, channel_median, len(items)), 2), "provisional": len(items) < 3}
+
+
 def blueprint_performance(matched: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """Per-blueprint views/hour relative to the channel median -> factor in [FACTOR_MIN, FACTOR_MAX]."""
+    """How each format x topic, each format and each topic performs on YOUR channel: median views/hour
+    relative to the channel median, as a factor in [FACTOR_MIN, FACTOR_MAX] shrunk by sample size."""
+    from .judge import canonical_topic
+
     if matched is None:
         data = load_json(STATS_PATH)
         matched = match_outputs(data["videos"]) if data else []
     mature = [m for m in matched if m.get("age_hours", 0) >= MIN_AGE_HOURS]
     if not mature:
-        return {"channel_median_vph": None, "videos": len(matched), "blueprints": {}}
+        return {"channel_median_vph": None, "videos": len(matched), "blueprints": {}, "formats": {}, "topics": {}}
     channel_median = median(m["views_per_hour"] for m in mature) or 0.0
-    groups: dict[str, list[dict[str, Any]]] = {}
+    pairs: dict[str, list[dict[str, Any]]] = {}
+    formats: dict[str, list[dict[str, Any]]] = {}
+    topics: dict[str, list[dict[str, Any]]] = {}
     for m in mature:
-        groups.setdefault(m["key"], []).append(m)
-    out: dict[str, Any] = {}
-    for key, items in groups.items():
-        vph = median(i["views_per_hour"] for i in items)
-        if channel_median > 0 and len(items) >= MIN_VIDEOS_PER_BLUEPRINT:
-            factor = max(FACTOR_MIN, min(FACTOR_MAX, vph / channel_median))
-        else:
-            factor = 1.0
-        out[key] = {"videos": len(items), "median_views_per_hour": round(vph, 2), "median_views": int(median(i["views"] for i in items)),
-                    "factor": round(factor, 2), "provisional": len(items) < MIN_VIDEOS_PER_BLUEPRINT}
-    return {"channel_median_vph": round(channel_median, 2), "videos": len(mature), "blueprints": out}
+        fmt, topic = (m.get("format") or "custom"), canonical_topic(m.get("topic") or "custom")
+        pairs.setdefault(f"{fmt}|{topic}", []).append(m)
+        formats.setdefault(fmt, []).append(m)
+        topics.setdefault(topic, []).append(m)
+    return {"channel_median_vph": round(channel_median, 2), "videos": len(mature),
+            "blueprints": {k: _group_stats(v, channel_median) for k, v in pairs.items()},
+            "formats": {k: _group_stats(v, channel_median) for k, v in formats.items()},
+            "topics": {k: _group_stats(v, channel_median) for k, v in topics.items()}}
+
+
+def factor_for(perf: dict[str, Any], fmt: str, topic: str) -> tuple[float, int, str]:
+    """Factor for a blueprint: the exact pair when seen, else the format and topic factors combined
+    (geometric mean), else neutral. Returns (factor, videos behind it, basis)."""
+    from .judge import canonical_topic
+
+    topic = canonical_topic(topic)
+    pair = (perf.get("blueprints") or {}).get(f"{fmt}|{topic}")
+    if pair:
+        return float(pair["factor"]), int(pair["videos"]), "pair"
+    f = (perf.get("formats") or {}).get(fmt)
+    t = (perf.get("topics") or {}).get(topic)
+    if f and t:
+        return round((float(f["factor"]) * float(t["factor"])) ** 0.5, 2), min(int(f["videos"]), int(t["videos"])), "format+topic"
+    if f:
+        return float(f["factor"]), int(f["videos"]), "format"
+    if t:
+        return float(t["factor"]), int(t["videos"]), "topic"
+    return 1.0, 0, "none"
 
 
 def sync() -> dict[str, Any]:
