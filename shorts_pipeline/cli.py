@@ -19,6 +19,15 @@ log = logging.getLogger("shorts")
 
 
 def _setup_logging(verbose: bool) -> None:
+    if sys.stdout is None or sys.stderr is None:
+        # pythonw (the autostart launcher) has no console: anything written to stdout/stderr would kill the
+        # process, so both go to data/console.err instead.
+        from .config import DATA_DIR
+
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        sink = open(DATA_DIR / "console.err", "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        sys.stdout = sys.stdout or sink
+        sys.stderr = sys.stderr or sink
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8")  # emoji-laden titles on Windows consoles
