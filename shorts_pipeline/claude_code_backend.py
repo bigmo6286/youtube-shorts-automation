@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .tools import run as _run
 from .config import env
 
 log = logging.getLogger(__name__)
@@ -112,8 +113,8 @@ def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: 
                "--max-turns", "6" if attempt == 1 else "10",   # the structured answer itself costs a tool_use turn
                "--tools", ""]                                  # pure text generation, no file or shell tools
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                  timeout=timeout, env=child_env)
+            proc = _run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                        timeout=timeout, env=child_env, retries=0)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(f"Claude Code did not answer within {timeout}s") from exc
         raw = (proc.stdout or "").strip()

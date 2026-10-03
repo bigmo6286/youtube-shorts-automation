@@ -6,6 +6,8 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -96,3 +98,34 @@ def install_ffmpeg() -> Path:
         raise RuntimeError(f"ffmpeg zip extracted under {BIN_DIR} but no bin/ffmpeg.exe was found")
     log.info("ffmpeg installed at %s", found)
     return found
+
+
+CONTROL_C_EXIT = 3221225786          # 0xC000013A: Windows killed the child with a console control event
+
+
+def run(cmd: list[str], *, retries: int = 1, **kwargs) -> subprocess.CompletedProcess:
+    """subprocess.run for ffmpeg/ffprobe/claude: never opens a console window on Windows (the autostart
+    console runs under pythonw, where every child would otherwise pop up its own window that a stray click
+    or Ctrl+C can kill), never waits on stdin, keeps stderr for the error message, and retries once when
+    Windows reports the child was interrupted rather than failed."""
+    cmd = list(cmd)
+    if cmd and Path(cmd[0]).stem.lower() == "ffmpeg" and "-nostdin" not in cmd:
+        cmd.insert(1, "-nostdin")
+    if sys.platform == "win32":
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if not kwargs.get("capture_output") and "stderr" not in kwargs:
+        kwargs["stderr"] = subprocess.PIPE
+    text = kwargs.get("text") or kwargs.get("encoding")
+    check = kwargs.pop("check", False)
+    for attempt in range(retries + 1):
+        proc = subprocess.run(cmd, **kwargs)
+        if proc.returncode == CONTROL_C_EXIT and attempt < retries:
+            log.warning("%s was interrupted by a console control event; retrying once", Path(cmd[0]).name)
+            continue
+        break
+    if check and proc.returncode != 0:
+        err = proc.stderr if text else (proc.stderr or b"").decode("utf-8", "replace")
+        tail = (err or "").strip()[-600:]
+        raise RuntimeError(f"{Path(cmd[0]).name} failed (exit {proc.returncode}){': ' + tail if tail else ''}")
+    return proc

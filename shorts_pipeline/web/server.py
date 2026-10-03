@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from .. import cli
 from ..config import OUTPUT_DIR, ROOT, load_config, save_local_config
+from ..tools import run as _run
 from ..storage import RUNS_DIR, load_json
 
 log = logging.getLogger("shorts.web")
@@ -363,7 +364,7 @@ def caption_preview(body: CaptionStyleBody):
         filt = ("gradients=size=1080x1920:speed=0.01:nb_colors=3:c0=0x1b1f3b:c1=0x3a0f5c:c2=0x0b3b5c:duration=1:rate=1,"
                 "format=yuv420p," + subtitles_filter(ass) + ",scale=405:720")
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", filt, "-frames:v", "1", "-update", "1", out.name]
-        r = subprocess.run(cmd, cwd=str(work), capture_output=True, text=True)
+        r = _run(cmd, cwd=str(work), capture_output=True, text=True)
         if r.returncode != 0 or not out.exists():
             raise HTTPException(500, f"preview failed: {r.stderr[-300:]}")
         return Response(out.read_bytes(), media_type="image/png")

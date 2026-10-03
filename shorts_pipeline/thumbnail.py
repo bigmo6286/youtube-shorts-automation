@@ -9,7 +9,7 @@ from typing import Any
 
 from .captions import POSITIONS, _ass_color, _esc, _header, resolve_style, subtitles_filter
 from .render import probe_duration
-from .tools import ensure_ffmpeg_on_path
+from .tools import run as _run, ensure_ffmpeg_on_path
 
 ensure_ffmpeg_on_path()
 log = logging.getLogger(__name__)
@@ -92,12 +92,12 @@ def make_thumbnail(script: dict[str, Any], segments: list[dict[str, Any]], out_d
     cmd = ["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", graph, "-map", "[out]",
            "-frames:v", "1", "-update", "1", "-q:v", "3", out.name]
     try:
-        subprocess.run(cmd, check=True, cwd=str(out_dir.resolve()))
-    except subprocess.CalledProcessError as exc:
+        _run(cmd, check=True, cwd=str(out_dir.resolve()), text=True)
+    except RuntimeError as exc:
         log.warning("thumbnail failed: %s", exc)
         return None
     if out.stat().st_size > 2 * 1024 * 1024:                # YouTube limit is 2 MB
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out.name, "-q:v", "8", "-update", "1", out.name],
-                       cwd=str(out_dir.resolve()))
+        _run(["ffmpeg", "-y", "-loglevel", "error", "-i", out.name, "-q:v", "8", "-update", "1", out.name],
+             cwd=str(out_dir.resolve()), text=True)
     log.info("thumbnail: %r on %s", text, src.name)
     return out

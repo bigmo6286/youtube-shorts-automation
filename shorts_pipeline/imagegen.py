@@ -90,14 +90,14 @@ def _crop_bottom(path: Path, fraction: float) -> None:
     """Cut `fraction` off the bottom of an image in place (used to remove a provider watermark)."""
     import subprocess
 
-    from .tools import ensure_ffmpeg_on_path
+    from .tools import run as _run, ensure_ffmpeg_on_path
 
     ensure_ffmpeg_on_path()
     tmp = path.with_suffix(".crop.jpg")
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-vf", f"crop=iw:ih*{1 - fraction:.3f}:0:0",
            "-q:v", "2", str(tmp)]
     try:
-        subprocess.run(cmd, check=True)
+        _run(cmd, check=True, text=True)
         tmp.replace(path)
     except Exception as exc:  # noqa: BLE001
         log.warning("could not crop watermark: %s", exc)

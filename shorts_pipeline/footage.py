@@ -18,7 +18,7 @@ import requests
 
 from .config import env, has_typesafe
 from .storage import CACHE_DIR, JsonCache
-from .tools import ensure_ffmpeg_on_path
+from .tools import run as _run, ensure_ffmpeg_on_path
 
 ensure_ffmpeg_on_path()
 log = logging.getLogger(__name__)
@@ -196,8 +196,8 @@ def image_clip(img: Path, seconds: float, out_path: Path) -> Path | None:
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(img), "-vf", vf,
            "-t", f"{seconds + 0.5:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", str(out_path)]
     try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as exc:
+        _run(cmd, check=True, text=True)
+    except RuntimeError as exc:
         log.warning("photo clip failed: %s", exc)
         return None
     return out_path
@@ -217,7 +217,7 @@ def generated_background(out_path: Path, seconds: float, seed: int = 7) -> Path:
             f":duration={seconds:.2f}:rate=30,format=yuv420p")
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", filt,
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-t", f"{seconds:.2f}", str(out_path)]
-    subprocess.run(cmd, check=True)
+    _run(cmd, check=True, text=True)
     return out_path
 
 

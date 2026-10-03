@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .captions import subtitles_filter
-from .tools import ensure_ffmpeg_on_path
+from .tools import run as _run, ensure_ffmpeg_on_path
 
 ensure_ffmpeg_on_path()
 
@@ -15,14 +15,14 @@ W, H = 1080, 1920
 
 
 def probe_duration(path: Path) -> float:
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
-                         capture_output=True, text=True, check=True).stdout
+    out = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+               capture_output=True, text=True, check=True).stdout
     return float(json.loads(out)["format"]["duration"])
 
 
 def probe_channels(path: Path) -> int:
-    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels",
-                          "-of", "json", str(path)], capture_output=True, text=True, check=True).stdout
+    out = _run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=channels",
+                "-of", "json", str(path)], capture_output=True, text=True, check=True).stdout
     streams = json.loads(out).get("streams") or [{}]
     return int(streams[0].get("channels") or 2)
 
@@ -117,5 +117,5 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
            "-t", f"{total_seconds + 0.3:.3f}", out_path.name]
-    subprocess.run(cmd, check=True, cwd=str(work))
+    _run(cmd, check=True, cwd=str(work), text=True)
     return out_path.resolve()
