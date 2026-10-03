@@ -22,17 +22,44 @@ from .config import env
 log = logging.getLogger(__name__)
 
 
+def _version_key(path: str) -> tuple:
+    """Sort key: the version folder number (2.1.286 > 2.1.99), then modification time."""
+    m = re.search(r"claude-code[\\/](\d+)\.(\d+)\.(\d+)", path)
+    ver = tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+    return (ver, mtime)
+
+
 def find_claude_binary() -> str | None:
-    """CLAUDE_CODE_BIN, then `claude` on PATH, then the newest copy bundled with the Claude desktop app."""
-    explicit = env("CLAUDE_CODE_BIN")
-    if explicit and Path(explicit).exists():
-        return explicit
+    """CLAUDE_CODE_BIN, CLAUDE_CODE_EXECPATH, `claude` on PATH, then the newest copy bundled with the Claude
+    desktop app (any depth under claude-code/, since updates changed the layout), then common installs."""
+    for var in ("CLAUDE_CODE_BIN", "CLAUDE_CODE_EXECPATH"):
+        explicit = env(var)
+        if explicit and Path(explicit).exists():
+            return explicit
     on_path = shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe")
     if on_path:
         return on_path
-    appdata = os.environ.get("APPDATA", "")
-    candidates = sorted(glob.glob(os.path.join(appdata, "Claude", "claude-code", "*", "claude.exe")))
-    return candidates[-1] if candidates else None
+    home = os.path.expanduser("~")
+    appdata = os.environ.get("APPDATA", os.path.join(home, "AppData", "Roaming"))
+    localappdata = os.environ.get("LOCALAPPDATA", os.path.join(home, "AppData", "Local"))
+    patterns = [
+        os.path.join(appdata, "Claude", "claude-code", "**", "claude.exe"),
+        os.path.join(localappdata, "Programs", "claude-code", "**", "claude.exe"),
+        os.path.join(home, ".claude", "local", "**", "claude.exe"),
+        os.path.join(appdata, "npm", "claude.cmd"),
+        os.path.join(home, ".local", "bin", "claude.exe"),
+    ]
+    found: list[str] = []
+    for pat in patterns:
+        found += glob.glob(pat, recursive=True)
+    if not found:
+        return None
+    found.sort(key=_version_key)
+    return found[-1]
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:

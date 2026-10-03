@@ -170,8 +170,17 @@ def pick_backend(preference: str = "auto") -> str:
     from . import claude_code_backend
     if preference == "api" or (preference == "auto" and has_anthropic()):
         return "api"
-    if preference in ("claude_code", "auto") and claude_code_backend.find_claude_binary():
-        return "claude_code"
+    if preference in ("claude_code", "auto"):
+        binary = claude_code_backend.find_claude_binary()
+        if binary:
+            return "claude_code"
+        from .config import env
+        token_note = ("CLAUDE_CODE_OAUTH_TOKEN is set, but" if env("CLAUDE_CODE_OAUTH_TOKEN")
+                      else "no CLAUDE_CODE_OAUTH_TOKEN is set and")
+        raise RuntimeError(f"No script backend: {token_note} the Claude Code program (claude.exe) was not found on this "
+                           "machine. Open the Claude desktop app once (it installs Claude Code), or set CLAUDE_CODE_BIN in "
+                           "Settings to the full path of claude.exe, or install it with `npm install -g @anthropic-ai/claude-code`. "
+                           "Alternatively set ANTHROPIC_API_KEY to use the API instead.")
     raise RuntimeError("No script backend: set ANTHROPIC_API_KEY, or run `claude setup-token` and set "
                        "CLAUDE_CODE_OAUTH_TOKEN (see README).")
 
