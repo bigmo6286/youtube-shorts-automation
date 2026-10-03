@@ -180,10 +180,14 @@ the trend ranking), and asks Claude to distil a style guide from the transcripts
 patterns, structure, pacing, recurring phrases, endings, dos and don'ts. Patterns only, never their
 sentences. The profile is saved under `data/profiles/`.
 
-"Produce in this style" (or `produce --profile @somechannel`) picks one of the channel's top
-format x topic pairs by share, uses its typical length, and writes a new script following the style
-guide, with the rest of the pipeline unchanged. Settings -> Schedule -> Source lets the scheduler produce
-from a profile instead of the trend blueprints.
+Studio then lists every analysed Short of that channel (most viewed first, with its format x topic and
+hook) and each row has "Produce like this": a remake of that one video, same subject and structure in
+fresh words, in the channel's style (`produce --profile @somechannel --exemplar <video id>`; `profile
+show @somechannel` prints the ids). "Produce in this style" (or `produce --profile @somechannel`)
+instead picks one of the channel's top format x topic pairs by share with a new subject. Both use the
+channel's typical length and the style guide, with the rest of the pipeline unchanged. A profile saved
+without a style guide (Claude was unavailable) gets one on its next produce. Settings -> Schedule ->
+Source lets the scheduler produce from a profile instead of the trend blueprints.
 
 ## Your channel's performance feeds back into the ranking
 

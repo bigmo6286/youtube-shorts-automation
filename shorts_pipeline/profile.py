@@ -131,8 +131,8 @@ def add_profile(url_or_handle: str, *, max_videos: int = 24, min_views: int = 10
     def ranked(d: dict[str, float], n: int) -> list[dict[str, Any]]:
         total = sum(d.values()) or 1.0
         return [{"name": k, "share": round(v / total, 3)} for k, v in sorted(d.items(), key=lambda kv: -kv[1])[:n]]
-    exemplars = sorted(shorts, key=views, reverse=True)[:10]
-    style = _style_guide(channel_name, exemplars)
+    exemplars = sorted(shorts, key=views, reverse=True)          # every analysed Short, most viewed first
+    style = _style_guide(channel_name, exemplars[:10])
     profile = {
         "handle": handle, "channel": channel_name, "created": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
         "videos": len(shorts), "judged": len(judged),
@@ -140,6 +140,7 @@ def add_profile(url_or_handle: str, *, max_videos: int = 24, min_views: int = 10
         "top_formats": ranked(fmt_w, 5), "top_topics": ranked(top_w, 6), "top_hooks": ranked(hook_w, 4), "top_pairs": ranked(pair_w, 6),
         "exemplars": [{"id": s["id"], "title": s["title"], "url": s["url"], "views": s.get("view_count", 0),
                        "duration": s.get("duration"), "transcript": (s.get("transcript") or "")[:900],
+                       "likes": s.get("like_count") or 0, "uploaded": s.get("upload_date") or s.get("published") or "",
                        "format": (s.get("judgment") or {}).get("format", {}).get("choice"),
                        "topic": canonical_topic((s.get("judgment") or {}).get("topic", {}).get("choice", "")),
                        "hook_style": (s.get("judgment") or {}).get("hook_style", {}).get("choice")} for s in exemplars],
@@ -182,10 +183,40 @@ def _style_guide(channel_name: str, exemplars: list[dict[str, Any]]) -> dict[str
         return None
 
 
-def blueprint_for(profile: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
-    """A blueprint in this channel's style. Rotates through the channel's top format x topic pairs by share."""
+def ensure_style_guide(profile: dict[str, Any]) -> dict[str, Any]:
+    """Retry the style guide once if the analysis saved the profile without one (Claude was unavailable)."""
+    if profile.get("style_guide") or not profile.get("exemplars"):
+        return profile
+    style = _style_guide(profile.get("channel") or profile.get("handle", ""), profile["exemplars"][:10])
+    if style:
+        profile["style_guide"] = style
+        save_json(profile_path(profile["handle"]), profile)
+        log.info("style guide for %s written on retry", profile.get("channel") or profile.get("handle"))
+    return profile
+
+
+def blueprint_for(profile: dict[str, Any], state: dict[str, Any] | None = None,
+                  exemplar_id: str | None = None) -> dict[str, Any]:
+    """A blueprint in this channel's style. Rotates through the channel's top format x topic pairs by share,
+    or, with `exemplar_id`, models the video on that one Short of the channel (same subject, format and hook)."""
     import random
 
+    if exemplar_id:
+        model = next((e for e in profile.get("exemplars", []) if e.get("id") == exemplar_id), None)
+        if not model:
+            raise RuntimeError(f"no video {exemplar_id!r} in the profile of {profile.get('handle')}; analyse the channel again")
+        fmt = model.get("format") if model.get("format") not in (None, "other", "uncertain") else (profile.get("top_formats") or [{"name": "storytime"}])[0]["name"]
+        topic = model.get("topic") if model.get("topic") not in (None, "other") else (profile.get("top_topics") or [{"name": "other"}])[0]["name"]
+        hook = model.get("hook_style") if model.get("hook_style") not in (None, "no_hook", "visual_only") else "curiosity_gap"
+        others = [e for e in profile.get("exemplars", []) if e.get("id") != exemplar_id and e.get("format") == fmt][:2]
+        return {
+            "format": fmt, "topic": topic, "hook_style": hook,
+            "why_it_works": (f"a remake of {model.get('title')!r} by {profile.get('channel') or profile.get('handle')} "
+                             f"({int(model.get('views') or 0):,} views): same subject and structure, written fresh"),
+            "exemplars": [model] + others, "model_video": model,
+            "style_guide": profile.get("style_guide"), "style_of": profile.get("channel") or profile.get("handle"),
+            "typical_seconds": model.get("duration") or profile.get("typical_seconds"),
+        }
     pairs = profile.get("top_pairs") or []
     if pairs:
         pick = random.choices(pairs, weights=[max(0.05, p["share"]) for p in pairs], k=1)[0]

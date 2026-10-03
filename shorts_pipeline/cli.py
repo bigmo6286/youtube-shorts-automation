@@ -196,13 +196,24 @@ def cmd_produce(args) -> Path:
             script_gen.pick_backend(cfg.get("script_backend", "auto"))
         except RuntimeError as exc:
             sys.exit(str(exc))
-        blueprint = profiles.blueprint_for(prof)
+        prof = profiles.ensure_style_guide(prof)
+        exemplar_id = getattr(args, "exemplar", None) or None
+        try:
+            blueprint = profiles.blueprint_for(prof, exemplar_id=exemplar_id)
+        except RuntimeError as exc:
+            sys.exit(str(exc))
         run_name = f"profile:{prof['handle']}"
+        angle = args.angle
+        if exemplar_id and not angle:
+            mv = blueprint["model_video"]
+            angle = (f"Remake this Short of theirs with the same subject and structure, in fresh words and facts of your "
+                     f"own: title {mv.get('title')!r}" + (f"; its transcript: {mv['transcript'][:600]!r}" if mv.get("transcript") else ""))
+            log.info("modelled on %r (%s views)", mv.get("title"), f"{int(mv.get('views') or 0):,}")
         log.info("style of %s: %s x %s (%s hook)", prof.get("channel"), blueprint["format"], blueprint["topic"], blueprint["hook_style"])
         out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{blueprint['topic']}"
         target = int(getattr(args, "seconds", None) or blueprint.get("typical_seconds") or cfg["target_seconds"])
         try:
-            script = script_gen.generate_script(blueprint, target_seconds=max(20, min(90, target)), angle=args.angle,
+            script = script_gen.generate_script(blueprint, target_seconds=max(20, min(90, target)), angle=angle,
                                                 max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
                                                 backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
         except RuntimeError as exc:
@@ -626,6 +637,9 @@ def cmd_profile(args) -> None:
         if not p:
             sys.exit("no such profile")
         print(json.dumps({k: v for k, v in p.items() if k != "exemplars"}, indent=2, ensure_ascii=False))
+        print(f"\ntheir Shorts ({len(p.get('exemplars') or [])}, most viewed first); remake one with  produce --profile {p['handle']} --exemplar <id>")
+        for e in p.get("exemplars") or []:
+            print(f"  {e['id']:<12} {int(e.get('views') or 0):>12,}  {e.get('format') or '?'} x {e.get('topic') or '?'}  {e.get('title', '')[:60]}")
 
 
 def cmd_channel(args) -> None:
@@ -681,6 +695,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--run"); pr.add_argument("--blueprint", type=int, default=1, help="1-based index from analyze")
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
     pr.add_argument("--profile", help="produce in the style of an analysed channel (see `profile add`)")
+    pr.add_argument("--exemplar", help="with --profile: remake one of that channel's Shorts by video id (see `profile show`)")
     pr.add_argument("--blueprint-key", dest="blueprint_key", help="one of your channel's winners, e.g. storytime|psychology_mind (see `channel report`)")
     pr.add_argument("--seconds", type=int, help="target length for --profile (default: the channel's typical length)")
     pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")

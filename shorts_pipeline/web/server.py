@@ -152,6 +152,7 @@ def _args(job: Job) -> SimpleNamespace:
         blueprint=int(p["blueprint"]) if str(p.get("blueprint") or "").isdigit() else 1,
         blueprint_key=(p.get("blueprint_key") or (str(p.get("blueprint"))[8:] if str(p.get("blueprint") or "").startswith("channel:") else None)),
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
+        exemplar=p.get("exemplar") or None,
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",

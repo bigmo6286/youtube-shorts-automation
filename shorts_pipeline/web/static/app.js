@@ -376,7 +376,18 @@ async function showProfileSummary() {
     const p = await api(`/api/profiles/${encodeURIComponent(h)}`);
     const sg = p.style_guide;
     el.innerHTML = `<b>${esc(p.channel)}</b>: ${p.videos} Shorts, ~${p.typical_seconds}s · formats ${(p.top_formats || []).map((f) => `${esc(f.name)} ${Math.round(f.share * 100)}%`).join(", ")} · topics ${(p.top_topics || []).slice(0, 4).map((t) => `${esc(t.name)} ${Math.round(t.share * 100)}%`).join(", ")}`
-      + (sg ? `<details><summary>Style guide</summary><p><b>Voice:</b> ${esc(sg.voice_and_tone)}</p><p><b>Hooks:</b> ${esc((sg.hook_patterns || []).join(" · "))}</p><p><b>Structure:</b> ${esc(sg.structure)}</p><p><b>Pacing:</b> ${esc(sg.pacing_and_sentences)}</p><p><b>Endings:</b> ${esc(sg.ending_and_cta)}</p><p><b>Do:</b> ${esc((sg.dos || []).join(" · "))}</p><p><b>Never:</b> ${esc((sg.donts || []).join(" · "))}</p></details>` : " · no style guide (transcripts unavailable)");
+      + (sg ? `<details><summary>Style guide</summary><p><b>Voice:</b> ${esc(sg.voice_and_tone)}</p><p><b>Hooks:</b> ${esc((sg.hook_patterns || []).join(" · "))}</p><p><b>Structure:</b> ${esc(sg.structure)}</p><p><b>Pacing:</b> ${esc(sg.pacing_and_sentences)}</p><p><b>Endings:</b> ${esc(sg.ending_and_cta)}</p><p><b>Do:</b> ${esc((sg.dos || []).join(" · "))}</p><p><b>Never:</b> ${esc((sg.donts || []).join(" · "))}</p></details>` : " · no style guide yet (written on the next produce if Claude is available)");
+    const vids = p.exemplars || [];
+    const rows = vids.map((v) => `<tr><td><a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title || v.id)}</a></td>
+        <td>${Number(v.views || 0).toLocaleString()}</td><td>${v.duration ? v.duration + "s" : "-"}</td>
+        <td>${esc((v.format || "?") + " × " + (v.topic || "?"))}</td><td>${esc(v.hook_style || "")}</td>
+        <td><button class="pf-remake" data-id="${esc(v.id)}" data-title="${esc(v.title || "")}">Produce like this</button></td></tr>`).join("");
+    const head = `Their Shorts (${vids.length}${vids.length < (p.videos || 0) ? ` of ${p.videos}; analyse again to list all` : ""}, most viewed first)`;
+    el.innerHTML += `<div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>${head}</th><th>Views</th><th>Length</th><th>Format × topic</th><th>Hook</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">No videos stored; analyse the channel again.</td></tr>`}</tbody></table></div>`;
+    el.querySelectorAll(".pf-remake").forEach((b) => b.addEventListener("click", () => {
+      toast(`Producing a remake of "${b.dataset.title.slice(0, 50)}" in the style of ${h}`);
+      startJob("produce", { profile: h, exemplar: b.dataset.id, angle: $("#pf-angle").value, music: $("#pf-music").value, upload: $("#pf-upload").checked });
+    }));
   } catch (_) { el.textContent = ""; }
 }
 $("#pf-select").addEventListener("change", showProfileSummary);
