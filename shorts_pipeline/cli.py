@@ -198,6 +198,28 @@ def cmd_produce(args) -> Path:
                                                 backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
         except RuntimeError as exc:
             sys.exit(f"Script writing failed: {exc}")
+    elif getattr(args, "blueprint_key", None):
+        # One of your channel's own winners (format x topic that beats your channel median), independent of the trend run.
+        from .channel import CHANNEL_BLUEPRINTS_PATH, channel_blueprints
+
+        cbs = load_json(CHANNEL_BLUEPRINTS_PATH) or channel_blueprints()
+        blueprint = next((b for b in cbs if b.get("key") == args.blueprint_key), None)
+        if not blueprint:
+            sys.exit(f"No channel blueprint {args.blueprint_key!r}; run `channel sync` first.")
+        try:
+            script_gen.pick_backend(cfg.get("script_backend", "auto"))
+        except RuntimeError as exc:
+            sys.exit(str(exc))
+        run_name = "channel"
+        log.info("channel winner: %s x %s (%s hook), x%s your channel median", blueprint["format"], blueprint["topic"],
+                 blueprint["hook_style"], blueprint["opportunity"])
+        out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{blueprint['topic']}"
+        try:
+            script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
+                                                max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
+        except RuntimeError as exc:
+            sys.exit(f"Script writing failed: {exc}")
     else:
         run_dir = _run_dir(args)
         analysis = load_json(run_dir / "analysis.json")
@@ -560,6 +582,9 @@ def _sync_channel_quietly() -> None:
     try:
         report = channel.sync()
         perf = report["performance"]
+        winners = channel.channel_blueprints(perf)
+        if winners:
+            log.info("channel winners: %s", ", ".join(f"{w['key']} x{w['opportunity']}" for w in winners))
         for key, p in sorted(perf["blueprints"].items(), key=lambda kv: -kv[1]["factor"]):
             log.info("channel feedback %s: %d videos, %.1f views/h, factor x%.2f%s", key, p["videos"],
                      p["median_views_per_hour"], p["factor"], " (provisional)" if p["provisional"] else "")
@@ -606,14 +631,18 @@ def cmd_channel(args) -> None:
         if not report:
             sys.exit("No channel data yet. Run `python main.py channel sync`.")
     ch, perf = report["channel"], report["performance"]
-    print(f"{ch['title']} ({ch['id']}): {report['uploads']} Shorts on the channel, {len(report['matched'])} matched to produced videos, "
-          f"synced {report['fetched_at']}")
+    print(f"{ch['title']} ({ch['id']}): {report['uploads']} Shorts on the channel, {perf.get('uploads_labelled', 0)} labelled "
+          f"(format/topic), {len(report['matched'])} matched to local outputs, synced {report['fetched_at']}")
     print(f"channel median: {perf['channel_median_vph']} views/hour over {perf['videos']} mature videos")
     for key, p in sorted(perf["blueprints"].items(), key=lambda kv: -kv[1]["factor"]):
         print(f"  {key:<45} {p['videos']:>2} videos  {p['median_views_per_hour']:>8.1f} views/h  factor x{p['factor']:.2f}"
-              f"{'  (provisional: needs 2+ videos)' if p['provisional'] else ''}")
-    for m in report["matched"][:15]:
-        print(f"  - {m['title'][:60]:<60} {m['views']:>7} views  {m['views_per_hour']:>7.1f}/h  [{m['key']}]")
+              f"{'  (provisional: needs 3+ videos)' if p['provisional'] else ''}")
+    winners = channel.channel_blueprints(perf)
+    if winners:
+        print("channel winners (produced regardless of the trend run): " + ", ".join(f"{w['key']} x{w['opportunity']}" for w in winners))
+    uploads = sorted(channel.labelled_uploads(), key=lambda u: -float(u.get("views_per_hour") or 0))
+    for m in uploads[:15]:
+        print(f"  - {m['title'][:60]:<60} {m['views']:>7} views  {m['views_per_hour']:>7.1f}/h  [{m['format']}|{m['topic']}]")
 
 
 # ----------------------------------------------------------------------------- parser
@@ -643,6 +672,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--run"); pr.add_argument("--blueprint", type=int, default=1, help="1-based index from analyze")
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
     pr.add_argument("--profile", help="produce in the style of an analysed channel (see `profile add`)")
+    pr.add_argument("--blueprint-key", dest="blueprint_key", help="one of your channel's winners, e.g. storytime|psychology_mind (see `channel report`)")
     pr.add_argument("--seconds", type=int, help="target length for --profile (default: the channel's typical length)")
     pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")
     pr.add_argument("--as-written", dest="enhance", action="store_false", default=True,

@@ -147,7 +147,9 @@ def _args(job: Job) -> SimpleNamespace:
     p = job.params
     return SimpleNamespace(
         run=p.get("run") or None, force=bool(p.get("force")), top=int(p.get("top", 20)),
-        api=bool(p.get("api")), produce=bool(p.get("produce")), blueprint=int(p.get("blueprint") or 1),
+        api=bool(p.get("api")), produce=bool(p.get("produce")),
+        blueprint=int(p["blueprint"]) if str(p.get("blueprint") or "").isdigit() else 1,
+        blueprint_key=(p.get("blueprint_key") or (str(p.get("blueprint"))[8:] if str(p.get("blueprint") or "").startswith("channel:") else None)),
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",

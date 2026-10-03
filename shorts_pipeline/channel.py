@@ -16,8 +16,8 @@ from typing import Any
 
 import requests
 
-from .config import DATA_DIR, OUTPUT_DIR, env
-from .storage import load_json, save_json
+from .config import DATA_DIR, OUTPUT_DIR, env, load_config
+from .storage import JsonCache, load_json, save_json
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,8 @@ STATS_PATH = DATA_DIR / "channel_stats.json"
 MIN_VIDEOS_PER_BLUEPRINT = 1   # one video already counts, shrunk toward neutral until more arrive
 FACTOR_MIN, FACTOR_MAX = 0.2, 4.0
 MIN_AGE_HOURS = 3              # a video younger than this has no meaningful views-per-hour yet
+RATE_WINDOW_HOURS = 14 * 24    # views/hour is measured over at most the first two weeks (Shorts peak early)
+MAX_CHANNEL_WINNERS = 10
 
 
 def _oauth() -> bool:
@@ -116,7 +118,7 @@ def fetch_uploads(max_videos: int = 200) -> dict[str, Any]:
     videos: list[dict[str, Any]] = []
     now = time.time()
     for i in range(0, len(ids), 50):
-        batch = _get("videos", part="snippet,statistics,contentDetails", id=",".join(ids[i:i + 50]))
+        batch = _get("videos", part="snippet,statistics,contentDetails,status", id=",".join(ids[i:i + 50]))
         for v in batch.get("items", []):
             seconds = _iso8601_seconds(v["contentDetails"].get("duration", ""))
             if seconds == 0 or seconds > 180:
@@ -125,12 +127,16 @@ def fetch_uploads(max_videos: int = 200) -> dict[str, Any]:
             hours = max(1.0, (now - published) / 3600.0)
             st = v.get("statistics", {})
             views = int(st.get("viewCount", 0))
+            privacy = (v.get("status") or {}).get("privacyStatus", "public")
+            # views per hour over the first RATE_WINDOW_HOURS only: a Short gets most of its views early, so an old
+            # video is not punished for having stopped growing, and a 3-day-old one is comparable to a 3-month-old one
+            public_hours = hours if privacy == "public" else 0.0
             videos.append({
                 "id": v["id"], "title": v["snippet"]["title"], "description": (v["snippet"].get("description") or "")[:1000],
                 "published": v["snippet"]["publishedAt"], "published_ts": published,
-                "age_hours": round(hours, 1), "duration": seconds, "views": views,
+                "age_hours": round(hours, 1), "duration": seconds, "views": views, "privacy": privacy,
                 "likes": int(st.get("likeCount", 0)), "comments": int(st.get("commentCount", 0)),
-                "views_per_hour": round(views / hours, 2),
+                "views_per_hour": round(views / min(hours, RATE_WINDOW_HOURS), 2), "public_hours": round(public_hours, 1),
             })
     data = {"fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "channel": channel, "videos": videos}
     save_json(STATS_PATH, data)
@@ -240,9 +246,50 @@ def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
         meta["channel_stats"]["youtube_title"] = video["title"]
         if changed:
             save_json(d / "meta.json", meta)
-        matched.append({"dir": d.name, "title": meta.get("title"), "key": f"{bp.get('format')}|{bp.get('topic')}",
-                        "format": bp.get("format"), "topic": bp.get("topic"), **meta["channel_stats"]})
+        matched.append({"dir": d.name, "id": video["id"], "title": meta.get("title"), "key": f"{bp.get('format')}|{bp.get('topic')}",
+                        "format": bp.get("format"), "topic": bp.get("topic"), "hook_style": bp.get("hook_style"),
+                        "transcript": (load_json(d / "script.json") or {}).get("full_text", "")[:500], **meta["channel_stats"]})
     return matched
+
+
+_LABELS = JsonCache("channel_judgments")
+
+
+def label_uploads(videos: list[dict[str, Any]], *, max_new: int = 120) -> int:
+    """Give every upload a format / topic / hook label by judging it like a trending Short (yt-dlp metadata
+    + transcript, TypeSafe). Labels are cached per video and taxonomy version, so this costs something only
+    for new uploads. Makes the feedback independent of which machine produced the video or whether its
+    output folder still exists."""
+    from . import fetch, judge
+
+    if not judge.has_typesafe():
+        return 0
+    fetch.configure(load_config().get("discovery") or {})
+    done = 0
+    for v in videos:
+        key = f"{v['id']}+{judge.TAXONOMY_VERSION}"
+        cached = _LABELS.get(key)
+        if cached:
+            v.update(cached)
+            continue
+        if done >= max_new or fetch.rate_limited:
+            continue
+        meta = fetch.fetch_full(v["id"], True, 700)
+        if not meta:
+            continue
+        try:
+            j = judge.judge_short(meta)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("labelling %s failed: %s", v["id"], str(exc)[:120])
+            continue
+        if not j:
+            continue
+        labels = {"format": j["format"]["choice"], "topic": j["topic"]["choice"], "hook_style": j["hook_style"]["choice"],
+                  "format_confidence": j["format"]["confidence"], "transcript": (meta.get("transcript") or "")[:500]}
+        _LABELS.set(key, labels)
+        v.update(labels)
+        done += 1
+    return done
 
 
 def _shrunk_factor(vph: float, channel_median: float, n: int) -> float:
@@ -261,17 +308,45 @@ def _group_stats(items: list[dict[str, Any]], channel_median: float) -> dict[str
             "factor": round(_shrunk_factor(vph, channel_median, len(items)), 2), "provisional": len(items) < 3}
 
 
+def labelled_uploads() -> list[dict[str, Any]]:
+    """Every upload on the channel that carries a label (from the cache; `sync` adds new ones)."""
+    from . import judge
+
+    data = load_json(STATS_PATH)
+    if not data:
+        return []
+    out = []
+    for v in data["videos"]:
+        cached = _LABELS.get(f"{v['id']}+{judge.TAXONOMY_VERSION}")
+        if cached:
+            out.append({**v, **cached})
+    return out
+
+
 def blueprint_performance(matched: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """How each format x topic, each format and each topic performs on YOUR channel: median views/hour
-    relative to the channel median, as a factor in [FACTOR_MIN, FACTOR_MAX] shrunk by sample size."""
+    relative to the channel median, as a factor in [FACTOR_MIN, FACTOR_MAX] shrunk by sample size.
+    Uses every labelled upload on the channel (both machines, deleted outputs included); locally
+    produced videos without a label fall back to their own blueprint labels."""
     from .judge import canonical_topic
 
+    uploads = labelled_uploads()
+    seen = {u["id"] for u in uploads}
     if matched is None:
         data = load_json(STATS_PATH)
         matched = match_outputs(data["videos"]) if data else []
-    mature = [m for m in matched if m.get("age_hours", 0) >= MIN_AGE_HOURS]
+    for m in matched:
+        vid = None
+        for d_meta in (m,):
+            vid = d_meta.get("id")
+        if vid and vid in seen:
+            continue
+        uploads.append(dict(m))
+    # Private / unlisted uploads (the review queue) have no audience, so they do not count as failures.
+    mature = [m for m in uploads if m.get("age_hours", 0) >= MIN_AGE_HOURS and m.get("format")
+              and m.get("privacy", "public") == "public"]
     if not mature:
-        return {"channel_median_vph": None, "videos": len(matched), "blueprints": {}, "formats": {}, "topics": {}}
+        return {"channel_median_vph": None, "videos": len(uploads), "blueprints": {}, "formats": {}, "topics": {}}
     channel_median = median(m["views_per_hour"] for m in mature) or 0.0
     pairs: dict[str, list[dict[str, Any]]] = {}
     formats: dict[str, list[dict[str, Any]]] = {}
@@ -281,7 +356,7 @@ def blueprint_performance(matched: list[dict[str, Any]] | None = None) -> dict[s
         pairs.setdefault(f"{fmt}|{topic}", []).append(m)
         formats.setdefault(fmt, []).append(m)
         topics.setdefault(topic, []).append(m)
-    return {"channel_median_vph": round(channel_median, 2), "videos": len(mature),
+    return {"channel_median_vph": round(channel_median, 2), "videos": len(mature), "uploads_labelled": len(uploads),
             "blueprints": {k: _group_stats(v, channel_median) for k, v in pairs.items()},
             "formats": {k: _group_stats(v, channel_median) for k, v in formats.items()},
             "topics": {k: _group_stats(v, channel_median) for k, v in topics.items()}}
@@ -307,12 +382,64 @@ def factor_for(perf: dict[str, Any], fmt: str, topic: str) -> tuple[float, int, 
     return 1.0, 0, "none"
 
 
+CHANNEL_BLUEPRINTS_PATH = DATA_DIR / "channel_blueprints.json"
+
+
+def channel_blueprints(perf: dict[str, Any] | None = None, min_factor: float = 1.3) -> list[dict[str, Any]]:
+    """Blueprints built from what already performs on YOUR channel, independent of the trend run.
+    One per format x topic whose factor beats `min_factor`, modelled on your best uploads of that pair."""
+    from .judge import canonical_topic
+
+    perf = perf or blueprint_performance()
+    pairs = perf.get("blueprints") or {}
+    if not pairs:
+        return []
+    uploads = labelled_uploads()
+    data = load_json(STATS_PATH)
+    matched = match_outputs(data["videos"]) if data else []
+    seen = {u["id"] for u in uploads}
+    uploads += [m for m in matched if m.get("id") not in seen]
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for u in uploads:
+        if not u.get("format") or u.get("format") in ("custom", "other", "uncertain") or u.get("privacy", "public") != "public":
+            continue
+        by_key.setdefault(f"{u['format']}|{canonical_topic(u.get('topic', ''))}", []).append(u)
+    out = []
+    for key, p in pairs.items():
+        if float(p["factor"]) < min_factor or key not in by_key or key.endswith("|other"):
+            continue
+        items = sorted(by_key[key], key=lambda u: -float(u.get("views_per_hour") or 0))
+        best = items[0]
+        hooks = [u.get("hook_style") for u in items if u.get("hook_style") not in (None, "no_hook", "visual_only")]
+        hook = max(set(hooks), key=hooks.count) if hooks else "curiosity_gap"
+        fmt, topic = key.split("|", 1)
+        out.append({
+            "key": key, "format": fmt, "topic": topic, "hook_style": hook,
+            "source": "channel", "opportunity": round(float(p["factor"]), 3), "count": int(p["videos"]), "stretch": False,
+            "median_replicable": 1.0, "median_hook": 0.0, "median_views_per_hour": p["median_views_per_hour"],
+            "median_duration": best.get("duration", 40),
+            "why_it_works": (f"this format x topic performs x{p['factor']} your channel median ({p['videos']} video"
+                             f"{'s' if p['videos'] != 1 else ''}, {p['median_views_per_hour']} views/hour); your best one: "
+                             f"{best.get('title', '')!r} ({int(best.get('views') or 0):,} views)"),
+            "exemplars": [{"id": u["id"], "title": u.get("title", ""), "url": f"https://youtube.com/shorts/{u['id']}",
+                           "views": int(u.get("views") or 0), "views_per_hour": float(u.get("views_per_hour") or 0),
+                           "transcript": (u.get("transcript") or "")[:400]} for u in items[:3]],
+        })
+    out.sort(key=lambda b: (-b["opportunity"], -b["count"]))
+    out = out[:MAX_CHANNEL_WINNERS]
+    save_json(CHANNEL_BLUEPRINTS_PATH, out)
+    return out
+
+
 def sync() -> dict[str, Any]:
     data = fetch_uploads()
+    new = label_uploads(data["videos"])
+    if new:
+        log.info("channel feedback: labelled %d new upload(s) with TypeSafe", new)
     matched = match_outputs(data["videos"])
     perf = blueprint_performance(matched)
-    log.info("channel feedback: %d uploads matched to produced Shorts, %d blueprint keys with data",
-             len(matched), len(perf["blueprints"]))
+    log.info("channel feedback: %d uploads labelled, %d matched to local outputs, %d format x topic pairs with data",
+             perf.get("uploads_labelled", 0), len(matched), len(perf["blueprints"]))
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
             "matched": matched, "performance": perf}
 
@@ -322,5 +449,6 @@ def cached_report() -> dict[str, Any] | None:
     if not data:
         return None
     matched = match_outputs(data["videos"])
+    perf = blueprint_performance(matched)
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
-            "matched": matched, "performance": blueprint_performance(matched)}
+            "matched": matched, "performance": perf, "winners": load_json(CHANNEL_BLUEPRINTS_PATH) or []}

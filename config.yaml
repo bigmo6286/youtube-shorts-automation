@@ -31,6 +31,7 @@ ranking:
   min_blueprint_replicable: 0.6 # median replicability (0-1) a format needs to count as faceless-friendly;
                                 # lower ones are still listed, marked [stretch], after the friendly ones
   max_per_channel: 2            # Shorts per channel that count toward a blueprint (stops repost spam looking like a trend)
+  max_blueprints: 20            # blueprints kept per analysis (the scheduler considers the top N of these, see schedule)
 
 # Production
 production:
@@ -89,9 +90,9 @@ schedule:
   refresh_per_day: 2          # discover + judge + rank + analyze runs per day (keeps the ranking current)
   start_hour: 6               # active window, local time (24 = midnight)
   end_hour: 24
-  blueprints_to_rotate: 5     # consider at most the top N blueprints of the latest run
+  blueprints_to_rotate: 12    # consider at most the top N trend blueprints (your channel's own winners are always added)
   selection: weighted         # weighted = produce in proportion to opportunity score | rotate = round robin
-  min_share: 0.25             # only blueprints scoring at least 25% of the best one get produced
+  min_share: 0.2              # only blueprints scoring at least 20% of the best one get produced
   skip_stretch: true          # never auto-produce formats that need a person on camera
   channel_feedback: true      # scale weights by how each format x topic performs on your channel (needs YOUTUBE_API_KEY + YOUTUBE_CHANNEL)
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)

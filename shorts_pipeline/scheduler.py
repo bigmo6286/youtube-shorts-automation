@@ -26,9 +26,9 @@ DEFAULTS = {
     "refresh_per_day": 2,        # discover + judge + rank + analyze, so the ranking reflects what is trending now
     "start_hour": 6,             # active window, local time
     "end_hour": 24,
-    "blueprints_to_rotate": 5,   # consider at most the top N blueprints of the latest analysed run
+    "blueprints_to_rotate": 12,  # consider at most the top N trend blueprints (plus your channel's own winners)
     "selection": "weighted",     # weighted = pick in proportion to opportunity score | rotate = round robin
-    "min_share": 0.25,           # a blueprint must score at least this fraction of the best one to be produced
+    "min_share": 0.2,            # a blueprint must score at least this fraction of the best one to be produced
     "skip_stretch": True,        # never auto-produce formats that need a person on camera
     "channel_feedback": True,    # scale blueprint weights by how each format x topic performs on your channel
     "source": "trends",          # trends = blueprints from the trend ranking | profile = clone a channel's style
@@ -68,8 +68,25 @@ def eligible_blueprints(blueprints: list[dict[str, Any]], cfg: dict[str, Any]) -
             from .channel import factor_for
             factor, videos, basis = factor_for(perf, b.get("format", ""), b.get("topic", ""))
         b["channel_factor"], b["channel_videos"], b["channel_basis"] = factor, videos, basis
+        b["source"] = "trends"
         trend_norm = (float(b.get("opportunity") or 0) / top_trend) ** 0.5
         b["adjusted"] = trend_norm * factor
+    # Your channel's own winners join the pool even when the trend run has no such blueprint: a format x topic
+    # that beats your channel median by 30%+ is worth more videos regardless of what is trending globally.
+    if perf and cfg.get("channel_feedback", True):
+        try:
+            from .channel import channel_blueprints
+            from .judge import canonical_topic
+            have = {f"{b.get('format')}|{canonical_topic(b.get('topic', ''))}" for b in pool}
+            for cb in channel_blueprints(perf):
+                if cb["key"] in have:
+                    continue
+                cb = dict(cb, index=f"channel:{cb['key']}", channel_factor=float(cb["opportunity"]),
+                          channel_videos=int(cb["count"]), channel_basis="pair")
+                cb["adjusted"] = 0.6 * cb["channel_factor"]        # as a mid-ranked trend blueprint would score
+                pool.append(cb)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("channel blueprints unavailable: %s", exc)
     best = max((b["adjusted"] for b in pool), default=0.0)
     floor = best * float(cfg.get("min_share", 0.25))
     pool = [b for b in pool if b["adjusted"] >= floor] or pool[:1]
@@ -78,8 +95,8 @@ def eligible_blueprints(blueprints: list[dict[str, Any]], cfg: dict[str, Any]) -
     return pool
 
 
-def choose_blueprint(blueprints: list[dict[str, Any]], cfg: dict[str, Any], state: dict[str, Any]) -> int | None:
-    """1-based blueprint index for the next produce, or None when there is nothing eligible."""
+def choose_blueprint(blueprints: list[dict[str, Any]], cfg: dict[str, Any], state: dict[str, Any]) -> int | str | None:
+    """1-based trend blueprint index (or 'channel:<format>|<topic>') for the next produce, or None."""
     import random
 
     pool = eligible_blueprints(blueprints, cfg)
@@ -150,7 +167,7 @@ class Scheduler:
                 "history": self.state.get("history", [])[-15:][::-1], "running": self._thread is not None,
                 "run": run_dir.name if run_dir else None,
                 "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count",
-                                                      "channel_factor", "channel_videos", "channel_basis")} for b in pool],
+                                                      "channel_factor", "channel_videos", "channel_basis", "source")} for b in pool],
                 "source": cfg.get("source", "trends"), "profile": cfg.get("profile", "")}
 
     # ---------------------------------------------------------------- execution
@@ -235,7 +252,10 @@ class Scheduler:
             if choice is None:
                 log.warning("scheduled produce skipped: no eligible blueprint")
                 return False
-            params = {"run": run_dir.name, "blueprint": choice, "music": "random", "scheduled": True}
+            if isinstance(choice, str) and choice.startswith("channel:"):
+                params = {"blueprint_key": choice.split(":", 1)[1], "music": "random", "scheduled": True}
+            else:
+                params = {"run": run_dir.name, "blueprint": choice, "music": "random", "scheduled": True}
             job = self._submit("produce", params)
             if job is not None:
                 self.state.update({k: snapshot[k] for k in ("next_blueprint", "last_blueprint_key") if k in snapshot})

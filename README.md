@@ -150,9 +150,10 @@ and words per caption. Extra fonts go in `assets/fonts`.
 The console has a built-in scheduler (Settings -> Schedule). With it on, it spreads the configured
 number of Shorts evenly across your active hours (default 20 a day between 06:00 and midnight, one
 every 54 minutes), refreshes the trend analysis twice a day so the ranking reflects what is trending
-now, and produces from the best blueprints of the latest run: only those scoring at least 25% of the
-top opportunity score, never stretch formats, picked in proportion to their score (so the leader gets
-the most videos without taking the whole day). It avoids subjects used in recent videos and sends
+now, and produces from a pool made of the top 12 trend blueprints of the latest run (the analysis keeps
+20) plus your channel's own winners (see below): only those scoring at least 20% of the best adjusted
+score, never stretch formats, picked in proportion to their score (so the leader gets the most videos
+without taking the whole day). It avoids subjects used in recent videos and sends
 every finished Short to Telegram. The Overview shows which blueprints are currently eligible and their
 share. If the console was off, it runs the single most recent missed slot when it comes back,
 never the whole backlog. Runs and their status are listed on the Overview.
@@ -186,18 +187,26 @@ from a profile instead of the trend blueprints.
 
 ## Your channel's performance feeds back into the ranking
 
-Add a YouTube Data API key (read-only, no OAuth: Google Cloud console -> enable YouTube Data API v3 ->
-Credentials -> API key) and your channel handle in Settings. On every trend refresh, and on "Sync channel
-now", the tool reads your uploads' public statistics, matches them to the Shorts it produced (by our
-upload record, or by title when you uploaded manually with the generated title), and computes each
-format x topic's, each format's and each topic's median views per hour relative to your channel's
-median. That ratio (0.2-4, pulled toward neutral while only one or two videos support it; videos count
-after three hours) is the channel factor. The scheduler normalises the trend score, square-roots it so it
-cannot dominate, and multiplies by the channel factor, so once you have uploads, what YOUR viewers watch
-decides the mix: a format that trends globally but flops on your channel gets a fraction of the videos,
-one that over-performs for you gets several times more. Pairs you have never tried inherit their format's
-and topic's factors. The Overview shows every eligible blueprint's weight, factor and basis, and each
-produced Short's live view count.
+Add your OAuth `client_secrets.json` (Settings -> YouTube upload), or a YouTube Data API key (read-only:
+Google Cloud console -> enable YouTube Data API v3 -> Credentials -> API key) plus your channel handle.
+On every trend refresh, and on "Sync channel now", the tool reads every Short on your channel with its
+public statistics and labels each one with the same TypeSafe judge used for trending Shorts (format,
+topic, hook, from the video's own metadata and transcript; cached, so only new uploads cost anything).
+Labelling the uploads themselves means the feedback covers videos produced on another machine, uploaded
+by hand, or whose output folder is gone. It then computes each format x topic's, each format's and each
+topic's median views per hour (over at most the first two weeks, so old videos are not punished for
+having stopped growing; private uploads are ignored) relative to your channel's median. That ratio
+(0.2-4, pulled toward neutral while only one or two videos support it; videos count after three hours)
+is the channel factor.
+
+Two things use it. The scheduler normalises the trend score, square-roots it so it cannot dominate, and
+multiplies by the channel factor, so a format that trends globally but flops on your channel gets a
+fraction of the videos. And every format x topic that beats your channel median by 30%+ becomes a
+"channel winner" blueprint (up to 10, modelled on your best uploads of that pair) that joins the
+production pool whether or not the trend run found anything like it, scored like a well-ranked trend
+blueprint times its factor. Pairs you have never tried inherit their format's and topic's factors. The
+Overview shows every eligible blueprint's weight, factor and basis (winners are marked with a star),
+and Studio can produce a winner directly (`produce --blueprint-key "listicle_facts|space_astronomy"`).
 
 The taxonomy has 35 formats and 49 topics (`judge.py`); changing it re-judges cached Shorts on the next
 refresh.

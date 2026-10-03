@@ -314,7 +314,7 @@ async function loadSchedule() {
   $("#schednext").innerHTML = p.next.length ? "Next: " + p.next.map((n) => `<span class="tag">${n.time} ${esc(n.kind)}</span>`).join(" ") : (c.enabled ? "No more slots today." : "");
   $("#schedeligible").innerHTML = p.eligible && p.eligible.length
     ? (p.source === "profile" && p.profile ? `Producing in the style of <b>${esc(p.profile)}</b> (Settings → Schedule → Source). Trend blueprints for reference: ` : `Producing from run ${esc(p.run || "")}: `)
-      + p.eligible.map((b) => `<span class="tag" title="opportunity ${b.opportunity}, ${b.count} trending Shorts${b.channel_videos ? `, your channel: ${b.channel_videos} videos (${b.channel_basis}), factor x${b.channel_factor}` : ""}">#${b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%${b.channel_videos ? ` <span class="${b.channel_factor >= 1 ? "ok" : "warn"}">(you: x${b.channel_factor})</span>` : ""}</span>`).join(" ")
+      + p.eligible.map((b) => `<span class="tag ${b.source === "channel" ? "ok" : ""}" title="${b.source === "channel" ? `your channel's winner: ${b.channel_videos} videos, x${b.channel_factor} your median` : `opportunity ${b.opportunity}, ${b.count} trending Shorts${b.channel_videos ? `, your channel: ${b.channel_videos} videos (${b.channel_basis}), factor x${b.channel_factor}` : ""}`}">${b.source === "channel" ? "★" : "#" + b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%${b.channel_videos ? ` <span class="${b.channel_factor >= 1 ? "ok" : "warn"}">(you: x${b.channel_factor})</span>` : ""}</span>`).join(" ")
     : "No eligible blueprints yet (a trend refresh will run first).";
   loadChannel();
   $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
@@ -326,13 +326,16 @@ async function loadSchedule() {
 async function loadChannel() {
   const c = await api("/api/channel");
   const el = $("#channelpanel");
-  if (!c.configured) { el.innerHTML = `Channel feedback off: add a YouTube API key and your channel handle in Settings.`; return; }
+  if (!c.configured) { el.innerHTML = `<span class="warn">Channel feedback is OFF, so production cannot learn from your views.</span> Add your Google OAuth client_secrets.json (Settings → YouTube upload) or a YouTube API key plus your channel handle, then Sync.`; return; }
   const r = c.report;
   if (!r) { el.innerHTML = `Channel feedback configured, not synced yet.`; return; }
   const perf = r.performance;
   const rows = Object.entries(perf.blueprints).sort((a, b) => b[1].factor - a[1].factor)
     .map(([k, v]) => `<span class="tag ${v.factor >= 1 ? "ok" : "warn"}" title="${v.videos} videos, median ${v.median_views} views">${esc(k.replace("|", " × "))} · ${v.median_views_per_hour}/h · x${v.factor}${v.provisional ? " (provisional)" : ""}</span>`).join(" ");
-  el.innerHTML = `Your channel <b>${esc(r.channel.title)}</b>: ${r.uploads} Shorts, ${r.matched.length} matched to produced videos, median ${perf.channel_median_vph ?? "-"} views/h (synced ${esc(r.fetched_at)}). ` + (rows || "No matched videos old enough to score yet.");
+  const winners = (r.winners || []).map((w) => `<span class="tag ok">★ ${esc(w.key.replace("|", " × "))} x${w.opportunity}</span>`).join(" ");
+  el.innerHTML = `Your channel <b>${esc(r.channel.title)}</b>: ${r.uploads} Shorts, ${perf.uploads_labelled ?? 0} labelled by format × topic, median ${perf.channel_median_vph ?? "-"} views/h over ${perf.videos} scored (synced ${esc(r.fetched_at)}). `
+    + (winners ? `<br>Channel winners (always in the production pool): ${winners}<br>` : "")
+    + (rows || "No labelled videos old enough to score yet - run Sync.");
 }
 $("#channelsync").addEventListener("click", () => startJob("channel", { action: "sync" }));
 

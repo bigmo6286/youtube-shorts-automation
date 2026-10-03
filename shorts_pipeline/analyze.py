@@ -6,7 +6,8 @@ from statistics import median
 from typing import Any
 
 
-def build_blueprints(shorts: list[dict[str, Any]], ranking_cfg: dict[str, Any], top_n: int = 8) -> dict[str, Any]:
+def build_blueprints(shorts: list[dict[str, Any]], ranking_cfg: dict[str, Any], top_n: int | None = None) -> dict[str, Any]:
+    top_n = int(top_n or ranking_cfg.get("max_blueprints", 20))
     min_conf = ranking_cfg.get("min_format_confidence", 0.35)
     usable = [s for s in shorts if s.get("judgment") and not s.get("excluded")]
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
