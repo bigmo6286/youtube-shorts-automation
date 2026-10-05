@@ -327,10 +327,21 @@ def cmd_produce(args) -> Path:
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
     print(f"\nRendered {video}  ({total:.1f}s)")
+    upload_error = None
     if args.upload:
-        _upload(out_dir)
+        try:
+            _upload(out_dir)
+        except SystemExit:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            # The Short is rendered and saved; a failed upload (expired Google token, quota, network) must not
+            # lose the Telegram delivery or mark the whole production as failed. Upload it from the card later.
+            upload_error = f"{type(exc).__name__}: {str(exc)[:300]}"
+            log.error("upload failed, the video is saved in %s and can be uploaded from its Studio card: %s", out_dir.name, upload_error)
     if getattr(args, "telegram", True):
         _notify_telegram(out_dir, meta)
+    if upload_error:
+        print(f"Upload failed ({upload_error}); use Upload on the video's card once YouTube access works again.")
     return out_dir
 
 
