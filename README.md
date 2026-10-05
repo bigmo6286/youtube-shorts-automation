@@ -268,16 +268,23 @@ file) or set the default, volume, fade and ducking under Settings.
 
 ## YouTube upload setup (one time)
 
-1. https://console.cloud.google.com -> new project -> **APIs & Services -> Enable APIs** -> *YouTube Data API v3*.
-2. **OAuth consent screen** -> External -> add your own Google account under *Test users*.
-3. **Credentials -> Create credentials -> OAuth client ID -> Desktop app** -> download the JSON.
-4. Save it as `client_secrets.json` in this folder.
-5. The first `upload` opens a browser for consent; the token is cached in `data/youtube_token.json`.
-6. **OAuth consent screen -> Publishing status -> Publish app** (In production). While the app is in
-   *Testing*, Google expires its tokens after 7 days and every upload and channel sync fails with
-   "Token has been expired or revoked" until you consent again. Publishing needs no verification for
-   your own channel; Google only shows an "unverified app" warning on the consent page. When a token
-   does expire, the next upload or "Sync channel now" simply opens the consent page again.
+Google moved the OAuth settings into **Google Auth Platform** (left menu of https://console.cloud.google.com,
+or go straight to https://console.cloud.google.com/auth/overview with your project selected).
+
+1. **APIs & Services -> Library** -> enable *YouTube Data API v3*.
+2. **Google Auth Platform -> Overview -> Get started**: app name, your email as support email, audience
+   *External*, your email as contact. (If you set this up before, these live under **Branding**.)
+3. **Google Auth Platform -> Clients -> Create client -> Desktop app** -> download the JSON and save it
+   as `client_secrets.json` in this folder (or point `YOUTUBE_CLIENT_SECRETS` in Settings at it).
+4. **Google Auth Platform -> Audience**: while *Publishing status* is **Testing**, add your Google account
+   under *Test users*, then click **Publish app** and confirm. In Testing status Google expires every
+   token after 7 days and uploads and channel syncs fail with "Token has been expired or revoked" until
+   you consent again. *In production* removes that limit. No Google verification is needed for your own
+   channel: the consent page shows "Google hasn't verified this app"; click *Advanced* -> *Go to <app
+   name> (unsafe)* to continue. Ignore the "needs verification" notice on the Audience page.
+5. The first upload or "Sync channel now" opens the browser for consent; the token is cached in
+   `data/youtube_token.json` (one per machine). When a token does expire, the next upload or sync simply
+   opens the consent page again.
 
 Uploads default to **private** so you can review before publishing: they appear in YouTube Studio
 under Content with the Private visibility, not on your public channel. Publish from the Studio card
