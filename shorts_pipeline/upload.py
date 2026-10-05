@@ -34,6 +34,7 @@ def oauth_available() -> bool:
 
 
 def _credentials(interactive: bool = True):
+    from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
@@ -50,14 +51,26 @@ def _credentials(interactive: bool = True):
         else:
             log.info("stored YouTube token lacks %s; a new consent is needed", sorted(set(SCOPES) - saved))
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        try:
+            creds.refresh(Request())
+            TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        except RefreshError as exc:
+            # Google expires the refresh tokens of OAuth apps still in "Testing" status after 7 days
+            # (and whenever you revoke access). Drop the dead token and ask for consent again.
+            log.warning("stored YouTube token is no longer valid (%s); asking for consent again. To stop this "
+                        "happening every 7 days, set the OAuth consent screen's publishing status to 'In production' "
+                        "in the Google Cloud console (unverified is fine for your own channel).", str(exc)[:120])
+            creds = None
+            try:
+                TOKEN_PATH.unlink()
+            except OSError:
+                pass
     if not creds or not creds.valid:
         if not secrets.exists():
             raise FileNotFoundError(SETUP_HELP)
         if not interactive:
-            raise RuntimeError("YouTube access is not authorised yet: run `python main.py channel sync` (or an upload) "
-                               "once from a terminal and approve the browser prompt.")
+            raise RuntimeError("YouTube access needs a new consent: run an upload or 'Sync channel now' from the console "
+                               "(or `python main.py channel sync` in a terminal) and approve the browser prompt.")
         flow = InstalledAppFlow.from_client_secrets_file(str(secrets), SCOPES)
         creds = flow.run_local_server(port=0, open_browser=True, authorization_prompt_message=
                                       "\nApprove access in the browser window that just opened (URL: {url})\n")

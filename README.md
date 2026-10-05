@@ -273,6 +273,11 @@ file) or set the default, volume, fade and ducking under Settings.
 3. **Credentials -> Create credentials -> OAuth client ID -> Desktop app** -> download the JSON.
 4. Save it as `client_secrets.json` in this folder.
 5. The first `upload` opens a browser for consent; the token is cached in `data/youtube_token.json`.
+6. **OAuth consent screen -> Publishing status -> Publish app** (In production). While the app is in
+   *Testing*, Google expires its tokens after 7 days and every upload and channel sync fails with
+   "Token has been expired or revoked" until you consent again. Publishing needs no verification for
+   your own channel; Google only shows an "unverified app" warning on the consent page. When a token
+   does expire, the next upload or "Sync channel now" simply opens the consent page again.
 
 Uploads default to **private** so you can review before publishing: they appear in YouTube Studio
 under Content with the Private visibility, not on your public channel. Publish from the Studio card
