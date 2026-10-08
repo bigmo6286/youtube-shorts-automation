@@ -503,6 +503,42 @@ def get_run(run_id: str, top: int = 40) -> dict[str, Any]:
             "report": report}
 
 
+_STATUS_SYNC = {"last": 0.0, "running": False, "error": None}
+STATUS_SYNC_SECONDS = 60
+
+
+def _sync_youtube_status(force: bool = False) -> bool:
+    """Refresh uploaded videos' privacy from YouTube in the background, at most every 3 minutes, and never
+    while a job runs (an upload or publish is writing the same files)."""
+    if _STATUS_SYNC["running"] or _CURRENT is not None:
+        return False
+    if not force and time.time() - _STATUS_SYNC["last"] < STATUS_SYNC_SECONDS:
+        return False
+    from ..upload import TOKEN_PATH, oauth_available
+    if not oauth_available() or not TOKEN_PATH.exists():
+        return False
+    _STATUS_SYNC.update(running=True, last=time.time())
+
+    def work() -> None:
+        try:
+            from ..upload import sync_output_status
+            sync_output_status(OUTPUT_DIR)
+            _STATUS_SYNC["error"] = None
+        except Exception as exc:  # noqa: BLE001 - consent needed, offline, quota: show the old state
+            _STATUS_SYNC["error"] = str(exc)[:200]
+            logging.getLogger("shorts.web").info("YouTube status refresh skipped: %s", str(exc)[:160])
+        finally:
+            _STATUS_SYNC["running"] = False
+
+    threading.Thread(target=work, name="youtube-status", daemon=True).start()
+    return True
+
+
+@app.post("/api/outputs/refresh-status")
+def refresh_output_status(force: bool = False) -> dict[str, Any]:
+    return {"started": _sync_youtube_status(force=force), "last_error": _STATUS_SYNC["error"]}
+
+
 @app.get("/api/outputs")
 def list_outputs() -> list[dict[str, Any]]:
     if not OUTPUT_DIR.exists():

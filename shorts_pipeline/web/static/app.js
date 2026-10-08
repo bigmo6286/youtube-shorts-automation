@@ -222,7 +222,13 @@ function uploadPack(o) {
   return body.toLowerCase().startsWith((o.title || "").toLowerCase()) ? body : `${o.title}\n\n${body}`;
 }
 
-async function loadOutputs() {
+async function loadOutputs(afterStatusSync = false) {
+  // Ask the server to re-read privacy from YouTube (throttled); redraw once it has had time to finish,
+  // so a video made public in YouTube Studio shows as public here.
+  if (!afterStatusSync) {
+    api("/api/outputs/refresh-status", { method: "POST" })
+      .then((r) => { if (r.started) setTimeout(() => loadOutputs(true), 6000); }).catch(() => {});
+  }
   const outs = await api("/api/outputs");
   state.outputs = Object.fromEntries(outs.map((o) => [o.dir, o]));
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
@@ -245,7 +251,8 @@ async function loadOutputs() {
           <button data-thumb="${o.dir}" title="${o.thumbnail_url ? "rebuild the thumbnail" : "build a thumbnail for this video"}${o.youtube_id ? " and set it on YouTube" : ""}">${o.thumbnail_url ? "Rebuild" : "Make"} thumbnail${o.youtube_id ? " + set on YouTube" : ""}</button>
         </div>
         <div class="muted small">${esc(o.folder)}</div>
-        ${o.youtube_id ? `<a class="tag ${o.privacy === "private" ? "warn" : "ok"}" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.privacy ? ` (${o.privacy})` : ""}${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>
+        ${o.youtube_id && o.privacy === "deleted" ? `<span class="tag warn">removed from YouTube (${esc(o.youtube_id)})</span>` : ""}
+        ${o.youtube_id && o.privacy !== "deleted" ? `<a class="tag ${o.privacy === "private" ? "warn" : "ok"}" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.privacy ? ` (${o.privacy})` : ""}${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>
              ${o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="public">Make public</button>` : ""}
              ${o.privacy !== "unlisted" && o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="unlisted">Unlisted</button>` : ""}
              ${o.privacy === "public" ? `<button data-publish="${o.dir}" data-privacy="private">Make private</button>` : ""}`

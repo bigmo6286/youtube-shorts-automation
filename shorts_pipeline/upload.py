@@ -104,6 +104,34 @@ def video_status(video_ids: list[str]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def sync_output_status(output_dir: Path) -> int:
+    """Ask YouTube for the current privacy of every uploaded Short in `output_dir` and write it to its meta.json,
+    so a change made in YouTube Studio shows in the console. A video that no longer exists is marked 'deleted'.
+    Costs 1 API quota unit per 50 videos. Never opens a browser (raises if consent is needed). Returns changes."""
+    from .storage import load_json, save_json
+
+    metas: dict[str, Path] = {}
+    if output_dir.exists():
+        for d in output_dir.iterdir():
+            meta = load_json(d / "meta.json") if d.is_dir() else None
+            if meta and meta.get("youtube_id"):
+                metas[meta["youtube_id"]] = d / "meta.json"
+    if not metas:
+        return 0
+    live = video_status(list(metas))
+    changed = 0
+    for vid, path in metas.items():
+        privacy = live[vid]["privacy"] if vid in live else "deleted"
+        meta = load_json(path)                 # re-read right before writing: a job may have updated it meanwhile
+        if not meta or meta.get("youtube_id") != vid or meta.get("privacy") == privacy:
+            continue
+        log.info("%s is now %s on YouTube (console had %s)", vid, privacy, meta.get("privacy"))
+        meta["privacy"] = privacy
+        save_json(path, meta)
+        changed += 1
+    return changed
+
+
 def set_thumbnail(video_id: str, image_path: Path) -> None:
     from googleapiclient.http import MediaFileUpload
 

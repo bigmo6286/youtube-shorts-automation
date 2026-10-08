@@ -240,8 +240,11 @@ def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not video:
             continue
         bp = meta.get("blueprint") or {}
-        changed = meta.get("youtube_id") != video["id"] or meta.get("channel_stats", {}).get("views") != video["views"]
+        changed = (meta.get("youtube_id") != video["id"] or meta.get("channel_stats", {}).get("views") != video["views"]
+                   or (video.get("privacy") and meta.get("privacy") != video["privacy"]))
         meta["youtube_id"] = video["id"]
+        if video.get("privacy"):
+            meta["privacy"] = video["privacy"]           # follows changes made in YouTube Studio
         meta["channel_stats"] = {k: video[k] for k in ("views", "likes", "comments", "views_per_hour", "age_hours", "published")}
         meta["channel_stats"]["youtube_title"] = video["title"]
         if changed:

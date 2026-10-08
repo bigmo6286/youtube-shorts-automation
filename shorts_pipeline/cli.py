@@ -470,7 +470,7 @@ def _upload(out_dir: Path, force: bool = False) -> None:
 
     cfg = load_config()["upload"]
     meta = load_json(out_dir / "meta.json")
-    if meta.get("youtube_id") and not force:
+    if meta.get("youtube_id") and meta.get("privacy") != "deleted" and not force:
         print(f"Already on YouTube: https://youtube.com/shorts/{meta['youtube_id']} (not uploaded again).")
         return
     tags = meta["hashtags"]
