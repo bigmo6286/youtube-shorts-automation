@@ -54,9 +54,15 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
         f"- Title: {e['title']!r}; opening transcript: {e.get('transcript', '')[:250]!r}"
         for e in blueprint.get("exemplars", [])
     ) or "- (none)"
+    own = blueprint.get("source") == "channel"
+    exemplar_label = ("Your channel's own best videos of this kind. Their SUBJECTS ARE TAKEN: copy the pacing and "
+                      "structure, never the story, fact, person or experiment" if own else
+                      "Trending exemplars (for pacing only, do not copy)")
     angle_line = f"Specific angle or subject to use: {angle}\n" if angle else "Pick a fresh, specific subject inside the topic.\n"
     if avoid:
-        angle_line += "Recently made videos, do not repeat these subjects or angles:\n" + "\n".join(f"- {t}" for t in avoid[:20]) + "\n"
+        angle_line += ("Videos already made. Every subject below is TAKEN: do not reuse any of these stories, facts, "
+                       "experiments, people, animals or places, even reworded or from a new angle:\n"
+                       + "\n".join(f"- {t}" for t in avoid[:60]) + "\n")
     style = blueprint.get("style_guide")
     if style:
         angle_line += (
@@ -76,7 +82,7 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
         f"Why this works right now: {blueprint.get('why_it_works', '')}\n"
         f"{angle_line}"
         f"Target length: about {target_seconds} seconds, roughly {words} spoken words in total.\n\n"
-        f"Trending exemplars (for pacing only, do not copy):\n{exemplars}\n\n"
+        f"{exemplar_label}:\n{exemplars}\n\n"
         "Write the script now."
     )
 
@@ -199,7 +205,8 @@ def _draft(client, system: str, user_prompt: str) -> ShortScript:
 
 
 def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], backend: str, max_attempts: int,
-                   min_hook_score: float, original_text: str | None = None) -> dict[str, Any]:
+                   min_hook_score: float, original_text: str | None = None,
+                   repeat_check: Any = None) -> dict[str, Any]:
     """Draft, have TypeSafe judge it, send the reviewer notes back, up to `max_attempts` times."""
     backend = pick_backend(backend)
     log.info("script backend: %s", backend)
@@ -216,6 +223,14 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
         if original_text is not None:
             script["original_text"] = original_text
 
+        repeated = repeat_check(script) if repeat_check else None
+        script["repeat_of"] = repeated
+        if repeated:
+            log.info("script attempt %d rejected: same subject as the existing video %r", attempt, repeated)
+            taken = (f"\n\nREJECTED: that draft ({script['title']!r}) repeats a video already made: {repeated!r}. "
+                     "Pick a completely different subject (a different story, fact, person or experiment) and write it again.")
+            user_prompt += taken
+            continue
         qa = judge_script(script, blueprint, original_text=original_text)
         script["qa"] = qa
         script["qa_problems"] = []
@@ -244,15 +259,24 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
             return finalize_metadata(script)
         log.info("script attempt %d rejected: %s", attempt, "; ".join(problems))
         feedback = "\n\nA reviewer rejected the previous draft because: " + "; ".join(problems) + ". Rewrite it."
-    assert best is not None
+    if best is None:
+        # Every draft repeated an existing video: better no Short than a duplicate on the channel.
+        raise RuntimeError(f"all {max_attempts} drafts repeated subjects that were already made; nothing produced")
     return finalize_metadata(best)
 
 
 def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angle: str | None = None,
                     max_attempts: int = 3, min_hook_score: float = 2.0, backend: str = "auto",
-                    avoid_titles: list[str] | None = None) -> dict[str, Any]:
+                    avoid_titles: list[str] | None = None, check_repeats: bool = True) -> dict[str, Any]:
+    from . import history
+
+    known = history.known_videos() if check_repeats else []
+    if avoid_titles is None:
+        avoid_titles = history.avoid_titles(blueprint)
     return _write_with_qa(system=SYSTEM, user_prompt=_prompt(blueprint, target_seconds, angle, avoid_titles),
-                          blueprint=blueprint, backend=backend, max_attempts=max_attempts, min_hook_score=min_hook_score)
+                          blueprint=blueprint, backend=backend, max_attempts=max(max_attempts, 4 if check_repeats else 0),
+                          min_hook_score=min_hook_score,
+                          repeat_check=(lambda s: history.find_repeat(s, known)) if check_repeats else None)
 
 
 ENHANCE_SYSTEM = SYSTEM + """

@@ -215,7 +215,7 @@ def cmd_produce(args) -> Path:
         try:
             script = script_gen.generate_script(blueprint, target_seconds=max(20, min(90, target)), angle=angle,
                                                 max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
-                                                backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=None)
         except RuntimeError as exc:
             sys.exit(f"Script writing failed: {exc}")
     elif getattr(args, "blueprint_key", None):
@@ -237,7 +237,7 @@ def cmd_produce(args) -> Path:
         try:
             script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
                                                 max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
-                                                backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=None)
         except RuntimeError as exc:
             sys.exit(f"Script writing failed: {exc}")
     else:
@@ -261,7 +261,7 @@ def cmd_produce(args) -> Path:
         try:
             script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
                                                 max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
-                                                backend=cfg.get("script_backend", "auto"), avoid_titles=_recent_titles())
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=None)
         except RuntimeError as exc:
             sys.exit(f"Script writing failed: {exc}")
 
@@ -326,6 +326,9 @@ def cmd_produce(args) -> Path:
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
+    from . import history
+    history.record(script["title"], hook=script.get("hook", ""), key=f"{blueprint.get('format')}|{blueprint.get('topic')}",
+                   out_dir=out_dir, source=str(run_name))
     print(f"\nRendered {video}  ({total:.1f}s)")
     upload_error = None
     if args.upload:
@@ -428,16 +431,10 @@ def cmd_telegram(args) -> None:
         _notify_telegram(out_dir, meta, force=True)
 
 
-def _recent_titles(limit: int = 20) -> list[str]:
-    """Titles of the last produced Shorts, so the writer does not repeat subjects."""
-    if not OUTPUT_DIR.exists():
-        return []
-    titles = []
-    for d in sorted((p for p in OUTPUT_DIR.iterdir() if p.is_dir()), reverse=True)[:limit]:
-        meta = load_json(d / "meta.json")
-        if meta and meta.get("title"):
-            titles.append(meta["title"])
-    return titles
+def _recent_titles(limit: int = 45) -> list[str]:
+    """Titles already made (permanent history + your channel's uploads + existing outputs)."""
+    from . import history
+    return history.avoid_titles(None, limit=limit)
 
 
 def _read_custom_script(args) -> str:
@@ -459,11 +456,14 @@ def _listify(value) -> list[str]:
     return list(value)
 
 
-def _upload(out_dir: Path) -> None:
+def _upload(out_dir: Path, force: bool = False) -> None:
     from . import upload
 
     cfg = load_config()["upload"]
     meta = load_json(out_dir / "meta.json")
+    if meta.get("youtube_id") and not force:
+        print(f"Already on YouTube: https://youtube.com/shorts/{meta['youtube_id']} (not uploaded again).")
+        return
     tags = meta["hashtags"]
     desc = meta["description"]
     if "#shorts" not in desc.lower():
@@ -492,7 +492,7 @@ def _upload(out_dir: Path) -> None:
 def cmd_upload(args) -> None:
     target = Path(args.path)
     out_dir = target if target.is_dir() else target.parent
-    _upload(out_dir)
+    _upload(out_dir, force=bool(getattr(args, "force", False)))
 
 
 def cmd_thumbnail(args) -> None:
@@ -724,6 +724,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     u = sub.add_parser("upload", help="upload a produced Short (output/<dir> or its short.mp4)")
     u.add_argument("path")
+    u.add_argument("--force", action="store_true", help="upload again even if this Short is already on YouTube")
     u.set_defaults(func=cmd_upload)
 
     tn = sub.add_parser("thumbnail", help="regenerate an output's thumbnail and set it on YouTube if uploaded")

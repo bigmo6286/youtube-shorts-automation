@@ -153,8 +153,12 @@ every 54 minutes), refreshes the trend analysis twice a day so the ranking refle
 now, and produces from a pool made of the top 12 trend blueprints of the latest run (the analysis keeps
 20) plus your channel's own winners (see below): only those scoring at least 20% of the best adjusted
 score, never stretch formats, picked in proportion to their score (so the leader gets the most videos
-without taking the whole day). It avoids subjects used in recent videos and sends
-every finished Short to Telegram. The Overview shows which blueprints are currently eligible and their
+without taking the whole day). It never makes the same subject twice: every produced title is kept permanently in
+`data/produced_titles.json` (deleting output folders does not erase it), and together with every upload on your
+channel it forms the do-not-repeat list the writer sees. After each draft, TypeSafe checks it against the closest
+known videos for the same story, fact, person or experiment, even reworded; a repeat is sent back for a new
+subject, and if every draft repeats, nothing is produced. A Short that is already on YouTube is not uploaded again
+(`upload --force` overrides). It sends every finished Short to Telegram. The Overview shows which blueprints are currently eligible and their
 share. If the console was off, it runs the single most recent missed slot when it comes back,
 never the whole backlog. Runs and their status are listed on the Overview.
 
