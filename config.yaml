@@ -75,6 +75,8 @@ production:
     provider: pollinations    # pollinations (free, no key) | together (TOGETHER_API_KEY) | huggingface (HF_TOKEN) | openai (OPENAI_API_KEY, paid)
     model: ""                 # optional model id for together / huggingface / openai, e.g. black-forest-labs/FLUX.1-schnell
     style: "cinematic photograph, natural light, realistic, sharp detail, vertical composition, no text, no watermark, no logo"
+  cache_max_gb: 4             # downloaded Pexels clips kept for reuse; least recently used are deleted beyond this
+  min_free_gb: 3              # a production stops early (instead of writing empty files) below this much free disk
   script_backend: auto        # auto | api | claude_code  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription)
   script_max_attempts: 3      # regenerate if TypeSafe QA says the hook is weak
   script_min_hook_score: 2    # 0-3, see judge.SCRIPT_QA_QUESTIONS

@@ -164,7 +164,9 @@ def _pick_with_variety(candidates: list[dict[str, Any]], probs: dict[str, float]
 
 
 def _download(url: str, dest: Path) -> Path | None:
-    if dest.exists():
+    if dest.exists() and dest.stat().st_size > 0:
+        from .housekeeping import touch
+        touch(dest)                                     # recently used: the cache pruning keeps it longer
         return dest
     PEXELS_CACHE.mkdir(parents=True, exist_ok=True)
     try:

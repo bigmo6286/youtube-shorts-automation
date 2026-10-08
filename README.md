@@ -296,6 +296,14 @@ under Content with the Private visibility, not on your public channel. Publish f
 to public in Settings to skip the review step. Unverified Google Cloud projects have a daily upload quota
 of roughly six videos.
 
+## Disk space
+
+Downloaded stock clips are cached in `data/cache/pexels` so re-renders do not fetch them again. The cache is
+trimmed after every production to `production.cache_max_gb` (default 4 GB), deleting the least recently used
+clips first. Before each production the engine checks the disk: below `production.min_free_gb` (default 3 GB)
+it trims the cache harder and, if that is still not enough, stops with a clear message instead of writing empty
+files. JSON files are written atomically, so a full disk never leaves a half-written file behind.
+
 ## Tuning
 
 - `config.yaml -> discovery.hashtags / search_queries`: steer discovery toward a niche.

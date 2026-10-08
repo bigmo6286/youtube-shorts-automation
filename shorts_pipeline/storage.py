@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .config import DATA_DIR
+
+log = logging.getLogger(__name__)
 
 RUNS_DIR = DATA_DIR / "runs"
 CACHE_DIR = DATA_DIR / "cache"
@@ -30,16 +34,34 @@ def latest_run_dir() -> Path | None:
 
 
 def save_json(path: Path, data: Any) -> None:
+    """Atomic write: the data goes to a temporary file that replaces the target only once it is complete,
+    so a full disk or a crash mid-write leaves the previous version instead of an empty file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def load_json(path: Path, default: Any = None) -> Any:
+    """Read a JSON file; an empty or corrupt file (e.g. written while the disk was full) counts as missing."""
     if not path.exists():
         return default
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (ValueError, UnicodeDecodeError) as exc:
+        log.warning("ignoring unreadable %s (%s)", path, str(exc)[:80])
+        return default
 
 
 class JsonCache:

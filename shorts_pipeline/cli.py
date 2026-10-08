@@ -153,6 +153,11 @@ def cmd_produce(args) -> Path:
 
     if not tools.ensure_ffmpeg_on_path():     # check before spending a script generation
         sys.exit(tools.MISSING_HELP)
+    from . import housekeeping
+    try:
+        housekeeping.ensure_free_space()        # a full disk leaves empty files behind; stop before that
+    except RuntimeError as exc:
+        sys.exit(str(exc))
     cfg = load_config()["production"]
 
     script_text = _read_custom_script(args)
@@ -327,6 +332,10 @@ def cmd_produce(args) -> Path:
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
     from . import history
+    try:
+        housekeeping.prune_cache()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("footage cache cleanup failed: %s", exc)
     history.record(script["title"], hook=script.get("hook", ""), key=f"{blueprint.get('format')}|{blueprint.get('topic')}",
                    out_dir=out_dir, source=str(run_name))
     print(f"\nRendered {video}  ({total:.1f}s)")
