@@ -270,6 +270,7 @@ def label_uploads(videos: list[dict[str, Any]], *, max_new: int = 120) -> int:
     if not judge.has_typesafe():
         return 0
     fetch.configure(load_config().get("discovery") or {})
+    scripts = _local_scripts()
     done = 0
     for v in videos:
         key = f"{v['id']}+{judge.TAXONOMY_VERSION}"
@@ -277,11 +278,16 @@ def label_uploads(videos: list[dict[str, Any]], *, max_new: int = 120) -> int:
         if cached:
             v.update(cached)
             continue
-        if done >= max_new or fetch.rate_limited:
+        if done >= max_new:
             continue
-        meta = fetch.fetch_full(v["id"], True, 700)
+        meta = None if fetch.rate_limited else fetch.fetch_full(v["id"], True, 700)
         if not meta:
-            continue
+            # YouTube blocks yt-dlp now and then ("confirm you're not a bot"). For our own uploads that lookup is not
+            # needed: the API gave us the title and description, and the script we wrote is the transcript.
+            meta = {"id": v["id"], "title": v.get("title", ""), "description": v.get("description", ""),
+                    "duration": v.get("duration"), "transcript": scripts.get(v["id"], ""), "tags": [], "categories": []}
+            if not meta["transcript"] and not meta["description"]:
+                continue
         try:
             j = judge.judge_short(meta)
         except Exception as exc:  # noqa: BLE001
@@ -295,6 +301,20 @@ def label_uploads(videos: list[dict[str, Any]], *, max_new: int = 120) -> int:
         v.update(labels)
         done += 1
     return done
+
+
+def _local_scripts() -> dict[str, str]:
+    """youtube_id -> spoken script text, for Shorts produced on this machine."""
+    out: dict[str, str] = {}
+    if not OUTPUT_DIR.exists():
+        return out
+    for d in OUTPUT_DIR.iterdir():
+        meta = load_json(d / "meta.json") if d.is_dir() else None
+        if meta and meta.get("youtube_id"):
+            text = (load_json(d / "script.json") or {}).get("full_text") or ""
+            if text:
+                out[meta["youtube_id"]] = text[:700]
+    return out
 
 
 def _shrunk_factor(vph: float, channel_median: float, n: int) -> float:
@@ -393,14 +413,31 @@ def blueprint_performance(matched: list[dict[str, Any]] | None = None) -> dict[s
 
 
 def best_openings(n: int = 3) -> list[dict[str, Any]]:
-    """The channel's best-retaining openings (first sentence of the transcript), for the script writer."""
+    """The channel's best-retaining openings, for the script writer. For Shorts made on this machine the exact hook
+    from the script is used; otherwise the first sentence of the captions, cleaned of [music] and >> markers."""
     import re
-    rows = [u for u in labelled_uploads() if u.get("avg_view_pct") is not None and (u.get("transcript") or "").strip()]
+    hooks = _local_hooks()
+    by_title = _history_hooks()
+    rows = []
+    for u in labelled_uploads():
+        if u.get("avg_view_pct") is None:
+            continue
+        hooks.setdefault(u["id"], by_title.get(_norm(u.get("title", "")), ""))
+        if hooks[u["id"]] or (u.get("transcript") or "").strip():
+            rows.append(u)
     rows.sort(key=lambda u: -float(u["avg_view_pct"]))
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for u in rows:
-        first = re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", u["transcript"]).strip())[0][:180]
+        first = hooks.get(u["id"])
+        if not first:
+            text = re.sub(r"\[[^\]]*\]|>>", " ", u["transcript"])
+            text = re.sub(r"([.!?])(?=[A-Z])", r"\1 ", text)            # "men.When" -> "men. When"
+            text = re.sub(r"\s+", " ", text).strip()
+            first = re.split(r"(?<=[.!?])\s+", text)[0]
+            if re.search(r"[a-z]{3,}[a-z]{9,}", first):                 # words glued by old caption joining: skip
+                continue
+        first = first[:180]
         key = re.sub(r"\W+", "", first.lower())[:60]
         if len(first.split()) >= 4 and key not in seen:
             seen.add(key)
@@ -408,6 +445,31 @@ def best_openings(n: int = 3) -> list[dict[str, Any]]:
                         "title": u.get("title", "")})
         if len(out) >= n:
             break
+    return out
+
+
+def _history_hooks() -> dict[str, str]:
+    """normalised title -> opening sentence, from the permanent produce history (survives deleted outputs)."""
+    import re
+    out: dict[str, str] = {}
+    for v in (load_json(DATA_DIR / "produced_titles.json") or {}).get("videos", []):
+        hook = (v.get("hook") or "").strip()
+        if v.get("title") and hook:
+            out[_norm(v["title"])] = re.split(r"(?<=[.!?])\s+", hook)[0]
+    return out
+
+
+def _local_hooks() -> dict[str, str]:
+    """youtube_id -> the opening line we wrote, for Shorts produced on this machine."""
+    out: dict[str, str] = {}
+    if not OUTPUT_DIR.exists():
+        return out
+    for d in OUTPUT_DIR.iterdir():
+        meta = load_json(d / "meta.json") if d.is_dir() else None
+        if meta and meta.get("youtube_id"):
+            hook = (load_json(d / "script.json") or {}).get("hook")
+            if hook:
+                out[meta["youtube_id"]] = hook
     return out
 
 
