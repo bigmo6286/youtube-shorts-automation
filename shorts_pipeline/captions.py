@@ -203,7 +203,7 @@ def add_hook_overlay(ass_path: Path, text: str, seconds: float, *, style: dict[s
         body = " ".join(words[:half]) + r"\N" + " ".join(words[half:])
     else:
         body = " ".join(words)
-    size = int(int(st["size"]) * 1.25)
+    size = int(int(st["size"]) * 1.5)
     y = int(height * (0.40 if st["position"] == "top" else 0.14))   # stay clear of the running captions
     color = _ass_color(st["highlight"])
     outline_c = _ass_color(st["outline_color"])

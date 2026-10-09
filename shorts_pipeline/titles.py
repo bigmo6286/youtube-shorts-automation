@@ -22,10 +22,13 @@ from .config import load_config
 log = logging.getLogger(__name__)
 
 SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
-DEFAULTS = {"enabled": True, "variants": 3, "region": "US", "language": "en", "min_accuracy": 0.6, "min_margin": 0.05}
+DEFAULTS = {"enabled": True, "variants": 3, "region": "US", "language": "en", "min_accuracy": 0.6, "min_natural": 0.5,
+            "min_margin": 0.1}
 _STOP = set("""the a an and or of to in on at for with from by is are was were be been it its this that these those your you
 how why what when who which more than then just only even ever every one two three five six seven many most some into out
-about after before over under again new really actually sound sounds fake true facts fact thing things way""".split())
+about after before over under again new really actually sound sounds fake true facts fact thing things way
+took take takes made make makes got get gets has have had did does done said says ever never still almost
+time times year years day days hour hours minute minutes second seconds people lot""".split())
 
 
 def config() -> dict[str, Any]:
@@ -38,24 +41,39 @@ def _words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z][a-z'-]+", (text or "").lower()) if w not in _STOP and len(w) > 2]
 
 
+def _stem(w: str) -> str:
+    return w[:-1] if len(w) > 4 and w.endswith("s") and not w.endswith("ss") else w
+
+
+def subject_words(script: dict[str, Any], n: int = 3) -> list[str]:
+    """The video's subject words: content words of the title and thumbnail text, ranked by how many places they
+    appear (title, thumbnail text, hook, whole script). Never the stock-footage search term, which describes footage."""
+    fields = [script.get("title", ""), script.get("thumbnail_text", ""), script.get("hook", ""), script.get("full_text", "")]
+    stems = [{_stem(w) for w in _words(f)} for f in fields]
+    candidates: list[str] = []
+    for w in _words(fields[0]) + _words(fields[1]):
+        if _stem(w) not in [_stem(c) for c in candidates]:
+            candidates.append(w)
+    score = {w: sum(_stem(w) in st for st in stems) for w in candidates}
+    return sorted(candidates, key=lambda w: -score[w])[:n]
+
+
 def seed_queries(script: dict[str, Any], n: int = 4) -> list[str]:
-    """Two-word search seeds about the video's subject."""
-    subject = _words(script.get("visual_fallback", ""))
-    title = _words(script.get("title", ""))
-    thumb = _words(script.get("thumbnail_text", ""))
+    """Two-word search seeds: adjacent subject words as they appear in the title and thumbnail text."""
+    main = subject_words(script)
+    keep = {_stem(w) for w in main}
     seeds: list[str] = []
-    if len(subject) >= 2:
-        seeds.append(" ".join(subject[:2]))
-    main = (subject or title or thumb)[:1]
-    for w in title + thumb:
-        if main and w != main[0]:
-            seeds.append(f"{main[0]} {w}")
-    if main:
-        seeds.append(f"why {main[0]}")
+    for field in (script.get("title", ""), script.get("thumbnail_text", "")):
+        ws = _words(field)
+        for a, b in zip(ws, ws[1:]):
+            if _stem(a) in keep or _stem(b) in keep:
+                seeds.append(f"{a} {b}")
+    if len(main) >= 2:
+        seeds.append(f"{main[0]} {main[1]}")
     out: list[str] = []
-    for s in seeds:
-        if s not in out:
-            out.append(s)
+    for q in seeds:
+        if q not in out:
+            out.append(q)
     return out[:n]
 
 
@@ -73,13 +91,16 @@ def suggestions(query: str, cfg: dict[str, Any] | None = None) -> list[str]:
 
 
 def search_phrases(script: dict[str, Any], limit: int = 20) -> list[str]:
+    """Suggestions that are about this video: each must contain one of its two main subject words."""
     cfg = config()
+    core = {_stem(w) for w in subject_words(script, 2)}
     seen: list[str] = []
     for q in seed_queries(script):
-        for s in suggestions(q, cfg):
-            s = s.strip().lower()
-            if s and s not in seen and len(s.split()) >= 2:
-                seen.append(s)
+        for sug in suggestions(q, cfg):
+            sug = sug.strip().lower()
+            words = {_stem(w) for w in re.findall(r"[a-z][a-z'-]+", sug)}
+            if sug and sug not in seen and len(sug.split()) >= 2 and words & core:
+                seen.append(sug)
     return seen[:limit]
 
 
@@ -127,28 +148,34 @@ def pick(script: dict[str, Any], candidates: list[str], phrases: list[str]) -> t
     if not judge.has_typesafe() or len(candidates) < 2:
         return 0, {}
     letters = [chr(ord("A") + i) for i in range(len(candidates))]
+    # Search value is already built into the variants; the choice itself is about the viewer.
     questions = {
         "best": judge._q("choice", {
-            "question": "A viewer sees this title under a Short in YouTube search and in the Shorts feed. Which title "
-                        "are they most likely to tap, given what they search for (`search_phrases`)?",
-            "focus": "Prefer specific, curiosity-building titles that use words people search; penalise vague or "
-                     "keyword-stuffed ones.",
+            "question": "A viewer sees this title under a Short in the Shorts feed or in YouTube search. Which title are "
+                        "they most likely to tap?",
+            "focus": "Prefer specific, natural, curiosity-building headlines; penalise vague titles, label prefixes "
+                     "('Vintage History: ...') and keyword lists.",
         }, {letter: title for letter, title in zip(letters, candidates)}),
     }
     for i, title in enumerate(candidates):
         questions[f"accurate_{i}"] = judge._q(
             "noul", f"Does the title {title!r} describe `video.script` accurately, promising nothing the script does not deliver?",
             None)
-    state = {"video": {"opening_line": script.get("hook", ""), "script": (script.get("full_text") or "")[:1200]},
-             "search_phrases": phrases[:15]}
+        questions[f"natural_{i}"] = judge._q(
+            "noul", f"Does the title {title!r} read like a natural, curiosity-driven headline, rather than a label, a "
+                    "category prefix or a list of search keywords?", None)
+    state = {"video": {"opening_line": script.get("hook", ""), "script": (script.get("full_text") or "")[:1200]}}
     with judge._client() as client:
         r = client.system_one(state=state, questions=questions)
     probs = {k: float(v) for k, v in r.answers["best"].probabilities.items()}
     accurate = [float(r.answers[f"accurate_{i}"].noul) for i in range(len(candidates))]
-    details = {"candidates": [{"title": t, "tap": round(probs.get(letters[i], 0.0), 3), "accurate": round(accurate[i], 3)}
-                              for i, t in enumerate(candidates)]}
+    natural = [float(getattr(r.answers.get(f"natural_{i}"), "noul", 1.0)) if hasattr(r.answers, "get")
+               else float(r.answers[f"natural_{i}"].noul) for i in range(len(candidates))]
+    details = {"candidates": [{"title": t, "tap": round(probs.get(letters[i], 0.0), 3), "accurate": round(accurate[i], 3),
+                               "natural": round(natural[i], 3)} for i, t in enumerate(candidates)]}
     cfg = config()
-    ok = [i for i in range(len(candidates)) if accurate[i] >= float(cfg["min_accuracy"])]
+    ok = [i for i in range(len(candidates))
+          if accurate[i] >= float(cfg["min_accuracy"]) and natural[i] >= float(cfg["min_natural"])]
     if 0 not in ok:
         ok.append(0)                        # the original stays eligible: it already passed the script QA
     best = max(ok, key=lambda i: probs.get(letters[i], 0.0))
