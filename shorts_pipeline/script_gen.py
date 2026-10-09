@@ -268,7 +268,8 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
     best: dict[str, Any] | None = None
     from . import originality
     ocfg = originality.config()
-    recent = originality.recent_uploads() if ocfg["enabled"] and original_text is None else None
+    recent = (originality.recent_uploads() if ocfg["enabled"] and ocfg.get("template_check") and original_text is None
+              else None)
     for attempt in range(1, max_attempts + 1):
         try:
             parsed = _draft(client, system, user_prompt + feedback, backend)

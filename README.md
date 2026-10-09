@@ -313,8 +313,9 @@ the daily report show the current values.
 
 YouTube's monetisation policy turns down repetitive, mass-produced channels. The engine counts title and opening
 formulas in your recent uploads ("..., and 5 More ... Facts", "Your ...", "This ...") and tells the writer to avoid
-any used in 30 % or more of them; TypeSafe compares each draft with the recent uploads and sends a draft back when it
-reads like the same template with the subject swapped. The narrator rotates among a few similar voices
+any used in 30 % or more of them. (A TypeSafe check of each draft against the recent uploads exists as
+`production.originality.template_check`, off by default: on this channel it could not tell a new story told in the
+channel's usual format from a real formula copy.) The narrator rotates among a few similar voices
 (`production.originality.voices`), and while one formula dominates the recent uploads (50 %+), the daily volume is
 lowered by a quarter.
 

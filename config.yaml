@@ -72,7 +72,7 @@ production:
     seconds: 2.0
     clip: assets/outro.mp4
   originality:
-    enabled: true             # avoid overused title/opening formulas; TypeSafe rejects drafts that copy a recent template
+    enabled: true             # avoid overused title/opening formulas (counted in recent uploads); vary the narrator
     voices: [en-US-AndrewNeural, en-US-BrianNeural, en-US-ChristopherNeural]   # rotated per Short; [] = always `voice`
   loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views)
   hook_overlay:

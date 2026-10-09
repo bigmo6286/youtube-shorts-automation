@@ -16,8 +16,11 @@ from typing import Any
 
 from .config import load_config
 
+# template_check (TypeSafe judging each draft against recent uploads) is off by default: on this channel it could not
+# tell a distinct story told in the channel's usual format from a real formula copy (it scored them 3.3 vs 2.9 of 4).
 DEFAULTS = {"enabled": True, "voices": ["en-US-AndrewNeural", "en-US-BrianNeural", "en-US-ChristopherNeural"],
-            "recent": 20, "overused_share": 0.3, "max_template_score": 2.5, "sameness_cap": 0.5, "volume_factor": 0.75}
+            "recent": 20, "overused_share": 0.3, "template_check": False, "max_template_score": 3.5,
+            "sameness_cap": 0.5, "volume_factor": 0.75}
 
 FORMULAS = {
     "'..., and N More ...' list title": r",?\s+(and|plus)\s+\d+\s+more\b",
@@ -28,6 +31,7 @@ FORMULAS = {
     "titles starting 'Why ...'": r"^why\b",
     "titles starting 'How ...'": r"^how\b",
     "'X Is/Was Actually ...' titles": r"\b(is|was|are)\s+actually\b",
+    "'... in <year>' story titles": r"\bin\s+(1[0-9]{3}|20[0-2][0-9])\b",
 }
 
 
