@@ -20,6 +20,8 @@ log = logging.getLogger("shorts.scheduler")
 
 STATE_PATH = DATA_DIR / "schedule.json"
 TICK_SECONDS = 20
+RETRY_DELAY_MINUTES = 30     # a scheduled production that failed for a temporary reason runs again this much later
+EXPIRE_EVERY_SECONDS = 600
 DEFAULTS = {
     "enabled": False,
     "produces_per_day": 20,
@@ -34,6 +36,8 @@ DEFAULTS = {
     "source": "trends",          # trends = blueprints from the trend ranking | profile = clone a channel's style
     "profile": "",               # handle of an analysed channel profile (see `profile add`) when source = profile
     "catch_up": True,            # after downtime, run the most recent missed slot once (never all of them)
+    "retry_failed": True,        # re-run a production that failed for a temporary reason once, later the same day
+    "skip_when_queue_full": True,  # skip a production slot while the upload queue already holds a day's uploads
 }
 
 
@@ -127,9 +131,12 @@ def slots_for(day: datetime, count: int, start_hour: float, end_hour: float) -> 
 
 class Scheduler:
     def __init__(self, submit: Callable[[str, dict[str, Any]], dict[str, Any] | None],
-                 job_status: Callable[[str], str | None]):
+                 job_status: Callable[[str], str | None],
+                 job_error: Callable[[str], str | None] | None = None):
         self._submit = submit          # returns job dict or None when another job is running
         self._job_status = job_status
+        self._job_error = job_error or (lambda _id: None)
+        self._last_expire = 0.0
         self._lock = threading.Lock()
         self.state = load_json(STATE_PATH, None) or {"date": "", "done": [], "history": [], "next_blueprint": 0}
         self._thread: threading.Thread | None = None
@@ -144,6 +151,7 @@ class Scheduler:
         if self.state.get("date") != today:
             self.state["date"] = today
             self.state["done"] = []
+            self.state["retries"] = []          # retries belong to the day of the failed slot
 
     # ---------------------------------------------------------------- planning
     def plan(self, now: datetime | None = None) -> dict[str, Any]:
@@ -168,7 +176,8 @@ class Scheduler:
                 "run": run_dir.name if run_dir else None,
                 "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count",
                                                       "channel_factor", "channel_videos", "channel_basis", "source")} for b in pool],
-                "source": cfg.get("source", "trends"), "profile": cfg.get("profile", "")}
+                "source": cfg.get("source", "trends"), "profile": cfg.get("profile", ""),
+                "retries": self.state.get("retries", []), "queue": _queue_summary()}
 
     # ---------------------------------------------------------------- execution
     def start(self) -> None:
@@ -202,6 +211,12 @@ class Scheduler:
             if not cfg["enabled"]:
                 self._save()
                 return
+            self._schedule_retries(cfg, now)
+            try:
+                from .alerts import maybe_send_daily_report
+                maybe_send_daily_report(now)
+            except Exception:  # noqa: BLE001
+                log.exception("daily report failed")
             done = set(self.state["done"])
             produce = slots_for(now, int(cfg["produces_per_day"]), float(cfg["start_hour"]), float(cfg["end_hour"]))
             refresh = [t - timedelta(minutes=15) for t in
@@ -226,12 +241,86 @@ class Scheduler:
                     self.state["done"] = sorted(done)
                     self._save()
                     return                    # one job per tick; the lock allows one job anyway
+                self.state["done"] = sorted(done)
+                self._save()
+                return                        # a slot is due but a job is running: do not start anything else
             self.state["done"] = sorted(done)
+            # nothing scheduled is due: a pending retry first, then the upload queue
+            due_retries = [r for r in self.state.get("retries", []) if datetime.fromisoformat(r["due"]) <= now]
+            if due_retries:
+                r = due_retries[0]
+                if self._fire("produce", -1, datetime.fromisoformat(r["due"]), cfg, retry_of=r.get("slot")):
+                    self.state["retries"].remove(r)
+                self._save()
+                return
+            self._upload_from_queue(now)
             self._save()
 
-    def _fire(self, kind: str, index: int, slot: datetime, cfg: dict[str, Any]) -> bool:
+    # ---------------------------------------------------------------- retries and the upload queue
+    def _schedule_retries(self, cfg: dict[str, Any], now: datetime) -> None:
+        """A scheduled production that failed for a temporary reason (network, a crashed render, the voice
+        service, every draft repeating a subject) gets one more run RETRY_DELAY_MINUTES later, if that is still
+        inside today's window. A retry that fails is not retried again."""
+        if not cfg.get("retry_failed", True):
+            return
+        from .alerts import classify
+        end = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=float(cfg["end_hour"]))
+        for h in self.state.get("history", []):
+            if h.get("kind") != "produce" or h.get("status") != "error" or h.get("retry_checked"):
+                continue
+            h["retry_checked"] = True
+            problem = classify(self._job_error(h.get("job", "")))
+            if not problem.retryable:
+                continue
+            due = now + timedelta(minutes=RETRY_DELAY_MINUTES)
+            if due >= end:
+                log.info("failed slot %s (%s) not retried: the day's window ends first", h.get("slot"), problem.title)
+                continue
+            self.state.setdefault("retries", []).append({"due": due.isoformat(timespec="seconds"), "slot": h.get("slot"),
+                                                         "reason": problem.title})
+            h["retry_at"] = due.strftime("%H:%M")
+            log.info("slot %s failed (%s); retrying at %s", h.get("slot"), problem.title, due.strftime("%H:%M"))
+
+    def _upload_from_queue(self, now: datetime) -> None:
+        try:
+            from . import upload_queue
+            if time.time() - self._last_expire > EXPIRE_EVERY_SECONDS:
+                self._last_expire = time.time()
+                upload_queue.expire_old()
+            item, _reason = upload_queue.next_upload()
+            if not item:
+                return
+            job = self._submit("upload", {"path": f"output/{item['dir']}", "auto": True})
+            if job is None:
+                return
+            upload_queue.mark_started()
+            self.state["history"].append({"kind": "upload (auto)", "slot": now.strftime("%Y-%m-%d %H:%M"),
+                                          "started": datetime.now().strftime("%H:%M:%S"), "job": job["id"],
+                                          "status": job["status"],
+                                          "params": {"title": item["title"][:60], "priority": item["priority"]}})
+            log.info("upload queue: uploading %r (priority %d) -> job %s", item["title"][:60], item["priority"], job["id"])
+        except Exception:  # noqa: BLE001
+            log.exception("upload queue step failed")
+
+    def _queue_full(self) -> bool:
+        try:
+            from . import upload_queue
+            qcfg = upload_queue.config()
+            if not qcfg["auto"]:
+                return False
+            waiting = [i for i in upload_queue.queued() if i["priority"] >= int(qcfg["min_priority"])]
+            return len(waiting) >= max(1, upload_queue.limit())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _fire(self, kind: str, index: int, slot: datetime, cfg: dict[str, Any], retry_of: str | None = None) -> bool:
+        if kind == "produce" and cfg.get("skip_when_queue_full", True) and self._queue_full():
+            log.info("produce slot %s skipped: the upload queue already holds a day's worth of Shorts", slot.strftime("%H:%M"))
+            self.state["history"].append({"kind": "produce (skipped: upload queue full)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
+                                          "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
+            return True
         if kind == "refresh":
-            params: dict[str, Any] = {"top": 20}
+            params: dict[str, Any] = {"top": 20, "scheduled": True}
             job = self._submit("run", params)
         elif cfg.get("source") == "profile" and cfg.get("profile"):
             params = {"profile": cfg["profile"], "music": "random", "scheduled": True}
@@ -261,8 +350,19 @@ class Scheduler:
                 self.state.update({k: snapshot[k] for k in ("next_blueprint", "last_blueprint_key") if k in snapshot})
         if job is None:
             return False                       # another job is running; retry on the next tick
-        self.state["history"].append({"kind": kind, "slot": slot.strftime("%Y-%m-%d %H:%M"),
-                                      "started": datetime.now().strftime("%H:%M:%S"), "job": job["id"],
-                                      "status": job["status"], "params": {k: v for k, v in params.items() if k != "scheduled"}})
+        entry = {"kind": kind if not retry_of else f"{kind} (retry)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
+                 "started": datetime.now().strftime("%H:%M:%S"), "job": job["id"],
+                 "status": job["status"], "params": {k: v for k, v in params.items() if k != "scheduled"}}
+        if retry_of:
+            entry["retry_of"] = retry_of
+        self.state["history"].append(entry)
         log.info("scheduled %s (slot %s) -> job %s", kind, slot.strftime("%H:%M"), job["id"])
         return True
+
+
+def _queue_summary() -> dict[str, Any] | None:
+    try:
+        from .upload_queue import summary
+        return summary()
+    except Exception:  # noqa: BLE001
+        return None

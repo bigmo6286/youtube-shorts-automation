@@ -84,6 +84,8 @@ production:
 notifications:
   telegram:
     on_produce: true          # send every finished Short (video + title + description + hashtags) to TELEGRAM_CHAT_ID
+    alerts: true              # message you when a scheduled/automatic job fails, with the fix (same problem at most every 3 h)
+    daily_report_hour: 22     # one summary a day at this hour (produced, uploaded, queued, failed, best videos); null = off
 
 # Built-in scheduler (runs while the web console is running; see README "Run it on a schedule")
 schedule:
@@ -98,7 +100,14 @@ schedule:
   skip_stretch: true          # never auto-produce formats that need a person on camera
   channel_feedback: true      # scale weights by how each format x topic performs on your channel (needs YOUTUBE_API_KEY + YOUTUBE_CHANNEL)
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
+  retry_failed: true          # a production that failed for a temporary reason (network, render, voice) runs once more 30 min later
+  skip_when_queue_full: true  # skip a production slot while the upload queue already holds a day's worth of uploads
 
 upload:
   privacy: private            # private | unlisted | public
+  auto: true                  # scheduled Shorts join the upload queue; the best ones upload automatically
+  daily_limit: 20             # uploads per rolling 24 h; lowered automatically if YouTube refuses an upload
+  min_priority: 30            # predicted priority (0-100) a Short needs to upload automatically; lower ones wait for you
+  max_age_hours: 36           # a Short waiting longer than this is not uploaded automatically any more
+  min_gap_minutes: 20         # spacing between automatic uploads
   category_id: "22"           # 22 = People & Blogs, 24 = Entertainment, 27 = Education, 28 = Science & Technology

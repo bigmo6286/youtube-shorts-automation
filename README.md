@@ -296,6 +296,34 @@ under Content with the Private visibility, not on your public channel. Publish f
 to public in Settings to skip the review step. Unverified Google Cloud projects have a daily upload quota
 of roughly six videos.
 
+## Automatic uploads, alerts and retries
+
+**Upload queue.** Scheduled Shorts are not uploaded the moment they are rendered. Each one gets an upload priority
+(0-100): TypeSafe judges whether the title and hook stop a scroller, how well it fits what already performs on your
+channel, and whether viewers will watch to the end, plus the channel factor of its format x topic. The console uploads
+the highest-priority waiting Short whenever the channel is under `upload.daily_limit` uploads in the last 24 hours,
+at least `upload.min_gap_minutes` apart, with your usual privacy setting. Shorts below `upload.min_priority` wait for
+you; Shorts that wait longer than `upload.max_age_hours` are not uploaded automatically (their card still has Upload).
+If YouTube refuses an upload because the channel limit is reached, the limit is lowered to what YouTube allowed and the
+queue pauses until a slot frees up; a used-up API quota pauses it until the quota resets. While the queue already holds
+a day's worth of Shorts, production slots are skipped instead of rendering videos that could not be uploaded. Automatic
+uploads never open a Google sign-in page; an expired sign-in becomes an alert instead.
+`python main.py queue` shows the queue; Settings -> Automatic uploads changes the numbers.
+
+**Network-resilient uploads.** Uploads are resumable: a dropped connection, a DNS failure or a Google 5xx error resumes
+from the last confirmed chunk with backoff (about 7 minutes of retries) instead of failing. Thumbnails, privacy changes
+and status reads retry the same way. An upload that still fails stays queued and is retried, up to 3 attempts.
+
+**Retry of failed slots.** A scheduled production that fails for a temporary reason (network, a crashed render, the
+voice service, every draft repeating a subject) runs once more 30 minutes later, if today's window allows. Permanent
+problems (expired sign-in, full disk, missing script writer) are not retried; they are alerted.
+
+**Telegram alerts and daily report.** When a scheduled or automatic job fails, Telegram gets one message with what went
+wrong and the fix (the same problem is not repeated within 3 hours). Account and system problems (expired YouTube
+sign-in, full disk, unavailable script writer, upload limit, API quota) are alerted even for jobs you started. At
+`notifications.telegram.daily_report_hour` (default 22) a summary arrives: produced and failed, uploaded against the
+limit, the queue, the best videos of the week by views per hour, and disk space. `python main.py report --send` sends it now.
+
 ## Disk space
 
 Downloaded stock clips are cached in `data/cache/pexels` so re-renders do not fetch them again. The cache is

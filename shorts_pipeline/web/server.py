@@ -152,7 +152,7 @@ def _args(job: Job) -> SimpleNamespace:
         blueprint=int(p["blueprint"]) if str(p.get("blueprint") or "").isdigit() else 1,
         blueprint_key=(p.get("blueprint_key") or (str(p.get("blueprint"))[8:] if str(p.get("blueprint") or "").startswith("channel:") else None)),
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
-        exemplar=p.get("exemplar") or None,
+        exemplar=p.get("exemplar") or None, auto=bool(p.get("auto")),
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
@@ -169,7 +169,7 @@ COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
-    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
+    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "report": cli.cmd_report, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
 }
 
 
@@ -202,6 +202,28 @@ def _run_job(job: Job) -> None:
         _CURRENT = None
         _JOB_LOCK.release()
         _persist_job(job)
+        if job.status == "error":
+            threading.Thread(target=_alert_failure, args=(job,), daemon=True).start()
+
+
+# Problems that need the owner even when they started the job themselves (it will keep failing until fixed).
+_ALWAYS_ALERT = {"youtube_token", "disk", "script_backend", "upload_limit", "api_quota"}
+
+
+def _alert_failure(job: Job) -> None:
+    """Telegram alert for a failed scheduled or automatic job, or any job hitting an account/system problem."""
+    try:
+        from ..alerts import classify, job_failed
+        problem = classify(job.error)
+        automatic = bool(job.params.get("scheduled") or job.params.get("auto"))
+        if not automatic and problem.key not in _ALWAYS_ALERT:
+            return
+        error, _, note = (job.error or "").partition(" | ")
+        if not note and automatic and job.kind == "produce" and problem.retryable:
+            note = "It is retried once automatically later today (if the day's window allows)."
+        job_failed(job.kind, job.params, error, retry_note=note)
+    except Exception:  # noqa: BLE001
+        log.exception("failure alert could not be sent")
 
 
 LOG_DIR = ROOT / "data" / "logs"
@@ -375,7 +397,8 @@ def caption_preview(body: CaptionStyleBody):
 
 from ..scheduler import Scheduler  # noqa: E402
 
-SCHEDULER = Scheduler(submit_job, lambda job_id: JOBS[job_id].status if job_id in JOBS else None)
+SCHEDULER = Scheduler(submit_job, lambda job_id: JOBS[job_id].status if job_id in JOBS else None,
+                      lambda job_id: JOBS[job_id].error if job_id in JOBS else None)
 
 
 @app.on_event("startup")
@@ -566,6 +589,8 @@ def list_outputs() -> list[dict[str, Any]]:
             "thumbnail_text": meta.get("thumbnail_text"),
             "youtube_id": meta.get("youtube_id"),
             "privacy": meta.get("privacy"),
+            "upload_state": meta.get("upload_state"), "upload_priority": meta.get("upload_priority"),
+            "priority_parts": meta.get("priority_parts"), "upload_error": meta.get("upload_error"),
             "channel_stats": meta.get("channel_stats"),
             "mode": meta.get("mode", "blueprint"),
             "music": meta.get("music"),

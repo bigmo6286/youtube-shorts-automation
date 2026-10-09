@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import ssl
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from .config import DATA_DIR, ROOT, env
 
@@ -12,6 +15,44 @@ log = logging.getLogger(__name__)
 
 # Full YouTube scope: upload, read the channel's stats, and change a video's visibility after review.
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
+T = TypeVar("T")
+BACKOFF_SECONDS = [5, 15, 30, 60, 120, 180]     # ~7 minutes in total before an upload step gives up
+
+
+def is_transient(exc: BaseException) -> bool:
+    """A failure worth retrying: network drops, DNS hiccups, timeouts, and Google's own 5xx errors.
+    Never the upload limit, an exhausted quota or an expired sign-in."""
+    try:
+        from googleapiclient.errors import HttpError
+        if isinstance(exc, HttpError):
+            status = int(getattr(exc.resp, "status", 0) or 0)
+            return status >= 500 or "backendError" in str(exc)
+    except ImportError:
+        pass
+    name = type(exc).__name__
+    if name in ("ServerNotFoundError", "TransportError", "RedirectMissingLocation", "IncompleteRead"):
+        return True
+    if isinstance(exc, (TimeoutError, socket.timeout, socket.gaierror, ConnectionError, ssl.SSLError, BrokenPipeError)):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "winerror", None) in (10053, 10054, 10060, 10065, 11001, 11002):
+        return True
+    text = str(exc)
+    return any(k in text for k in ("Unable to find the server", "timed out", "Connection reset", "Connection aborted",
+                                   "EOF occurred", "Max retries exceeded", "RemoteDisconnected"))
+
+
+def with_retries(fn: Callable[[], T], what: str) -> T:
+    """Run `fn`, retrying transient failures with backoff."""
+    for attempt, pause in enumerate([*BACKOFF_SECONDS, None], 1):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            if pause is None or not is_transient(exc):
+                raise
+            log.warning("%s: %s; retrying in %d s (attempt %d of %d)", what, str(exc)[:120], pause, attempt,
+                        len(BACKOFF_SECONDS))
+            time.sleep(pause)
+    raise AssertionError("unreachable")
 TOKEN_PATH = DATA_DIR / "youtube_token.json"
 
 SETUP_HELP = """YouTube upload is not configured yet. One-time setup:
@@ -89,16 +130,17 @@ def set_privacy(video_id: str, privacy: str) -> dict[str, Any]:
     """Change an uploaded video's visibility: private | unlisted | public."""
     if privacy not in ("private", "unlisted", "public"):
         raise ValueError("privacy must be private, unlisted or public")
-    youtube = youtube_service()
-    return youtube.videos().update(part="status", body={"id": video_id, "status": {"privacyStatus": privacy,
-                                                                                 "selfDeclaredMadeForKids": False}}).execute()
+    youtube = with_retries(youtube_service, "connect to YouTube")
+    return with_retries(lambda: youtube.videos().update(part="status", body={"id": video_id, "status": {
+        "privacyStatus": privacy, "selfDeclaredMadeForKids": False}}).execute(), "change privacy")
 
 
 def video_status(video_ids: list[str]) -> dict[str, dict[str, Any]]:
-    youtube = youtube_service(interactive=False)
+    youtube = with_retries(lambda: youtube_service(interactive=False), "connect to YouTube")
     out: dict[str, dict[str, Any]] = {}
     for i in range(0, len(video_ids), 50):
-        r = youtube.videos().list(part="status,statistics", id=",".join(video_ids[i:i + 50])).execute()
+        batch = ",".join(video_ids[i:i + 50])
+        r = with_retries(lambda: youtube.videos().list(part="status,statistics", id=batch).execute(), "read video status")
         for v in r.get("items", []):
             out[v["id"]] = {"privacy": v["status"].get("privacyStatus"), "upload": v["status"].get("uploadStatus"),
                             "views": int(v.get("statistics", {}).get("viewCount", 0))}
@@ -136,15 +178,19 @@ def sync_output_status(output_dir: Path) -> int:
 def set_thumbnail(video_id: str, image_path: Path) -> None:
     from googleapiclient.http import MediaFileUpload
 
-    youtube = youtube_service()
-    youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(image_path), mimetype="image/jpeg")).execute()
+    youtube = with_retries(youtube_service, "connect to YouTube")
+    with_retries(lambda: youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(
+        str(image_path), mimetype="image/jpeg")).execute(), "set thumbnail")
 
 
 def upload_video(video_path: Path, *, title: str, description: str, tags: list[str],
-                 privacy: str = "private", category_id: str = "22") -> dict[str, Any]:
+                 privacy: str = "private", category_id: str = "22", interactive: bool = True) -> dict[str, Any]:
+    """Resumable upload. A dropped connection resumes from the last confirmed chunk instead of starting over or
+    failing; up to len(BACKOFF_SECONDS) consecutive transient failures are tolerated. `interactive=False` (the
+    automatic queue) never opens a browser for consent; it raises so the owner gets an alert instead."""
     from googleapiclient.http import MediaFileUpload
 
-    youtube = youtube_service()
+    youtube = with_retries(lambda: youtube_service(interactive=interactive), "connect to YouTube")
     body = {
         "snippet": {"title": title[:100], "description": description[:5000], "tags": tags[:30],
                     "categoryId": category_id},
@@ -153,8 +199,20 @@ def upload_video(video_path: Path, *, title: str, description: str, tags: list[s
     media = MediaFileUpload(str(video_path), chunksize=8 * 1024 * 1024, resumable=True, mimetype="video/mp4")
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
+    failures = 0
     while response is None:
-        status, response = request.next_chunk()
+        try:
+            status, response = request.next_chunk()
+        except Exception as exc:  # noqa: BLE001
+            if not is_transient(exc) or failures >= len(BACKOFF_SECONDS):
+                raise
+            pause = BACKOFF_SECONDS[failures]
+            failures += 1
+            log.warning("upload interrupted (%s); resuming in %d s (attempt %d of %d)", str(exc)[:120], pause,
+                        failures, len(BACKOFF_SECONDS))
+            time.sleep(pause)
+            continue
+        failures = 0                      # progress was made: the next drop gets the full retry budget again
         if status:
             log.info("upload %d%%", int(status.progress() * 100))
     return response

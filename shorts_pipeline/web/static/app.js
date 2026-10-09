@@ -257,6 +257,9 @@ async function loadOutputs(afterStatusSync = false) {
           <button data-thumb="${o.dir}" title="${o.thumbnail_url ? "rebuild the thumbnail" : "build a thumbnail for this video"}${o.youtube_id ? " and set it on YouTube" : ""}">${o.thumbnail_url ? "Rebuild" : "Make"} thumbnail${o.youtube_id ? " + set on YouTube" : ""}</button>
         </div>
         <div class="muted small">${esc(o.folder)}</div>
+        ${!o.youtube_id && o.upload_state === "queued" ? `<span class="tag ${o.upload_priority >= (state.minPriority ?? 30) ? "ok" : "warn"}" title="${esc(Object.entries(o.priority_parts || {}).map(([k, v]) => `${k} ${Math.round(v * 100)}`).join(", "))}">in upload queue · priority ${o.upload_priority}</span>` : ""}
+        ${!o.youtube_id && o.upload_state === "expired" ? `<span class="tag warn">not uploaded automatically (waited too long)</span>` : ""}
+        ${!o.youtube_id && o.upload_state === "failed" ? `<span class="tag warn" title="${esc(o.upload_error || "")}">automatic upload failed</span>` : ""}
         ${o.youtube_id && o.privacy === "deleted" ? `<span class="tag warn">removed from YouTube (${esc(o.youtube_id)})</span>` : ""}
         ${o.youtube_id && o.privacy !== "deleted" ? `<a class="tag ${o.privacy === "private" ? "warn" : "ok"}" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.privacy ? ` (${o.privacy})` : ""}${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>
              ${o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="public">Make public</button>` : ""}
@@ -329,9 +332,16 @@ async function loadSchedule() {
     ? (p.source === "profile" && p.profile ? `Producing in the style of <b>${esc(p.profile)}</b> (Settings → Schedule → Source). Trend blueprints for reference: ` : `Producing from run ${esc(p.run || "")}: `)
       + p.eligible.map((b) => `<span class="tag ${b.source === "channel" ? "ok" : ""}" title="${b.source === "channel" ? `your channel's winner: ${b.channel_videos} videos, x${b.channel_factor} your median` : `opportunity ${b.opportunity}, ${b.count} trending Shorts${b.channel_videos ? `, your channel: ${b.channel_videos} videos (${b.channel_basis}), factor x${b.channel_factor}` : ""}`}">${b.source === "channel" ? "★" : "#" + b.index} ${esc(b.format)} × ${esc(b.topic)} · ${Math.round(b.weight * 100)}%${b.channel_videos ? ` <span class="${b.channel_factor >= 1 ? "ok" : "warn"}">(you: x${b.channel_factor})</span>` : ""}</span>`).join(" ")
     : "No eligible blueprints yet (a trend refresh will run first).";
+  const q = p.queue;
+  $("#queuepanel").innerHTML = !q ? "" : !q.auto ? "Automatic upload is off (Settings → Automatic uploads)."
+    : `Upload queue: <b>${q.queued}</b> waiting${q.below_min ? ` (${q.below_min} below priority ${q.min_priority}, waiting for you)` : ""} · uploaded ${q.uploaded_24h}/${q.limit} in 24 h`
+      + (q.paused_until ? ` · <span class="warn">paused until ${esc(q.paused_until)} (${esc(q.paused_reason || "")})</span>` : "")
+      + (q.next ? ` · next: <span class="tag ok">${q.next.priority} ${esc(q.next.title.slice(0, 50))}</span>` : (q.waiting_reason ? ` · ${esc(q.waiting_reason)}` : ""))
+      + ((p.retries || []).length ? ` · retries pending: ${p.retries.map((r) => `${esc(r.due.slice(11, 16))} (${esc(r.reason)})`).join(", ")}` : "");
   loadChannel();
+  const detail = (h) => h.params ? (h.params.blueprint || h.params.blueprint_key || (h.params.title ? `${h.params.priority ?? ""} ${h.params.title}` : "-")) : (h.retry_at ? `retry at ${h.retry_at}` : "-");
   $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
-      <td class="${h.status === "error" ? "err" : ""}">${esc(h.status)}</td><td>${h.params && h.params.blueprint ? h.params.blueprint : "-"}</td></tr>`).join("")
+      <td class="${h.status === "error" ? "err" : ""}">${esc(h.status)}${h.retry_at ? ` → retry ${esc(h.retry_at)}` : ""}</td><td>${esc(String(detail(h)))}</td></tr>`).join("")
     || `<tr><td colspan="5" class="muted">Nothing scheduled has run yet.</td></tr>`;
 }
 
@@ -526,6 +536,14 @@ async function loadSettings() {
   set("production.voice", c.production.voice); set("production.target_seconds", c.production.target_seconds);
   set("production.background_source", c.production.background_source); set("production.script_backend", c.production.script_backend || "auto");
   set("upload.privacy", c.upload.privacy);
+  const up = c.upload || {};
+  $(`[name="upload.auto"]`).checked = up.auto !== false;
+  set("upload.daily_limit", up.daily_limit ?? 20); set("upload.min_priority", up.min_priority ?? 30);
+  set("upload.max_age_hours", up.max_age_hours ?? 36); set("upload.min_gap_minutes", up.min_gap_minutes ?? 20);
+  const tgc = (c.notifications || {}).telegram || {};
+  $(`[name="notifications.telegram.alerts"]`).checked = tgc.alerts !== false;
+  set("notifications.telegram.daily_report_hour", tgc.daily_report_hour === null || tgc.daily_report_hour === false ? "" : (tgc.daily_report_hour ?? 22));
+  $(`[name="schedule.retry_failed"]`).checked = (c.schedule || {}).retry_failed !== false;
 }
 $("#cfgform").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -548,12 +566,16 @@ $("#cfgform").addEventListener("submit", async (ev) => {
         text: g("production.intro.text") || "{title}", seconds: num("production.intro.seconds") || 1.5 },
       outro: { ...(state.settings.config.production.outro || {}), enabled: $(`[name="production.outro.enabled"]`).checked,
         text: g("production.outro.text") || "Follow for more", handle: g("production.outro.handle"), seconds: num("production.outro.seconds") || 2 } },
-    upload: { privacy: g("upload.privacy") },
+    upload: { privacy: g("upload.privacy"), auto: $(`[name="upload.auto"]`).checked,
+      daily_limit: num("upload.daily_limit") || 20, min_priority: Math.min(100, Math.max(0, num("upload.min_priority"))),
+      max_age_hours: num("upload.max_age_hours") || 36, min_gap_minutes: Math.max(0, num("upload.min_gap_minutes")) },
+    notifications: { telegram: { alerts: $(`[name="notifications.telegram.alerts"]`).checked,
+      daily_report_hour: g("notifications.telegram.daily_report_hour") === "" ? null : num("notifications.telegram.daily_report_hour") } },
     schedule: { enabled: $(`[name="schedule.enabled"]`).checked, produces_per_day: num("schedule.produces_per_day") || 20,
       refresh_per_day: num("schedule.refresh_per_day"), start_hour: num("schedule.start_hour"), end_hour: num("schedule.end_hour") || 24,
       blueprints_to_rotate: num("schedule.blueprints_to_rotate") || 5, selection: g("schedule.selection"),
       min_share: Math.min(1, Math.max(0, num("schedule.min_share_pct") / 100)), skip_stretch: $(`[name="schedule.skip_stretch"]`).checked,
-      source: g("schedule.source"), profile: g("schedule.profile") },
+      source: g("schedule.source"), profile: g("schedule.profile"), retry_failed: $(`[name="schedule.retry_failed"]`).checked },
   };
   try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); loadStatus(); }
   catch (e) { toast(e.message, true); }

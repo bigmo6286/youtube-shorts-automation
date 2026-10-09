@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -340,6 +341,7 @@ def cmd_produce(args) -> Path:
                    out_dir=out_dir, source=str(run_name))
     print(f"\nRendered {video}  ({total:.1f}s)")
     upload_error = None
+    queue_note = ""
     if args.upload:
         try:
             _upload(out_dir)
@@ -350,8 +352,21 @@ def cmd_produce(args) -> Path:
             # lose the Telegram delivery or mark the whole production as failed. Upload it from the card later.
             upload_error = f"{type(exc).__name__}: {str(exc)[:300]}"
             log.error("upload failed, the video is saved in %s and can be uploaded from its Studio card: %s", out_dir.name, upload_error)
+    elif getattr(args, "scheduled", False):
+        from . import upload_queue
+        if upload_queue.config()["auto"]:
+            try:
+                q = upload_queue.enqueue(out_dir)
+                qcfg = upload_queue.config()
+                queue_note = (f"Upload queue: priority {q['priority']}/100, #{q['rank']} of {q['waiting']} waiting"
+                              + ("" if q["priority"] >= int(qcfg["min_priority"]) else
+                                 f" (below {qcfg['min_priority']}: waits for you, not uploaded automatically)"))
+                print(queue_note)
+            except Exception as exc:  # noqa: BLE001 - the Short is fine; it can be uploaded by hand
+                log.warning("could not add the Short to the upload queue: %s", exc)
+        meta = load_json(out_dir / "meta.json") or meta
     if getattr(args, "telegram", True):
-        _notify_telegram(out_dir, meta)
+        _notify_telegram(out_dir, meta, extra=queue_note)
     if upload_error:
         print(f"Upload failed ({upload_error}); use Upload on the video's card once YouTube access works again.")
     return out_dir
@@ -394,7 +409,7 @@ def _caption_style(cfg: dict) -> dict:
     return resolve_style(raw)
 
 
-def _notify_telegram(out_dir: Path, meta: dict, *, force: bool = False) -> None:
+def _notify_telegram(out_dir: Path, meta: dict, *, force: bool = False, extra: str = "") -> None:
     from . import notify
 
     tcfg = (load_config().get("notifications") or {}).get("telegram") or {}
@@ -406,12 +421,35 @@ def _notify_telegram(out_dir: Path, meta: dict, *, force: bool = False) -> None:
         return
     try:
         note = f"New Short ready ({meta.get('duration', 0):.0f}s)" + (f" · https://youtube.com/shorts/{meta['youtube_id']}" if meta.get("youtube_id") else "")
+        if extra:
+            note += "\n" + extra
         notify.send_short(Path(meta["video"]), meta, note=note)
         print("Sent to Telegram.")
     except Exception as exc:  # noqa: BLE001 - delivery must never fail the render
         log.error("Telegram delivery failed: %s", exc)
         if force:
             sys.exit(f"Telegram delivery failed: {exc}")
+
+
+def cmd_report(args) -> None:
+    from . import alerts, notify
+    text = alerts.daily_report()
+    print(text)
+    if getattr(args, "send", False):
+        if not notify.telegram_configured():
+            sys.exit("Telegram is not configured.")
+        notify.send_message(text)
+        print("Sent to Telegram.")
+
+
+def cmd_queue(args) -> None:
+    from . import upload_queue
+    s = upload_queue.summary()
+    print(f"automatic upload: {'on' if s['auto'] else 'off'} · {s['queued']} waiting · uploaded {s['uploaded_24h']}/{s['limit']} in 24 h"
+          + (f" · paused until {s['paused_until']} ({s['paused_reason']})" if s["paused_until"] else ""))
+    print(f"next: {s['next']['priority']} {s['next']['title']}" if s["next"] else f"next: none ({s['waiting_reason']})")
+    for i in upload_queue.queued():
+        print(f"  {i['priority']:>3}  {i['dir']}  {i['title'][:60]}")
 
 
 def cmd_telegram(args) -> None:
@@ -465,8 +503,8 @@ def _listify(value) -> list[str]:
     return list(value)
 
 
-def _upload(out_dir: Path, force: bool = False) -> None:
-    from . import upload
+def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> None:
+    from . import upload, upload_queue
 
     cfg = load_config()["upload"]
     meta = load_json(out_dir / "meta.json")
@@ -477,11 +515,21 @@ def _upload(out_dir: Path, force: bool = False) -> None:
     desc = meta["description"]
     if "#shorts" not in desc.lower():
         desc += "\n\n#Shorts"
-    resp = upload.upload_video(Path(meta["video"]), title=meta["title"], description=desc, tags=tags,
-                               privacy=cfg["privacy"], category_id=cfg["category_id"])
+    try:
+        resp = upload.upload_video(Path(meta["video"]), title=meta["title"], description=desc, tags=tags,
+                                   privacy=cfg["privacy"], category_id=cfg["category_id"], interactive=interactive)
+    except Exception as exc:  # noqa: BLE001
+        error = f"{type(exc).__name__}: {exc}"
+        note = upload_queue.on_upload_error(out_dir, error)    # learns the daily limit, counts attempts
+        raise RuntimeError(error[:600] + (f" | {note}" if note else "")) from exc
+    upload_queue.record_upload(out_dir)
     vid = resp.get("id")
+    meta = load_json(out_dir / "meta.json") or meta           # re-read: the queue may have touched it
     meta["youtube_id"] = vid
     meta["privacy"] = cfg["privacy"]
+    meta["uploaded_at"] = time.time()
+    if meta.get("upload_state") in ("queued", "expired", "failed", None):
+        meta["upload_state"] = "uploaded"
     save_json(out_dir / "meta.json", meta)
     print(f"Uploaded as {cfg['privacy']}: https://youtube.com/shorts/{vid}")
     if cfg["privacy"] == "private":
@@ -501,7 +549,11 @@ def _upload(out_dir: Path, force: bool = False) -> None:
 def cmd_upload(args) -> None:
     target = Path(args.path)
     out_dir = target if target.is_dir() else target.parent
-    _upload(out_dir, force=bool(getattr(args, "force", False)))
+    auto = bool(getattr(args, "auto", False))
+    if auto:
+        meta = load_json(out_dir / "meta.json") or {}
+        log.info("automatic upload: %r (priority %s/100)", meta.get("title", out_dir.name)[:70], meta.get("upload_priority", "?"))
+    _upload(out_dir, force=bool(getattr(args, "force", False)), interactive=not auto)
 
 
 def cmd_thumbnail(args) -> None:
@@ -764,6 +816,13 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("action", choices=["test", "discover", "send"])
     t.add_argument("path", nargs="?", help="send: output/<dir> or its short.mp4")
     t.set_defaults(func=cmd_telegram)
+
+    rp = sub.add_parser("report", help="print today's report (produced, uploaded, queue, failures); --send posts it to Telegram")
+    rp.add_argument("--send", action="store_true")
+    rp.set_defaults(func=cmd_report)
+
+    qp = sub.add_parser("queue", help="show the automatic upload queue")
+    qp.set_defaults(func=cmd_queue)
 
     pf = sub.add_parser("profile", help="analyse a YouTube channel's style so videos can be made in that style")
     pf.add_argument("action", choices=["add", "list", "show"])

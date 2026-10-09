@@ -28,8 +28,9 @@
         <div id="schednext" class="muted"></div>
       </div>
       <div id="schedeligible" class="muted"></div>
+      <div id="queuepanel" class="muted"></div>
       <div id="channelpanel" class="muted"></div>
-      <details><summary>Recent scheduled runs</summary><div class="tablewrap"><table id="schedhistory"><thead><tr><th>slot</th><th>kind</th><th>started</th><th>status</th><th>blueprint</th></tr></thead><tbody></tbody></table></div></details>
+      <details><summary>Recent scheduled runs</summary><div class="tablewrap"><table id="schedhistory"><thead><tr><th>slot</th><th>kind</th><th>started</th><th>status</th><th>details</th></tr></thead><tbody></tbody></table></div></details>
     </div>
     <div class="grid2">
       <div class="panel">
@@ -277,6 +278,21 @@
             <label>Background<select name="production.background_source"><option>auto</option><option>pexels</option><option>generated</option></select></label>
             <label>Script backend<select name="production.script_backend"><option>auto</option><option>api</option><option>claude_code</option></select></label>
             <label>Upload privacy<select name="upload.privacy"><option>private</option><option>unlisted</option><option>public</option></select></label>
+          </div>
+          <h3>Automatic uploads</h3>
+          <p class="muted">Scheduled Shorts wait in an upload queue. TypeSafe predicts each one's priority (scroll-stopping hook, fit with what works on your channel, watch-through) and the best ones are uploaded automatically, within the daily limit, spaced out. The limit lowers itself if YouTube refuses an upload.</p>
+          <div class="row">
+            <label class="inline"><input type="checkbox" name="upload.auto"> upload scheduled Shorts automatically</label>
+            <label>Uploads per 24 h<input type="number" min="1" max="100" name="upload.daily_limit"></label>
+            <label>Minimum priority (0-100)<input type="number" min="0" max="100" name="upload.min_priority"></label>
+            <label>Expire after (hours)<input type="number" min="1" max="240" name="upload.max_age_hours"></label>
+            <label>Minutes between uploads<input type="number" min="0" max="600" name="upload.min_gap_minutes"></label>
+          </div>
+          <h3>Alerts</h3>
+          <div class="row">
+            <label class="inline"><input type="checkbox" name="notifications.telegram.alerts"> Telegram alert when a scheduled or automatic job fails</label>
+            <label>Daily report at (hour, empty = off)<input type="number" min="0" max="23" name="notifications.telegram.daily_report_hour"></label>
+            <label class="inline"><input type="checkbox" name="schedule.retry_failed"> retry a failed production once</label>
           </div>
           <button class="primary" type="submit">Save settings</button>
           <span id="cfgsaved" class="muted"></span>
