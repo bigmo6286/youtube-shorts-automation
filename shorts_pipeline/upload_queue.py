@@ -93,6 +93,13 @@ def uploads_24h(state: dict[str, Any] | None = None, now: float | None = None) -
 def limit(state: dict[str, Any] | None = None) -> int:
     state = state or _state()
     cfg_limit = max(0, int(config()["daily_limit"]))
+    try:
+        from . import originality, tuning
+        learned_volume = tuning.daily_upload_limit()
+        if learned_volume:
+            cfg_limit = min(cfg_limit, max(1, int(learned_volume * originality.volume_factor())))
+    except Exception:  # noqa: BLE001 - no channel data yet: the configured limit
+        pass
     learned = state.get("learned_limit")
     if learned and time.time() - float(state.get("learned_at") or 0) < LEARNED_LIMIT_DAYS * 86400:
         return min(cfg_limit, int(learned))

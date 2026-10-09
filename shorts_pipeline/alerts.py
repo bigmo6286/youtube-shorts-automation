@@ -181,6 +181,14 @@ def daily_report(now: datetime | None = None) -> str:
         lines.append("Best videos this week (views per hour):")
         lines += [f"  {float(v.get('views_per_hour') or 0):.1f}/h · {int(v.get('views') or 0):,} views · {v['title'][:60]}"
                   for v in top]
+    try:
+        from . import originality, tuning
+        t = load_json(tuning.TUNING_PATH) or {}
+        if t:
+            lines.append(f"Learned from the channel: {t.get('volume', {}).get('recommended', '?')} uploads/day, "
+                         f"{t.get('length', {}).get('channel', '?')} s Shorts · sameness {originality.sameness():.0%}")
+    except Exception:  # noqa: BLE001
+        pass
     lines.append(f"Disk: {housekeeping.free_gb():.1f} GB free · footage cache {housekeeping.cache_size_gb():.1f} GB")
     return "\n".join(lines)
 

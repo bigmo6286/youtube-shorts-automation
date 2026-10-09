@@ -93,6 +93,8 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
             f"- Do: {'; '.join(style.get('dos') or [])}\n"
             f"- Never: {'; '.join(style.get('donts') or [])}\n"
         )
+    from .originality import prompt_note
+    angle_line += prompt_note()
     if loop_endings():
         angle_line += (
             "\nLOOP ENDING (Shorts replay automatically, and replays count as views): deliver the payoff in the body, then "
@@ -264,6 +266,9 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
     client = anthropic.Anthropic() if backend == "api" else None
     feedback = ""
     best: dict[str, Any] | None = None
+    from . import originality
+    ocfg = originality.config()
+    recent = originality.recent_uploads() if ocfg["enabled"] and original_text is None else None
     for attempt in range(1, max_attempts + 1):
         try:
             parsed = _draft(client, system, user_prompt + feedback, backend)
@@ -292,7 +297,7 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
                      "Pick a completely different subject (a different story, fact, person or experiment) and write it again.")
             user_prompt += taken
             continue
-        qa = judge_script(script, blueprint, original_text=original_text, loop=loop)
+        qa = judge_script(script, blueprint, original_text=original_text, loop=loop, recent=recent)
         script["qa"] = qa
         script["qa_problems"] = []
         if qa is None:
@@ -305,6 +310,9 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
             problems.append("the script risks violating YouTube policy; remove any risky claim or instruction")
         if original_text is None and qa["matches_format"]["noul"] < 0.5:
             problems.append(f"it drifted away from the {blueprint['format']} format / {blueprint['hook_style']} hook")
+        if recent and qa.get("template_repeat", {}).get("score", 0.0) >= float(ocfg["max_template_score"]):
+            problems.append("it reads like the same template as the channel's recent uploads (title formula, opening or "
+                            "structure); make the title, the opening line and the structure clearly different")
         if loop and qa.get("loops", {}).get("noul", 1.0) < 0.5:
             problems.append("the last line does not lead back into the hook; end on a short bridge that the first line "
                             "completes when the Short replays, with no closing question")

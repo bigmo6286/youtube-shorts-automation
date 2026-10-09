@@ -341,6 +341,7 @@ async function loadSchedule() {
     : `Upload queue: <b>${q.queued}</b> waiting${q.below_min ? ` (${q.below_min} below priority ${q.min_priority}, waiting for you)` : ""} · uploaded ${q.uploaded_24h}/${q.limit} in 24 h`
       + (q.paused_until ? ` · <span class="warn">paused until ${esc(q.paused_until)} (${esc(q.paused_reason || "")})</span>` : "")
       + (q.next ? ` · next: <span class="tag ok">${q.next.priority} ${esc(q.next.title.slice(0, 50))}</span>` : (q.waiting_reason ? ` · ${esc(q.waiting_reason)}` : ""))
+      + (p.tuning && p.tuning.uploads_per_day ? `<br>Learned from your channel: <b>${p.tuning.uploads_per_day}</b> uploads a day, Shorts of about <b>${p.tuning.seconds}s</b>${Object.keys(p.tuning.formats || {}).length ? " (" + Object.entries(p.tuning.formats).map(([f, s]) => `${esc(f)} ${s}s`).join(", ") + ")" : ""} · repetitiveness ${Math.round((p.tuning.sameness || 0) * 100)}%${(p.tuning.overused || []).length ? ` <span class="warn">(overused: ${p.tuning.overused.map(esc).join(", ")})</span>` : ""}<br>` : "")
       + (p.publish && p.publish.enabled ? ` · goes public at good hours (next free ${esc(p.publish.next_publish)})` : "")
       + ((p.retries || []).length ? ` · retries pending: ${p.retries.map((r) => `${esc(r.due.slice(11, 16))} (${esc(r.reason)})`).join(", ")}` : "");
   loadChannel(); loadComments();

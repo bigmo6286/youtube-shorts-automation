@@ -279,7 +279,7 @@ def cmd_produce(args) -> Path:
                  blueprint["hook_style"], blueprint["opportunity"])
         out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{blueprint['topic']}"
         try:
-            script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
+            script = script_gen.generate_script(blueprint, target_seconds=_learned_seconds(blueprint, cfg), angle=args.angle,
                                                 max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
                                                 backend=cfg.get("script_backend", "auto"), avoid_titles=None)
         except RuntimeError as exc:
@@ -303,7 +303,7 @@ def cmd_produce(args) -> Path:
         log.info("blueprint %d: %s x %s (%s hook)", args.blueprint, blueprint["format"], blueprint["topic"], blueprint["hook_style"])
         out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{blueprint['topic']}"
         try:
-            script = script_gen.generate_script(blueprint, target_seconds=cfg["target_seconds"], angle=args.angle,
+            script = script_gen.generate_script(blueprint, target_seconds=_learned_seconds(blueprint, cfg), angle=args.angle,
                                                 max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
                                                 backend=cfg.get("script_backend", "auto"), avoid_titles=None)
         except RuntimeError as exc:
@@ -325,7 +325,9 @@ def cmd_produce(args) -> Path:
         print(f"ORIGINAL:\n{script['original_text']}\n")
 
     voice_path = out_dir / "voice.mp3"
-    words = tts.synthesize(script["full_text"], voice_path, voice=cfg["voice"], rate=cfg["voice_rate"])
+    from . import originality
+    voice = originality.voice_for(script["title"], cfg["voice"])         # a few similar narrators, not one for every Short
+    words = tts.synthesize(script["full_text"], voice_path, voice=voice, rate=cfg["voice_rate"])
     body_seconds = max(render.probe_duration(voice_path), words[-1]["end"] if words else 1.0) + 0.4
     save_json(out_dir / "words.json", words)
 
@@ -376,7 +378,7 @@ def cmd_produce(args) -> Path:
             "title": script["title"], "description": description,
             "hashtags": script["hashtags"], "duration": total,
             "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
-            "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None,
+            "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None, "voice": voice,
             "segments": segments,
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
@@ -426,6 +428,15 @@ def cmd_produce(args) -> Path:
     if upload_error:
         print(f"Upload failed ({upload_error}); use Upload on the video's card once YouTube access works again.")
     return out_dir
+
+
+def _learned_seconds(blueprint: dict, cfg: dict) -> int:
+    """Script length learned from the channel's views and retention (per format when it has enough data)."""
+    from . import tuning
+    secs = tuning.target_seconds(blueprint.get("format"), int(cfg["target_seconds"]))
+    if secs != int(cfg["target_seconds"]):
+        log.info("length: %ds for %s (learned from your channel; configured %ds)", secs, blueprint.get("format"), cfg["target_seconds"])
+    return secs
 
 
 def _card(card_cfg: dict, kind: str, script: dict, out_dir: Path, cfg: dict, *, enabled: bool | None) -> dict | None:

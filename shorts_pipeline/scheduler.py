@@ -182,7 +182,8 @@ class Scheduler:
                 "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count",
                                                       "channel_factor", "channel_videos", "channel_basis", "source")} for b in pool],
                 "source": cfg.get("source", "trends"), "profile": cfg.get("profile", ""),
-                "retries": self.state.get("retries", []), "queue": _queue_summary(), "publish": _publish_summary()}
+                "retries": self.state.get("retries", []), "queue": _queue_summary(), "publish": _publish_summary(),
+                "tuning": _tuning_summary()}
 
     # ---------------------------------------------------------------- execution
     def start(self) -> None:
@@ -417,3 +418,14 @@ def _recent_run_hours() -> float | None:
     if not run or not (run / "analysis.json").exists():
         return None
     return (time.time() - (run / "analysis.json").stat().st_mtime) / 3600
+
+
+def _tuning_summary() -> dict[str, Any] | None:
+    try:
+        from . import originality, tuning
+        t = load_json(tuning.TUNING_PATH) or {}
+        return {"uploads_per_day": (t.get("volume") or {}).get("recommended"), "reason": (t.get("volume") or {}).get("reason"),
+                "seconds": (t.get("length") or {}).get("channel"), "formats": (t.get("length") or {}).get("formats"),
+                "sameness": round(originality.sameness(), 2), "overused": [n for n, _ in originality.overused_formulas()]}
+    except Exception:  # noqa: BLE001
+        return None

@@ -295,6 +295,29 @@ Spam is ignored, comments that need you go to Telegram with a link, and replies 
 channel's voice and wait under Overview -> Comments (edit, Post reply, or Dismiss). `comments.auto_reply: true` posts
 drafts automatically (never the ones that need you). `python main.py comments run|list|post <id>|dismiss <id>`.
 
+## Learning how much to post and how long Shorts should be
+
+On every channel sync the engine re-reads your public uploads (at least 48 hours old) and saves its conclusions to
+`data/tuning.json` (`schedule.tuning`):
+- **Daily volume.** Days are grouped by how many Shorts went public; the group whose days earned the most views per
+  day sets the recommended daily upload limit (at least 3). On this channel, days with up to 5 uploads earned more
+  views in total than days with 20 or more.
+- **Length.** Uploads are grouped by duration and scored like the channel factor (views per hour and % watched
+  against the channel medians); the best group sets the script length, per format when a format has enough data
+  (lists need longer than single facts). On this channel, Shorts of 25 s or less earned about 4x the views per hour of
+  40 s ones and were watched to 71 % instead of 54 %.
+Both move halfway from their previous value on each sync, so one odd week cannot swing the channel. The Overview and
+the daily report show the current values.
+
+## Originality guard
+
+YouTube's monetisation policy turns down repetitive, mass-produced channels. The engine counts title and opening
+formulas in your recent uploads ("..., and 5 More ... Facts", "Your ...", "This ...") and tells the writer to avoid
+any used in 30 % or more of them; TypeSafe compares each draft with the recent uploads and sends a draft back when it
+reads like the same template with the subject swapped. The narrator rotates among a few similar voices
+(`production.originality.voices`), and while one formula dominates the recent uploads (50 %+), the daily volume is
+lowered by a quarter.
+
 ## Thumbnails
 
 Every Short gets `thumbnail.jpg` (1080x1920): a frame from the first footage clip, a dark band, and a

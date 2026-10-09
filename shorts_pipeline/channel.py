@@ -556,6 +556,11 @@ def sync() -> dict[str, Any]:
     if perf.get("channel_median_view_pct"):
         log.info("retention: channel median %.0f%% viewed over %d videos; factors blend views/hour and retention",
                  perf["channel_median_view_pct"], perf["retention_videos"])
+    try:
+        from . import tuning
+        tuning.update()                                   # daily upload volume and script length from these numbers
+    except Exception as exc:  # noqa: BLE001
+        log.warning("tuning skipped: %s", exc)
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
             "matched": matched, "performance": perf}
 

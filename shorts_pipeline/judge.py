@@ -271,7 +271,7 @@ LOOP_QUESTION = _q("noul", (
 
 
 def judge_script(script: dict[str, Any], blueprint: dict[str, Any], original_text: str | None = None,
-                 loop: bool = False) -> dict[str, Any] | None:
+                 loop: bool = False, recent: list[dict[str, str]] | None = None) -> dict[str, Any] | None:
     if not has_typesafe():
         return None
     state = {
@@ -283,6 +283,10 @@ def judge_script(script: dict[str, Any], blueprint: dict[str, Any], original_tex
     questions = dict(SCRIPT_QA_QUESTIONS)
     if loop:
         questions["loops"] = LOOP_QUESTION
+    if recent:
+        from .originality import template_question
+        state["recent_uploads"] = recent
+        questions["template_repeat"] = template_question()
     if original_text:
         state["original_script"] = original_text
         questions.update(ENHANCE_QA_QUESTIONS)

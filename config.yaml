@@ -71,6 +71,9 @@ production:
     handle: ""                # e.g. "@yourchannel", shown under the outro text
     seconds: 2.0
     clip: assets/outro.mp4
+  originality:
+    enabled: true             # avoid overused title/opening formulas; TypeSafe rejects drafts that copy a recent template
+    voices: [en-US-AndrewNeural, en-US-BrianNeural, en-US-ChristopherNeural]   # rotated per Short; [] = always `voice`
   loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views)
   hook_overlay:
     enabled: true             # the video's punchiest words as big text at the top from the first frame
@@ -131,7 +134,10 @@ schedule:
   channel_feedback: true      # scale weights by how each format x topic performs on your channel (needs YOUTUBE_API_KEY + YOUTUBE_CHANNEL)
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
   retry_failed: true          # a production that failed for a temporary reason (network, render, voice) runs once more 30 min later
-  skip_when_queue_full: true  # skip a production slot while the upload queue already holds a day's worth of uploads
+  skip_when_queue_full: true
+  tuning:
+    learn_volume: true        # daily upload limit learned from views per day at each upload volume (min 3/day)
+    learn_length: true        # script length learned from views and retention by video length (18-55 s)  # skip a production slot while the upload queue already holds a day's worth of uploads
 
 comments:
   enabled: true               # needs Connect comments in the console (youtube.force-ssl permission)
