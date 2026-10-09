@@ -359,13 +359,20 @@ async function loadChannel() {
   if (!r) { el.innerHTML = `Channel feedback configured, not synced yet.`; return; }
   const perf = r.performance;
   const rows = Object.entries(perf.blueprints).sort((a, b) => b[1].factor - a[1].factor)
-    .map(([k, v]) => `<span class="tag ${v.factor >= 1 ? "ok" : "warn"}" title="${v.videos} videos, median ${v.median_views} views">${esc(k.replace("|", " × "))} · ${v.median_views_per_hour}/h · x${v.factor}${v.provisional ? " (provisional)" : ""}</span>`).join(" ");
+    .map(([k, v]) => `<span class="tag ${v.factor >= 1 ? "ok" : "warn"}" title="${v.videos} videos, median ${v.median_views} views${v.median_view_pct != null ? `; ${v.median_view_pct}% viewed (views x${v.views_factor}, retention x${v.retention_factor})` : ""}">${esc(k.replace("|", " × "))} · ${v.median_views_per_hour}/h${v.median_view_pct != null ? ` · ${Math.round(v.median_view_pct)}% viewed` : ""} · x${v.factor}${v.provisional ? " (provisional)" : ""}</span>`).join(" ");
+  const an = r.analytics || {};
+  $("#analyticsconnect").style.display = an.connected ? "none" : "";
+  const hookRows = Object.entries(perf.hooks || {}).filter(([, v]) => v.median_view_pct != null).sort((a, b) => b[1].median_view_pct - a[1].median_view_pct)
+    .map(([k, v]) => `<span class="tag">${esc(k)} · ${Math.round(v.median_view_pct)}% viewed</span>`).join(" ");
   const winners = (r.winners || []).map((w) => `<span class="tag ok">★ ${esc(w.key.replace("|", " × "))} x${w.opportunity}</span>`).join(" ");
   el.innerHTML = `Your channel <b>${esc(r.channel.title)}</b>: ${r.uploads} Shorts, ${perf.uploads_labelled ?? 0} labelled by format × topic, median ${perf.channel_median_vph ?? "-"} views/h over ${perf.videos} scored (synced ${esc(r.fetched_at)}). `
     + (winners ? `<br>Channel winners (always in the production pool): ${winners}<br>` : "")
-    + (rows || "No labelled videos old enough to score yet - run Sync.");
+    + (rows || "No labelled videos old enough to score yet - run Sync.")
+    + (an.connected ? `<br>Retention (YouTube Analytics, ${an.videos} videos, channel median ${perf.channel_median_view_pct ?? "-"}% viewed): factors blend views/hour and retention.${hookRows ? " Hook styles: " + hookRows : ""}`
+       : `<br><span class="warn">Retention is not used yet.</span> Connect YouTube Analytics (read-only) so formats are also judged by how long viewers stay.`);
 }
 $("#channelsync").addEventListener("click", () => startJob("channel", { action: "sync" }));
+$("#analyticsconnect").addEventListener("click", () => { toast("A Google page opens: approve YouTube Analytics (read-only)"); startJob("channel", { action: "connect_analytics" }); });
 
 // ---------------------------------------------------------------- telegram
 $("#tgdiscover").addEventListener("click", async () => {

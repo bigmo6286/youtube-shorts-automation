@@ -737,6 +737,15 @@ def cmd_profile(args) -> None:
 def cmd_channel(args) -> None:
     from . import channel
 
+    if args.action in ("connect-analytics", "connect_analytics"):
+        from . import analytics
+        print("A Google page opens: approve YouTube and YouTube Analytics (read-only).")
+        try:
+            data = analytics.fetch(interactive=True)
+        except RuntimeError as exc:
+            sys.exit(str(exc))
+        print(f"YouTube Analytics connected: retention for {len(data['videos'])} videos.")
+        args.action = "sync"
     if args.action == "sync":
         if not channel.configured():
             sys.exit("Set YOUTUBE_API_KEY and YOUTUBE_CHANNEL (your @handle or channel id) in .env or Settings first.")
@@ -748,9 +757,13 @@ def cmd_channel(args) -> None:
     ch, perf = report["channel"], report["performance"]
     print(f"{ch['title']} ({ch['id']}): {report['uploads']} Shorts on the channel, {perf.get('uploads_labelled', 0)} labelled "
           f"(format/topic), {len(report['matched'])} matched to local outputs, synced {report['fetched_at']}")
-    print(f"channel median: {perf['channel_median_vph']} views/hour over {perf['videos']} mature videos")
+    print(f"channel median: {perf['channel_median_vph']} views/hour over {perf['videos']} mature videos"
+          + (f", {perf['channel_median_view_pct']}% viewed on average ({perf['retention_videos']} videos with analytics)"
+             if perf.get("channel_median_view_pct") else " (connect YouTube Analytics for retention)"))
     for key, p in sorted(perf["blueprints"].items(), key=lambda kv: -kv[1]["factor"]):
-        print(f"  {key:<45} {p['videos']:>2} videos  {p['median_views_per_hour']:>8.1f} views/h  factor x{p['factor']:.2f}"
+        print(f"  {key:<45} {p['videos']:>2} videos  {p['median_views_per_hour']:>8.1f} views/h"
+              + (f"  {p['median_view_pct']:>5.0f}% viewed" if p.get("median_view_pct") is not None else "")
+              + f"  factor x{p['factor']:.2f}"
               f"{'  (provisional: needs 3+ videos)' if p['provisional'] else ''}")
     winners = channel.channel_blueprints(perf)
     if winners:
@@ -851,7 +864,7 @@ def build_parser() -> argparse.ArgumentParser:
     pf.set_defaults(func=cmd_profile)
 
     ch = sub.add_parser("channel", help="your channel's stats feeding back into the ranking (needs YOUTUBE_API_KEY + YOUTUBE_CHANNEL)")
-    ch.add_argument("action", choices=["sync", "report"])
+    ch.add_argument("action", choices=["sync", "report", "connect-analytics", "connect_analytics"])
     ch.set_defaults(func=cmd_channel)
 
     s = sub.add_parser("schedule", help="show today's scheduled slots (the scheduler itself runs inside `web`)")

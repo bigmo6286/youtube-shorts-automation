@@ -28,6 +28,8 @@ FACTOR_MIN, FACTOR_MAX = 0.2, 4.0
 MIN_AGE_HOURS = 3              # a video younger than this has no meaningful views-per-hour yet
 RATE_WINDOW_HOURS = 14 * 24    # views/hour is measured over at most the first two weeks (Shorts peak early)
 MAX_CHANNEL_WINNERS = 10
+RETENTION_WEIGHT = 0.4         # share of the factor that comes from retention when YouTube Analytics is connected
+RETENTION_MIN, RETENTION_MAX = 0.5, 2.0
 
 
 def _oauth() -> bool:
@@ -305,15 +307,34 @@ def _shrunk_factor(vph: float, channel_median: float, n: int) -> float:
     return 1.0 + (raw - 1.0) * weight
 
 
-def _group_stats(items: list[dict[str, Any]], channel_median: float) -> dict[str, Any]:
+def _retention_factor(pct: float, channel_pct: float, n: int) -> float:
+    """Average % viewed relative to the channel median, bounded and shrunk toward 1.0 like the views factor."""
+    if channel_pct <= 0 or n <= 0:
+        return 1.0
+    raw = max(RETENTION_MIN, min(RETENTION_MAX, pct / channel_pct))
+    return 1.0 + (raw - 1.0) * (n / (n + 1.0))
+
+
+def _group_stats(items: list[dict[str, Any]], channel_median: float, channel_pct: float | None = None) -> dict[str, Any]:
     vph = median(i["views_per_hour"] for i in items)
-    return {"videos": len(items), "median_views_per_hour": round(vph, 2), "median_views": int(median(i["views"] for i in items)),
-            "factor": round(_shrunk_factor(vph, channel_median, len(items)), 2), "provisional": len(items) < 3}
+    vph_factor = _shrunk_factor(vph, channel_median, len(items))
+    out = {"videos": len(items), "median_views_per_hour": round(vph, 2), "median_views": int(median(i["views"] for i in items)),
+           "factor": round(vph_factor, 2), "views_factor": round(vph_factor, 2), "provisional": len(items) < 3}
+    kept = [float(i["avg_view_pct"]) for i in items if i.get("avg_view_pct") is not None]
+    if kept and channel_pct:
+        pct = median(kept)
+        rf = _retention_factor(pct, channel_pct, len(kept))
+        # Views/hour says how far YouTube pushed it, retention says whether viewers stayed: blend both.
+        out.update(median_view_pct=round(pct, 1), retention_videos=len(kept), retention_factor=round(rf, 2),
+                   factor=round(vph_factor ** (1 - RETENTION_WEIGHT) * rf ** RETENTION_WEIGHT, 2))
+    return out
 
 
 def labelled_uploads() -> list[dict[str, Any]]:
     """Every upload on the channel that carries a label (from the cache; `sync` adds new ones)."""
     from . import judge
+
+    from .analytics import retention_for
 
     data = load_json(STATS_PATH)
     if not data:
@@ -322,7 +343,8 @@ def labelled_uploads() -> list[dict[str, Any]]:
     for v in data["videos"]:
         cached = _LABELS.get(f"{v['id']}+{judge.TAXONOMY_VERSION}")
         if cached:
-            out.append({**v, **cached})
+            ret = retention_for(v["id"]) or {}
+            out.append({**v, **cached, **{k: ret[k] for k in ("avg_view_pct", "avg_view_seconds", "engaged_ratio") if k in ret}})
     return out
 
 
@@ -351,18 +373,42 @@ def blueprint_performance(matched: list[dict[str, Any]] | None = None) -> dict[s
     if not mature:
         return {"channel_median_vph": None, "videos": len(uploads), "blueprints": {}, "formats": {}, "topics": {}}
     channel_median = median(m["views_per_hour"] for m in mature) or 0.0
+    with_ret = [float(m["avg_view_pct"]) for m in mature if m.get("avg_view_pct") is not None]
+    channel_pct = median(with_ret) if with_ret else None
     pairs: dict[str, list[dict[str, Any]]] = {}
     formats: dict[str, list[dict[str, Any]]] = {}
     topics: dict[str, list[dict[str, Any]]] = {}
+    hooks: dict[str, list[dict[str, Any]]] = {}
     for m in mature:
         fmt, topic = (m.get("format") or "custom"), canonical_topic(m.get("topic") or "custom")
         pairs.setdefault(f"{fmt}|{topic}", []).append(m)
         formats.setdefault(fmt, []).append(m)
         topics.setdefault(topic, []).append(m)
+        if m.get("hook_style"):
+            hooks.setdefault(m["hook_style"], []).append(m)
+    stats = lambda groups: {k: _group_stats(v, channel_median, channel_pct) for k, v in groups.items()}  # noqa: E731
     return {"channel_median_vph": round(channel_median, 2), "videos": len(mature), "uploads_labelled": len(uploads),
-            "blueprints": {k: _group_stats(v, channel_median) for k, v in pairs.items()},
-            "formats": {k: _group_stats(v, channel_median) for k, v in formats.items()},
-            "topics": {k: _group_stats(v, channel_median) for k, v in topics.items()}}
+            "channel_median_view_pct": round(channel_pct, 1) if channel_pct else None, "retention_videos": len(with_ret),
+            "blueprints": stats(pairs), "formats": stats(formats), "topics": stats(topics), "hooks": stats(hooks)}
+
+
+def best_openings(n: int = 3) -> list[dict[str, Any]]:
+    """The channel's best-retaining openings (first sentence of the transcript), for the script writer."""
+    import re
+    rows = [u for u in labelled_uploads() if u.get("avg_view_pct") is not None and (u.get("transcript") or "").strip()]
+    rows.sort(key=lambda u: -float(u["avg_view_pct"]))
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for u in rows:
+        first = re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", u["transcript"]).strip())[0][:180]
+        key = re.sub(r"\W+", "", first.lower())[:60]
+        if len(first.split()) >= 4 and key not in seen:
+            seen.add(key)
+            out.append({"opening": first, "avg_view_pct": u["avg_view_pct"], "hook_style": u.get("hook_style"),
+                        "title": u.get("title", "")})
+        if len(out) >= n:
+            break
+    return out
 
 
 def factor_for(perf: dict[str, Any], fmt: str, topic: str) -> tuple[float, int, str]:
@@ -439,10 +485,15 @@ def sync() -> dict[str, Any]:
     new = label_uploads(data["videos"])
     if new:
         log.info("channel feedback: labelled %d new upload(s) with TypeSafe", new)
+    from .analytics import sync_quietly
+    log.info("%s", sync_quietly())
     matched = match_outputs(data["videos"])
     perf = blueprint_performance(matched)
     log.info("channel feedback: %d uploads labelled, %d matched to local outputs, %d format x topic pairs with data",
              perf.get("uploads_labelled", 0), len(matched), len(perf["blueprints"]))
+    if perf.get("channel_median_view_pct"):
+        log.info("retention: channel median %.0f%% viewed over %d videos; factors blend views/hour and retention",
+                 perf["channel_median_view_pct"], perf["retention_videos"])
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
             "matched": matched, "performance": perf}
 
@@ -453,5 +504,9 @@ def cached_report() -> dict[str, Any] | None:
         return None
     matched = match_outputs(data["videos"])
     perf = blueprint_performance(matched)
+    from . import analytics
+    an = analytics.cached()
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
-            "matched": matched, "performance": perf, "winners": load_json(CHANNEL_BLUEPRINTS_PATH) or []}
+            "matched": matched, "performance": perf, "winners": load_json(CHANNEL_BLUEPRINTS_PATH) or [],
+            "analytics": {"connected": analytics.connected(), "fetched_at": an.get("fetched_at"),
+                          "videos": len(an.get("videos") or {})}}

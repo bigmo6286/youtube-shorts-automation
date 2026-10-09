@@ -63,6 +63,16 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
         angle_line += ("Videos already made. Every subject below is TAKEN: do not reuse any of these stories, facts, "
                        "experiments, people, animals or places, even reworded or from a new angle:\n"
                        + "\n".join(f"- {t}" for t in avoid[:60]) + "\n")
+    try:
+        from .channel import best_openings
+        openings = best_openings(3)
+    except Exception:  # noqa: BLE001 - no channel or analytics data yet
+        openings = []
+    if openings:
+        angle_line += ("\nOpenings that kept YOUR viewers watching longest (YouTube Analytics). Copy the technique "
+                       "(rhythm, specificity, what is withheld), never the subject:\n"
+                       + "\n".join(f"- {o['opening']!r} ({o['avg_view_pct']:.0f}% of the video watched on average)"
+                                    for o in openings) + "\n")
     style = blueprint.get("style_guide")
     if style:
         angle_line += (

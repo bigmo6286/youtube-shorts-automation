@@ -224,6 +224,19 @@ python main.py channel sync
 python main.py channel report
 ```
 
+### Retention from YouTube Analytics (optional, free)
+
+Views per hour shows how far YouTube pushed a Short; retention shows whether viewers stayed. Click **Connect YouTube
+Analytics** in the console (or `python main.py channel connect-analytics`) and approve the read-only Analytics
+permission; enable the **YouTube Analytics API** in the same Google Cloud project as your `client_secrets.json`
+(https://console.cloud.google.com/apis/library/youtubeanalytics.googleapis.com). Each channel sync then reads, per
+video over the last 90 days, the average percentage viewed (over 100% means re-watched loops), average view duration
+and engaged views. Every format x topic, format, topic and hook style gets a retention factor (median % viewed against
+the channel median, bounded 0.5-2 and shrunk by sample size), and the factor that drives the scheduler and the channel
+winners becomes views-factor^0.6 x retention-factor^0.4. The script writer also sees the channel's three best-retaining
+openings as examples of technique (their subjects stay off limits). Uploads never depend on this permission. Analytics
+lag about two days, and videos under 20 views are ignored.
+
 ## Thumbnails
 
 Every Short gets `thumbnail.jpg` (1080x1920): a frame from the first footage clip, a dark band, and a

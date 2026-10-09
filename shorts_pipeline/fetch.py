@@ -217,13 +217,13 @@ def _transcript(info: dict[str, Any], max_chars: int) -> str:
         data = r.json()
     except Exception:  # noqa: BLE001
         return ""
-    words: list[str] = []
+    lines: list[str] = []
     for ev in data.get("events", []):
-        for seg in ev.get("segs") or []:
-            t = seg.get("utf8", "")
-            if t and t != "\n":
-                words.append(t)
-    text = re.sub(r"\s+", " ", "".join(words)).strip()
+        # segments inside one caption event carry their own spacing; separate events (lines) need a space between
+        line = "".join(seg.get("utf8", "") for seg in ev.get("segs") or [] if seg.get("utf8", "") != "\n")
+        if line.strip():
+            lines.append(line.strip())
+    text = re.sub(r"\s+", " ", " ".join(lines)).strip()
     return text[:max_chars]
 
 

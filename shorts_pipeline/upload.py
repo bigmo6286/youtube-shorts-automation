@@ -15,6 +15,10 @@ log = logging.getLogger(__name__)
 
 # Full YouTube scope: upload, read the channel's stats, and change a video's visibility after review.
 SCOPES = ["https://www.googleapis.com/auth/youtube"]
+# Read-only YouTube Analytics (retention: average % viewed, view duration, engaged views). Optional: uploads never
+# require it, so a token granted before this existed keeps working; every new consent asks for both.
+ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
+CONSENT_SCOPES = SCOPES + [ANALYTICS_SCOPE]
 T = TypeVar("T")
 BACKOFF_SECONDS = [5, 15, 30, 60, 120, 180]     # ~7 minutes in total before an upload step gives up
 
@@ -74,7 +78,18 @@ def oauth_available() -> bool:
     return secrets_path().exists() or TOKEN_PATH.exists()
 
 
-def _credentials(interactive: bool = True):
+def saved_scopes() -> set[str]:
+    try:
+        return set(json.loads(TOKEN_PATH.read_text(encoding="utf-8")).get("scopes") or [])
+    except (ValueError, OSError):
+        return set()
+
+
+def has_scope(scope: str) -> bool:
+    return scope in saved_scopes()
+
+
+def _credentials(interactive: bool = True, extra_scopes: tuple[str, ...] = ()):
     from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
@@ -82,15 +97,13 @@ def _credentials(interactive: bool = True):
 
     secrets = secrets_path()
     creds = None
+    need = set(SCOPES) | set(extra_scopes)
     if TOKEN_PATH.exists():
-        try:
-            saved = set(json.loads(TOKEN_PATH.read_text(encoding="utf-8")).get("scopes") or [])
-        except (ValueError, OSError):
-            saved = set()
-        if set(SCOPES).issubset(saved):
-            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+        saved = saved_scopes()
+        if need.issubset(saved):
+            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), sorted(saved))
         else:
-            log.info("stored YouTube token lacks %s; a new consent is needed", sorted(set(SCOPES) - saved))
+            log.info("stored YouTube token lacks %s; a new consent is needed", sorted(need - saved))
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
@@ -112,11 +125,18 @@ def _credentials(interactive: bool = True):
         if not interactive:
             raise RuntimeError("YouTube access needs a new consent: run an upload or 'Sync channel now' from the console "
                                "(or `python main.py channel sync` in a terminal) and approve the browser prompt.")
-        flow = InstalledAppFlow.from_client_secrets_file(str(secrets), SCOPES)
+        flow = InstalledAppFlow.from_client_secrets_file(str(secrets), CONSENT_SCOPES)
         creds = flow.run_local_server(port=0, open_browser=True, authorization_prompt_message=
                                       "\nApprove access in the browser window that just opened (URL: {url})\n")
         TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+        data = json.loads(creds.to_json())
+        granted = getattr(creds, "granted_scopes", None)
+        if granted:                       # the owner may untick Analytics on Google's page: record what was granted
+            data["scopes"] = sorted(granted)
+        TOKEN_PATH.write_text(json.dumps(data), encoding="utf-8")
+        missing = need - set(data.get("scopes") or [])
+        if missing:
+            raise RuntimeError(f"Google did not grant {sorted(missing)}; approve every permission on the consent page.")
     return creds
 
 
