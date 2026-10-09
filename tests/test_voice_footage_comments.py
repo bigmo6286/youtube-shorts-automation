@@ -134,3 +134,23 @@ def test_word_timings_are_plain_floats_that_json_can_save(tmp_path):
     w = tts._spread_words("One two three.", np.float64(0.5), np.float64(2.0))
     save_json(tmp_path / "w.json", w)                    # numpy floats used to break saving words.json
     assert load_json(tmp_path / "w.json")[0]["start"] == 0.5
+
+
+def test_setting_and_place_rules_for_footage():
+    """Regression: an Antarctica line once got green, tree-covered volcano clips and viewers called it out."""
+    green = {"id": "g", "description": "majestic volcano erupting with smoke and ash"}
+    etna = {"id": "e", "description": "spectacular mount etna eruption plume"}
+    ice = {"id": "i", "description": "snowy antarctic volcano"}
+    probs, oks = {"g": .5, "e": .3, "i": .2}, {"g": .8, "e": .8, "i": .7}
+    conflicts = {"g": .1, "e": .9, "i": .1}
+    # a line set in polar ice: only the clip that shows ice may be used
+    pick, _ = footage._pick_with_variety([green, etna, ice], probs, oks, False, set(), needs_setting=.9,
+                                         settings={"g": .1, "e": .1, "i": .8}, conflicts=conflicts)
+    assert pick["id"] == "i"
+    # nothing shows the setting: no clip at all (the line falls back to an AI image)
+    assert footage._pick_with_variety([green, etna], probs, oks, False, set(), needs_setting=.9,
+                                      settings={"g": .1, "e": .1}, conflicts=conflicts) == (None, 0.0)
+    # a line about Krakatoa (no visible environment): a generic eruption is fine, a different named volcano is not
+    pick, _ = footage._pick_with_variety([etna, green], probs, oks, False, set(), needs_setting=.1,
+                                         settings={"g": .1, "e": .1}, conflicts=conflicts)
+    assert pick["id"] == "g"

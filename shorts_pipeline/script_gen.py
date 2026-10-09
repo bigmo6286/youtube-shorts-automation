@@ -20,7 +20,9 @@ class ScriptLine(BaseModel):
     visual_keyword: str = Field(description=(
         "Stock-footage search term for THIS line: a literal, filmable scene in 2-5 plain words, the kind of clip "
         "a stock site actually has (e.g. 'octopus swimming underwater', 'woman brushing teeth', 'city traffic at night'). "
-        "Name the concrete subject of the sentence; never abstract ideas, emotions or metaphors."))
+        "Name the concrete subject of the sentence; never abstract ideas, emotions or metaphors. When the line names "
+        "a place, climate or setting, put it in the term (e.g. 'antarctica volcano ice', not 'volcano erupting'; "
+        "'sahara desert dunes', not 'sand'), so the footage cannot contradict the line."))
 
 
 class ShortScript(BaseModel):

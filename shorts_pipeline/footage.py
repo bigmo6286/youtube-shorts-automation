@@ -163,8 +163,9 @@ def choose(line_text: str, keyword: str, candidates: list[dict[str, Any]], *, st
         return candidates[0], 0.5
     cache_key = hashlib.sha1(f"{line_text}|{keyword}|{int(strict)}|{','.join(c['id'] for c in candidates)}".encode()).hexdigest()[:20]
     cached = _CHOICE_CACHE.get(cache_key)
-    if cached and "oks" in cached:
-        return _pick_with_variety(candidates, cached["probs"], cached["oks"], strict, used)
+    if cached and "oks" in cached and "conflicts" in cached:
+        return _pick_with_variety(candidates, cached["probs"], cached["oks"], strict, used,
+                                  cached["needs_setting"], cached["settings"], cached["conflicts"])
     from typesafe_sdk import Choice, Noul, TypeSafeClient
 
     criteria = {c["id"]: c["description"] for c in candidates}
@@ -190,6 +191,21 @@ def choose(line_text: str, keyword: str, candidates: list[dict[str, Any]], *, st
         per = "Is the candidate clip with id `{id}` about the same subject as the spoken line (same creature, place, object or activity), even if it does not show the exact action?"
     for c in candidates:
         questions[f"ok_{c['id']}"] = Noul(instructions=per.format(id=c["id"]))
+        # The setting check: "a volcano" is the right subject for a line about Antarctica's Mount Erebus, but a
+        # volcano with green forest on it contradicts the line (viewers noticed and said so).
+        questions[f"setting_{c['id']}"] = Noul(instructions=(
+            f"Does the candidate clip with id `{c['id']}`, as described in `candidates`, visibly show the environment "
+            "the spoken line is set in (for example polar ice or snow, desert, underwater, outer space, night)? Answer "
+            "no if its description shows a different environment or gives no sign of that one."))
+        questions[f"conflict_{c['id']}"] = Noul(instructions=(
+            f"Does the candidate clip with id `{c['id']}`, as described in `candidates`, name or show a different "
+            "specific place, landmark, country or environment than the spoken line (for example 'mount etna' or "
+            "'colima volcano in mexico' for a line about Krakatoa or Antarctica)? A generic clip that names no place "
+            "is not a conflict."))
+    questions["needs_setting"] = Noul(instructions=(
+        "Is `spoken_line` set in a specific environment that must be visible on screen for the footage not to "
+        "contradict it: polar ice or snow, desert, underwater, outer space, night, jungle, or the like? A named place "
+        "or a date alone does not count."))
     try:
         with TypeSafeClient(timeout=60.0) as client:
             resp = client.system_one(state=state, questions=questions)
@@ -198,16 +214,35 @@ def choose(line_text: str, keyword: str, candidates: list[dict[str, Any]], *, st
         return candidates[0], 0.5
     probs = {k: float(v) for k, v in resp.answers["best"].probabilities.items()}
     oks = {c["id"]: float(resp.answers[f"ok_{c['id']}"].noul) for c in candidates}
-    _CHOICE_CACHE.set(cache_key, {"probs": probs, "oks": oks})
-    return _pick_with_variety(candidates, probs, oks, strict, used)
+    settings = {c["id"]: float(resp.answers[f"setting_{c['id']}"].noul) for c in candidates}
+    conflicts = {c["id"]: float(resp.answers[f"conflict_{c['id']}"].noul) for c in candidates}
+    needs_setting = float(resp.answers["needs_setting"].noul)
+    _CHOICE_CACHE.set(cache_key, {"probs": probs, "oks": oks, "settings": settings, "conflicts": conflicts,
+                                  "needs_setting": needs_setting})
+    return _pick_with_variety(candidates, probs, oks, strict, used, needs_setting, settings, conflicts)
+
+
+SETTING_NEEDED = 0.6      # the line depends on a setting (place, climate, era) when its Noul is at least this
+SETTING_MATCH = 0.5       # a clip must then match that setting at least this much
+CONFLICT = 0.5            # a clip that names or shows a different place than the line is never used
 
 
 def _pick_with_variety(candidates: list[dict[str, Any]], probs: dict[str, float], oks: dict[str, float],
-                       strict: bool, used: set[str] | None) -> tuple[dict[str, Any] | None, float]:
+                       strict: bool, used: set[str] | None, needs_setting: float = 0.0,
+                       settings: dict[str, float] | None = None,
+                       conflicts: dict[str, float] | None = None) -> tuple[dict[str, Any] | None, float]:
     """Policy in code: any candidate whose own Noul passes qualifies; prefer an unused one (highest Noul),
-    otherwise the Choice winner. 'none' winning the Choice with no qualifying Noul means nothing fits."""
+    otherwise the Choice winner. 'none' winning the Choice with no qualifying Noul means nothing fits.
+    When the line depends on a setting, a clip that does not match it never qualifies."""
     threshold = 0.6 if strict else 0.5
     used = used or set()
+    if conflicts:
+        candidates = [c for c in candidates if conflicts.get(c["id"], 0.0) < CONFLICT]
+    if needs_setting >= SETTING_NEEDED and settings is not None:
+        candidates = [c for c in candidates if settings.get(c["id"], 0.0) >= SETTING_MATCH]
+    probs = {k: v for k, v in probs.items() if k == "none" or k in {c["id"] for c in candidates}}
+    if not candidates:
+        return None, 0.0
     qualified = sorted(((oks.get(c["id"], 0.0), c) for c in candidates if oks.get(c["id"], 0.0) >= threshold), key=lambda x: -x[0])
     fresh = [(p, c) for p, c in qualified if c["id"] not in used]
     if fresh:
