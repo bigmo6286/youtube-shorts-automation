@@ -69,8 +69,12 @@ SETUP_HELP = """YouTube upload is not configured yet. One-time setup:
 
 
 def secrets_path() -> Path:
+    """The OAuth client file: absolute, or relative to this channel's folder, then to the install folder."""
+    from .config import HOME
     secrets = Path(env("YOUTUBE_CLIENT_SECRETS", "client_secrets.json"))
-    return secrets if secrets.is_absolute() else ROOT / secrets
+    if secrets.is_absolute():
+        return secrets
+    return HOME / secrets if (HOME / secrets).exists() or HOME != ROOT else ROOT / secrets
 
 
 def oauth_available() -> bool:

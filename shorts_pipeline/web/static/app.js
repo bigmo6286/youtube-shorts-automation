@@ -610,5 +610,17 @@ $("#secretsbtn").addEventListener("click", async () => {
 });
 
 // ---------------------------------------------------------------- boot
-loadStatus(); loadRuns(); loadOutputs(); loadJobPicker(); loadMusic(); loadProfiles();
+loadStatus(); loadRuns(); loadOutputs(); loadJobPicker(); loadMusic(); loadProfiles(); loadChannels();
+async function loadChannels() {
+  try {
+    const c = await api("/api/channels");
+    const me = c.channels.find((x) => x.name === c.current);
+    if (me) document.title = `${me.label} · Shorts console`;
+    if (c.channels.length < 2) return;
+    const sel = $("#chanpick");
+    sel.innerHTML = c.channels.map((x) => `<option value="${x.port}" ${x.name === c.current ? "selected" : ""} ${x.running || x.name === c.current ? "" : "disabled"}>${esc(x.label)}${x.running || x.name === c.current ? "" : " (not running)"}</option>`).join("");
+    sel.classList.remove("hidden");
+    sel.onchange = () => { window.location.href = `${location.protocol}//${location.hostname}:${sel.value}/`; };
+  } catch (_) {}
+}
 setInterval(loadStatus, 10000);

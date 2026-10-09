@@ -58,42 +58,80 @@ def _run_dir(args) -> Path:
 # ----------------------------------------------------------------------------- commands
 
 def cmd_discover(args) -> Path:
+    from . import api_discovery
+
     cfg = load_config()["discovery"]
     fetch.configure(cfg)
     run_dir = new_run_dir()
     log.info("run dir: %s", run_dir)
-    candidates = fetch.discover(cfg["hashtags"], cfg["search_queries"], cfg["per_source_limit"])
-    if args.api:
-        candidates += fetch.discover_api_most_popular()
-    save_json(run_dir / "candidates.json", candidates)
-
+    source = cfg.get("source", "auto")                 # auto | api | ytdlp
+    use_api = source in ("auto", "api") and api_discovery.available()
+    use_ytdlp = source in ("auto", "ytdlp") or not use_api
+    max_dur = cfg["max_duration_seconds"]
     enrich_opts = dict(workers=cfg["workers"], want_transcript=cfg["fetch_transcripts"],
                        transcript_chars=cfg["transcript_chars"])
-    shorts = fetch.enrich(candidates, max_candidates=cfg["max_candidates"], **enrich_opts)
-    shorts = [s for s in shorts if fetch.is_short(s, cfg["max_duration_seconds"])]
+    shorts: list[dict] = []
+    candidates: list[dict] = []
+
+    # Stage 1a: the official API (not blocked by YouTube's bot checks; budgeted searches + cheap metadata)
+    if use_api:
+        try:
+            api_shorts = api_discovery.discover(cfg)
+        except Exception as exc:  # noqa: BLE001 - yt-dlp below still runs
+            log.warning("API discovery failed: %s", str(exc)[:200])
+            api_shorts = []
+        shorts += api_shorts
+        candidates += [{"id": m["id"], "title": m["title"], "view_count": m["view_count"], "duration": m["duration"],
+                        "source": m.get("source", "api")} for m in api_shorts]
+    elif args.api:
+        candidates += fetch.discover_api_most_popular()
+
+    # Stage 1b: hashtag Shorts shelves through yt-dlp, while YouTube is not blocking this machine
+    if use_ytdlp and not fetch.rate_limited:
+        known = {m["id"] for m in candidates}
+        flat = [c for c in fetch.discover(cfg["hashtags"], cfg["search_queries"], cfg["per_source_limit"])
+                if c["id"] not in known]
+        candidates += flat
+        shorts += [s for s in fetch.enrich(flat, max_candidates=cfg["max_candidates"], **enrich_opts)
+                   if fetch.is_short(s, max_dur)]
+    save_json(run_dir / "candidates.json", candidates)
+    shorts = [s for s in shorts if fetch.is_short(s, max_dur)]
 
     # Stage 2: hashtag shelves skew to all-time hits, so follow the channels behind them to their newest Shorts.
-    if cfg.get("channels_to_follow", 0) > 0 and not fetch.rate_limited:
+    if cfg.get("channels_to_follow", 0) > 0:
         by_velocity = sorted(shorts, key=lambda s: (s.get("view_count") or 0) / (fetch.age_hours(s) or 1e9), reverse=True)
         leaders = by_velocity[: cfg["channels_to_follow"]]
-        # entries cached before channel ids were stored: refetch just these few
-        for s in leaders:
-            if "channel_id" not in s and not fetch.rate_limited:
-                fresh = fetch.fetch_full(s["id"], cfg["fetch_transcripts"], cfg["transcript_chars"], force=True)
-                if fresh:
-                    s.update(fresh)
-        channel_ids = [s.get("channel_id") for s in leaders]
         known = {s["id"] for s in shorts}
-        recent = [c for c in fetch.discover_channel_shorts(channel_ids, cfg["shorts_per_channel"]) if c["id"] not in known]
-        candidates += recent
-        extra = fetch.enrich(recent, max_candidates=cfg["max_candidates"], **enrich_opts)
-        shorts += [s for s in extra if fetch.is_short(s, cfg["max_duration_seconds"])]
+        extra: list[dict] = []
+        if use_api:
+            try:
+                extra = [m for m in api_discovery.channel_recent([s.get("channel_id") for s in leaders],
+                                                                 cfg["shorts_per_channel"], max_dur) if m["id"] not in known]
+                api_discovery._add_transcripts(extra, int(api_discovery.config()["transcripts_for_top"]) // 2)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("API channel stage failed: %s", str(exc)[:200])
+        elif not fetch.rate_limited:
+            for s in leaders:            # entries cached before channel ids were stored: refetch just these few
+                if "channel_id" not in s and not fetch.rate_limited:
+                    fresh = fetch.fetch_full(s["id"], cfg["fetch_transcripts"], cfg["transcript_chars"], force=True)
+                    if fresh:
+                        s.update(fresh)
+            recent = [c for c in fetch.discover_channel_shorts([s.get("channel_id") for s in leaders],
+                                                               cfg["shorts_per_channel"]) if c["id"] not in known]
+            extra = [s for s in fetch.enrich(recent, max_candidates=cfg["max_candidates"], **enrich_opts)
+                     if fetch.is_short(s, max_dur)]
+        candidates += [{"id": m["id"], "title": m.get("title"), "view_count": m.get("view_count"),
+                        "duration": m.get("duration"), "source": m.get("source", "channel")} for m in extra]
+        shorts += extra
         save_json(run_dir / "candidates.json", candidates)
+    seen: set[str] = set()
+    shorts = [s for s in shorts if not (s["id"] in seen or seen.add(s["id"]))]
     fresh = [s for s in shorts if (fetch.age_hours(s) or 1e9) <= cfg["max_age_days"] * 24]
     if len(fresh) < cfg["min_candidates"]:
         log.info("only %d Shorts within %d days; relaxing to %d days", len(fresh), cfg["max_age_days"], cfg["fallback_max_age_days"])
         fresh = [s for s in shorts if (fetch.age_hours(s) or 1e9) <= cfg["fallback_max_age_days"] * 24]
-    log.info("%d Shorts kept (%d fetched, %d discovered)", len(fresh), len(shorts), len(candidates))
+    with_tx = sum(1 for s in fresh if s.get("transcript"))
+    log.info("%d Shorts kept (%d fetched, %d discovered; %d with transcripts)", len(fresh), len(shorts), len(candidates), with_tx)
     save_json(run_dir / "shorts.json", fresh)
     return run_dir
 
@@ -870,6 +908,13 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("schedule", help="show today's scheduled slots (the scheduler itself runs inside `web`)")
     s.set_defaults(func=cmd_schedule)
 
+    chp = sub.add_parser("channels", help="run several YouTube channels from this install: list | add <name> | label <name>")
+    chp.add_argument("action", choices=["list", "add", "label"])
+    chp.add_argument("name", nargs="?")
+    chp.add_argument("--label", default="")
+    chp.add_argument("--port", type=int, default=0)
+    chp.set_defaults(func=cmd_channels)
+
     a = sub.add_parser("autostart", help="Windows: start the console automatically at logon so the schedule runs")
     a.add_argument("action", choices=["install", "remove", "status"])
     a.add_argument("--port", type=int, default=8787)
@@ -909,8 +954,10 @@ AUTOSTART_NAME = "ShortsConsole.vbs"
 
 
 def _startup_script() -> Path:
+    from .config import CHANNEL
     appdata = os.environ.get("APPDATA", "")
-    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / AUTOSTART_NAME
+    name = AUTOSTART_NAME if not CHANNEL else AUTOSTART_NAME.replace(".vbs", f"-{CHANNEL}.vbs")
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / name
 
 
 def cmd_autostart(args) -> None:
@@ -932,11 +979,16 @@ def cmd_autostart(args) -> None:
         return
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = pythonw if pythonw.exists() else Path(sys.executable)
+    from .config import CHANNEL, channels
     main_py = ROOT / "main.py"
+    port = args.port
+    if CHANNEL and port == 8787:                    # default port: use the one registered for this channel
+        port = next((c["port"] for c in channels() if c["name"] == CHANNEL), port)
+    channel_arg = f" --channel {CHANNEL}" if CHANNEL else ""
     # WScript.Shell.Run with window style 0 = hidden; pythonw avoids a console window as well
     vbs = ('Set sh = CreateObject("WScript.Shell")\n'
            f'sh.CurrentDirectory = "{ROOT}"\n'
-           f'sh.Run """{exe}"" ""{main_py}"" web --port {args.port}", 0, False\n')
+           f'sh.Run """{exe}"" ""{main_py}""{channel_arg} web --port {port}", 0, False\n')
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(vbs, encoding="utf-8")
     print(f"Installed {script}")
@@ -953,8 +1005,60 @@ def cmd_setup_ffmpeg(args) -> Path:
 
 
 def cmd_web(args) -> None:
+    from .config import CHANNEL, channels
     from .web.server import serve
-    serve(host=args.host, port=args.port)
+    port = args.port
+    if CHANNEL and port == 8787:                    # each channel's console has its own port
+        port = next((c["port"] for c in channels() if c["name"] == CHANNEL), 8788)
+    serve(host=args.host, port=port)
+
+
+def cmd_channels(args) -> None:
+    """List the YouTube channels this install runs, or add one (its own folder, Google sign-in and console port)."""
+    import json
+    import socket
+    from .config import CHANNELS_PATH, ROOT as _ROOT, channels
+
+    data = json.loads(CHANNELS_PATH.read_text(encoding="utf-8")) if CHANNELS_PATH.exists() else {}
+    if args.action == "list":
+        for c in channels():
+            with socket.socket() as sock:
+                sock.settimeout(0.3)
+                up = sock.connect_ex(("127.0.0.1", int(c["port"]))) == 0
+            folder = _ROOT if c["name"] == "main" else _ROOT / "channels" / c["name"]
+            print(f"  {c['name']:<12} {c.get('label', ''):<24} http://127.0.0.1:{c['port']}  {'running' if up else 'stopped'}  {folder}")
+        return
+    name = re.sub(r"[^a-z0-9_-]", "", (args.name or "").lower())
+    if args.action == "label":
+        if name == "main":
+            data["main_label"] = args.label
+        else:
+            for c in data.get("channels", []):
+                if c["name"] == name:
+                    c["label"] = args.label
+        CHANNELS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        print(f"{name} is now labelled {args.label!r}")
+        return
+    if not name or name == "main":
+        sys.exit("Give the new channel a short name: letters, digits, - or _ (not 'main').")
+    if any(c["name"] == name for c in channels()):
+        sys.exit(f"A channel named {name!r} already exists.")
+    used = {int(c["port"]) for c in channels()}
+    port = args.port or next(p for p in range(8788, 8900) if p not in used)
+    folder = _ROOT / "channels" / name
+    for sub in ("data", "output"):
+        (folder / sub).mkdir(parents=True, exist_ok=True)
+    data.setdefault("channels", []).append({"name": name, "label": args.label or name, "port": port})
+    CHANNELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CHANNELS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    print(f"Added channel {name!r} ({args.label or name}) in {folder}, console port {port}.")
+    print("Next:")
+    print(f"  1. Put that channel's Google OAuth file in {folder / 'client_secrets.json'} (or upload it in its console's Settings).")
+    print(f"  2. Start its console:   python main.py --channel {name} web")
+    print(f"     and open http://127.0.0.1:{port} - Settings there are this channel's own (schedule, upload, Telegram chat...).")
+    print(f"  3. Click Upload on a video or Sync channel now and sign in with THAT channel's Google account.")
+    print(f"  4. Start it at logon:   python main.py --channel {name} autostart install")
+    print("API keys (TypeSafe, Claude, Pexels...) are shared from the main .env unless you set them again in its Settings.")
 
 
 def main(argv: list[str] | None = None) -> None:

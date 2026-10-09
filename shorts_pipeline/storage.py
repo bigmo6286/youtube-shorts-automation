@@ -8,12 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import DATA_DIR
+from .config import SHARED_DIR
 
 log = logging.getLogger(__name__)
 
-RUNS_DIR = DATA_DIR / "runs"
-CACHE_DIR = DATA_DIR / "cache"
+RUNS_DIR = SHARED_DIR / "runs"      # trend runs are shared by every channel on this machine
+CACHE_DIR = SHARED_DIR / "cache"    # footage, judgments, metadata: shared too
 
 
 def now_iso() -> str:

@@ -96,6 +96,17 @@ whatever it has. Wait an hour, lower `discovery.workers`, raise `request_spacing
 300 metadata fetches per hour is a safe anonymous budget. The yt-dlp warning about a missing
 JavaScript runtime (deno) is harmless here: we only read metadata, never download video.
 
+## Trend discovery through the YouTube API
+
+YouTube regularly rate-limits or bot-checks yt-dlp ("Sign in to confirm you're not a bot"), which used to leave a
+refresh with nothing. Discovery now starts with the official YouTube Data API (`discovery.source: auto`), through the
+signed-in Google account or `YOUTUBE_API_KEY` when set (a key from a different Google project keeps its own quota):
+a few searches per refresh for recent, high-view Shorts (`discovery.api.searches_per_refresh`, 100 quota units each,
+rotating through your hashtags), the most-popular chart, and the newest uploads of the fastest-growing channels found,
+with metadata at 1 unit per 50 videos. The API cannot tell Shorts from short regular videos, so each find is checked
+with one plain request to youtube.com/shorts/<id>. yt-dlp still adds its hashtag pages and transcripts while it is not
+blocked; when it is, Shorts are judged on title, description and tags.
+
 ## How the ranking works
 
 Each Short is one TypeSafe request that asks nine questions in parallel (`shorts_pipeline/judge.py`):
@@ -379,6 +390,30 @@ A model that fits in the card's memory runs many times faster than on the CPU:
 
 Pull it, then enter its name under Settings -> Local model (saved per machine). Reasoning models (qwen3.x,
 deepseek-r1) are asked to answer without their thinking phase.
+
+## Several channels from one install
+
+One install can run several YouTube channels, each with its own Google sign-in (and Google Cloud project, so its own
+daily upload quota), settings, schedule, upload queue, alerts, history, analytics and videos. The main channel is the
+top-level folder; every other channel lives in `channels/<name>/` (`data/`, `output/`, `.env`, `config.local.yaml`,
+`client_secrets.json`) and has its own console on its own port.
+
+```bash
+python main.py channels add second --label "My second channel"
+python main.py --channel second web
+python main.py --channel second autostart install
+python main.py channels list
+```
+
+Then, in the new channel's console (http://127.0.0.1:8788 for the first extra channel): upload that channel's OAuth
+`client_secrets.json` under Settings, sign in with that channel's Google account (Upload on a card, or Sync channel
+now), and turn on its schedule. A switcher at the top of every console jumps between channels. Any command takes
+`--channel <name>` (e.g. `python main.py --channel second channel sync`).
+
+Shared between channels: API keys from the main `.env` (unless the channel sets its own), trend runs (a refresh is
+skipped when another channel refreshed in the last 3 hours), the footage and judgment caches, and ffmpeg. Heavy jobs
+(rendering, trend refreshes, channel analysis) run one at a time across all channels on the machine; uploads and syncs
+do not wait. Telegram messages start with the channel's label. The channel's schedule starts off.
 
 ## Disk space
 

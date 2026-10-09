@@ -20,6 +20,7 @@ log = logging.getLogger("shorts.scheduler")
 
 STATE_PATH = DATA_DIR / "schedule.json"
 TICK_SECONDS = 20
+REUSE_RUN_HOURS = 3          # a trend refresh is skipped when a run (any channel's) is younger than this
 RETRY_DELAY_MINUTES = 30     # a scheduled production that failed for a temporary reason runs again this much later
 EXPIRE_EVERY_SECONDS = 600
 DEFAULTS = {
@@ -319,6 +320,12 @@ class Scheduler:
             self.state["history"].append({"kind": "produce (skipped: upload queue full)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
                                           "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
             return True
+        if kind == "refresh" and _recent_run_hours() is not None and _recent_run_hours() < REUSE_RUN_HOURS:
+            # trend runs are shared by every channel on this machine: one made recently is reused
+            log.info("refresh slot %s: a trend run from %.1f h ago is reused", slot.strftime("%H:%M"), _recent_run_hours())
+            self.state["history"].append({"kind": "refresh (reused recent run)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
+                                          "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
+            return True
         if kind == "refresh":
             params: dict[str, Any] = {"top": 20, "scheduled": True}
             job = self._submit("run", params)
@@ -374,3 +381,11 @@ def _publish_summary() -> dict[str, Any] | None:
         return describe()
     except Exception:  # noqa: BLE001
         return None
+
+
+def _recent_run_hours() -> float | None:
+    """Age of the newest complete trend run (with an analysis), in hours."""
+    run = latest_run_dir()
+    if not run or not (run / "analysis.json").exists():
+        return None
+    return (time.time() - (run / "analysis.json").stat().st_mtime) / 3600

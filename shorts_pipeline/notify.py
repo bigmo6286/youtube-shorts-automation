@@ -51,7 +51,14 @@ def discover_chats() -> list[dict[str, Any]]:
     return list(seen.values())
 
 
+def _prefix() -> str:
+    """'[Label] ' when this install runs more than one channel, so Telegram messages say which one."""
+    from .config import CHANNEL, channel_label, channels
+    return f"[{channel_label()}] " if CHANNEL or len(channels()) > 1 else ""
+
+
 def send_message(text: str) -> None:
+    text = _prefix() + text
     for i in range(0, max(len(text), 1), MESSAGE_LIMIT):
         _check(requests.post(_api("sendMessage"), data={"chat_id": env("TELEGRAM_CHAT_ID"), "text": text[i:i + MESSAGE_LIMIT],
                                                        "disable_web_page_preview": True}, timeout=30))
@@ -82,7 +89,7 @@ def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "") -> Non
         raise RuntimeError("Telegram is not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Settings")
     title = (meta.get("title") or "")[:100]
     desc = description_text(meta)
-    caption = (note + "\n\n" if note else "") + f"Title ({len(title)}/100) and description follow as separate messages, copy each one as-is."
+    caption = _prefix() + (note + "\n\n" if note else "") + f"Title ({len(title)}/100) and description follow as separate messages, copy each one as-is."
     size = video_path.stat().st_size
     if size > VIDEO_LIMIT:
         log.warning("video is %.1f MB, above Telegram's 50 MB bot limit; sending text only", size / 1e6)

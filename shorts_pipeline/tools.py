@@ -13,11 +13,11 @@ from pathlib import Path
 
 import requests
 
-from .config import DATA_DIR, env
+from .config import DATA_DIR, SHARED_DIR, env
 
 log = logging.getLogger(__name__)
 
-BIN_DIR = DATA_DIR / "bin"
+BIN_DIR = SHARED_DIR / "bin"
 # gyan.dev "essentials" is a static Windows build that includes libass (needed for the caption filter).
 FFMPEG_WIN_ZIP = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 

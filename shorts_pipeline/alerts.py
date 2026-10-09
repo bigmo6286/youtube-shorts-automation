@@ -22,7 +22,7 @@ from .storage import load_json, save_json
 log = logging.getLogger(__name__)
 
 STATE_PATH = DATA_DIR / "alerts.json"
-LOG_DIR = ROOT / "data" / "logs"
+LOG_DIR = DATA_DIR / "logs"
 ALERT_REPEAT_HOURS = 3
 _LOCK = threading.Lock()
 

@@ -55,8 +55,7 @@ def _state() -> dict[str, Any]:
 
 def _uploads_from_logs(days: float = 2) -> list[float]:
     """Times of successful uploads in the last `days`, read from the console's job logs (manual and produce --upload)."""
-    from .config import ROOT
-    log_dir = ROOT / "data" / "logs"
+    log_dir = DATA_DIR / "logs"
     out: list[float] = []
     if not log_dir.exists():
         return out

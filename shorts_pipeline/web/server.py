@@ -26,7 +26,7 @@ from ..storage import RUNS_DIR, load_json
 
 log = logging.getLogger("shorts.web")
 STATIC = Path(__file__).parent / "static"
-ENV_PATH = ROOT / ".env"
+from ..config import CHANNEL, ENV_PATH, HOME
 
 KEY_FIELDS = {
     "TYPESAFE_API_KEY": "TypeSafe API key (judging, ranking, script QA)",
@@ -53,13 +53,21 @@ app = FastAPI(title="Shorts console")
 # ------------------------------------------------------------------------------------ .env handling
 
 def _read_env() -> dict[str, str]:
+    """The main .env with this channel's own .env on top: the values the engine actually uses."""
     values: dict[str, str] = {}
-    if ENV_PATH.exists():
-        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-            if line.strip() and not line.lstrip().startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                values[k.strip()] = v.strip()
+    for path in dict.fromkeys([ROOT / ".env", ENV_PATH]):
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip() and not line.lstrip().startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    if v.strip() or path == ENV_PATH:
+                        values[k.strip()] = v.strip()
     return values
+
+
+def _secrets_present() -> bool:
+    from ..upload import secrets_path
+    return secrets_path().exists()
 
 
 def _write_env(updates: dict[str, str]) -> None:
@@ -200,6 +208,7 @@ def _run_job(job: Job) -> None:
         job.finished = time.time()
         root.removeHandler(handler)
         _CURRENT = None
+        _MACHINE.release()
         _JOB_LOCK.release()
         _persist_job(job)
         if job.status == "error":
@@ -226,7 +235,8 @@ def _alert_failure(job: Job) -> None:
         log.exception("failure alert could not be sent")
 
 
-LOG_DIR = ROOT / "data" / "logs"
+from ..config import DATA_DIR as _DATA_DIR
+LOG_DIR = _DATA_DIR / "logs"
 
 
 def _persist_job(job: Job) -> None:
@@ -248,11 +258,63 @@ class JobRequest(BaseModel):
     params: dict[str, Any] = {}
 
 
+# Heavy jobs (rendering, trend refresh, channel analysis) take one at a time across every channel's console on
+# this machine; light ones (uploads, publishing, syncs) only wait for their own console.
+HEAVY_KINDS = {"produce", "run", "discover", "judge", "rank", "analyze", "profile", "thumbnail", "setup_ffmpeg", "fetch_music"}
+
+
+class _MachineLock:
+    def __init__(self) -> None:
+        from ..config import SHARED_DIR
+        self.path = SHARED_DIR / "heavy_job.lock"
+        self.fh = None
+
+    def acquire(self) -> bool:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(self.path, "a+b")  # noqa: SIM115 - held for the length of the job
+        try:
+            fh.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            return False
+        self.fh = fh
+        return True
+
+    def release(self) -> None:
+        if not self.fh:
+            return
+        try:
+            self.fh.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(self.fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self.fh.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            self.fh.close()
+            self.fh = None
+
+
+_MACHINE = _MachineLock()
+
+
 def submit_job(kind: str, params: dict[str, Any]) -> dict[str, Any] | None:
-    """Start a job unless one is running (returns None in that case)."""
+    """Start a job unless one is running here, or (for heavy jobs) in another channel's console (returns None)."""
     if kind not in COMMANDS:
         raise ValueError(f"unknown job kind {kind}")
     if not _JOB_LOCK.acquire(blocking=False):
+        return None
+    if kind in HEAVY_KINDS and not _MACHINE.acquire():
+        _JOB_LOCK.release()
         return None
     job = Job(kind, params)
     JOBS[job.id] = job
@@ -267,8 +329,22 @@ def start_job(req: JobRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if job is None:
-        raise HTTPException(409, f"a job is already running ({_CURRENT.kind if _CURRENT else '?'})")
+        raise HTTPException(409, f"a job is already running ({_CURRENT.kind})" if _CURRENT else
+                            "another channel's console is rendering or refreshing right now; try again in a few minutes")
     return job
+
+
+@app.get("/api/channels")
+def list_channels() -> dict[str, Any]:
+    import socket
+    from ..config import channels
+    out = []
+    for c in channels():
+        with socket.socket() as sock:
+            sock.settimeout(0.25)
+            up = sock.connect_ex(("127.0.0.1", int(c["port"]))) == 0
+        out.append({**c, "running": up})
+    return {"current": CHANNEL or "main", "channels": out}
 
 
 @app.get("/api/jobs")
@@ -311,10 +387,10 @@ def get_settings() -> dict[str, Any]:
     keys = [{"name": k, "label": label, "set": bool(values.get(k)), "hint": _mask(values[k]) if values.get(k) else ""}
             for k, label in KEY_FIELDS.items()]
     paths = [{"name": k, "label": label, "value": values.get(k, "")} for k, label in PATH_FIELDS.items()]
-    secrets_path = values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json"
+    from ..upload import TOKEN_PATH, secrets_path
     return {"keys": keys, "paths": paths, "config": load_config(),
-            "client_secrets_present": (ROOT / secrets_path).exists(),
-            "youtube_token_present": (ROOT / "data" / "youtube_token.json").exists()}
+            "client_secrets_present": secrets_path().exists(),
+            "youtube_token_present": TOKEN_PATH.exists()}
 
 
 class SettingsUpdate(BaseModel):
@@ -352,7 +428,8 @@ async def upload_client_secrets(file: UploadFile) -> dict[str, Any]:
     data = await file.read()
     if b'"installed"' not in data and b'"web"' not in data:
         raise HTTPException(400, "that does not look like a Google OAuth client JSON file")
-    (ROOT / "client_secrets.json").write_bytes(data)
+    HOME.mkdir(parents=True, exist_ok=True)
+    (HOME / "client_secrets.json").write_bytes(data)       # this channel's own Google project
     _write_env({"YOUTUBE_CLIENT_SECRETS": "client_secrets.json"})
     return get_settings()
 
@@ -646,7 +723,7 @@ def status() -> dict[str, Any]:
         "ollama": _ollama_status(),
         "pexels": bool(values.get("PEXELS_API_KEY")),
         "ai_images": _ai_images_on(),
-        "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),
+        "youtube_upload": _secrets_present(),
         "music_tracks": len(get_music()),
         "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),
         "channel": _channel_configured(),

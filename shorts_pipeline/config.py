@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -8,14 +9,43 @@ import yaml
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT / "data"
-OUTPUT_DIR = ROOT / "output"
 ASSETS_DIR = ROOT / "assets"
+# Shared by every channel on this machine: trend runs, footage/judgment caches, tools (ffmpeg), the channel registry.
+SHARED_DIR = ROOT / "data"
+CHANNELS_PATH = SHARED_DIR / "channels.json"
+
+# One install can run several YouTube channels. The main channel lives at the top level (data/, output/, .env,
+# config.local.yaml); every other channel has its own folder channels/<name>/ with the same layout, selected by
+# `python main.py --channel <name> ...` (SHORTS_CHANNEL). Its .env overrides the main one (API keys are shared unless
+# set again), and its config.local.yaml sits on config.yaml alone, so channel settings never leak between channels.
+CHANNEL = re.sub(r"[^a-z0-9_-]", "", (os.environ.get("SHORTS_CHANNEL") or "").strip().lower())
+HOME = ROOT / "channels" / CHANNEL if CHANNEL else ROOT
+DATA_DIR = HOME / "data"
+OUTPUT_DIR = HOME / "output"
+ENV_PATH = HOME / ".env"
 
 load_dotenv(ROOT / ".env")
+if CHANNEL:
+    load_dotenv(ENV_PATH, override=True)
 
 
-LOCAL_CONFIG = ROOT / "config.local.yaml"   # untracked overlay written by the console; survives git pull
+LOCAL_CONFIG = HOME / "config.local.yaml"   # untracked overlay written by the console; survives git pull
+
+
+def channels() -> list[dict[str, Any]]:
+    """Registered channels on this machine; the main one is always first."""
+    import json
+    try:
+        data = json.loads(CHANNELS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    main = {"name": "main", "label": data.get("main_label") or "Main channel", "port": int(data.get("main_port") or 8787)}
+    return [main] + [c for c in data.get("channels", []) if c.get("name") and c["name"] != "main"]
+
+
+def channel_label() -> str:
+    me = CHANNEL or "main"
+    return next((c.get("label") or c["name"] for c in channels() if c["name"] == me), me)
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
