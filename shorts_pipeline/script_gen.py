@@ -251,6 +251,7 @@ def _draft(client, system: str, user_prompt: str, backend: str = "") -> ShortScr
     return ShortScript.model_validate(data)
 
 
+LOOP_MIN = 0.4                  # real loop endings score 0.45-0.6 here; 0.5 rejected half of them
 LOCAL_MAX_ATTEMPTS = 3          # each local draft takes minutes on a laptop CPU
 LOCAL_MAX_POLICY_RISK = 0.3     # stricter than for Claude: small models state invented "facts" confidently
 
@@ -314,7 +315,7 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
         if recent and qa.get("template_repeat", {}).get("score", 0.0) >= float(ocfg["max_template_score"]):
             problems.append("it reads like the same template as the channel's recent uploads (title formula, opening or "
                             "structure); make the title, the opening line and the structure clearly different")
-        if loop and qa.get("loops", {}).get("noul", 1.0) < 0.5:
+        if loop and qa.get("loops", {}).get("noul", 1.0) < LOOP_MIN:
             problems.append("the last line does not lead back into the hook; end on a short bridge that the first line "
                             "completes when the Short replays, with no closing question")
         if qa["has_payoff"]["noul"] < 0.5:

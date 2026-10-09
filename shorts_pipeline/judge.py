@@ -283,6 +283,11 @@ def judge_script(script: dict[str, Any], blueprint: dict[str, Any], original_tex
     questions = dict(SCRIPT_QA_QUESTIONS)
     if loop:
         questions["loops"] = LOOP_QUESTION
+        # A loop ending stops on a bridge on purpose ("...and that's why"); judge the payoff before it, or the two
+        # checks contradict each other and every draft gets rejected.
+        questions["has_payoff"] = _q("noul", (
+            "Leave out the final bridge line (`script.cta`): it deliberately runs back into the opening line when the Short "
+            "replays. Does the rest of the script deliver a satisfying payoff or answer to what the hook promised?"), None)
     if recent:
         from .originality import template_question
         state["recent_uploads"] = recent
