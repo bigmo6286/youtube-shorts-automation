@@ -314,6 +314,13 @@ uploads never open a Google sign-in page; an expired sign-in becomes an alert in
 from the last confirmed chunk with backoff (about 7 minutes of retries) instead of failing. Thumbnails, privacy changes
 and status reads retry the same way. An upload that still fails stays queued and is retried, up to 3 attempts.
 
+**Publishing at the best hours.** Automatic uploads (with privacy `private`) go up with a YouTube `publishAt` time, so
+YouTube makes them public by itself. The time is the best free hour within `upload.horizon_hours`, at least
+`upload.review_hours` after the upload (your window to press Keep private or Publish now on the card, or to change it in
+YouTube Studio), at most `upload.max_per_hour` per hour and `upload.publish_gap_minutes` apart. Hour quality is learned
+from your channel: each public video's publish hour against its views per hour, smoothed and blended with a prior for
+US evening viewing until there is enough data. Settings -> Automatic uploads shows the best hours and the next free time.
+
 **Retry of failed slots.** A scheduled production that fails for a temporary reason (network, a crashed render, the
 voice service, every draft repeating a subject) runs once more 30 minutes later, if today's window allows. Permanent
 problems (expired sign-in, full disk, missing script writer) are not retried; they are alerted.
@@ -323,6 +330,22 @@ wrong and the fix (the same problem is not repeated within 3 hours). Account and
 sign-in, full disk, unavailable script writer, upload limit, API quota) are alerted even for jobs you started. At
 `notifications.telegram.daily_report_hour` (default 22) a summary arrives: produced and failed, uploaded against the
 limit, the queue, the best videos of the week by views per hour, and disk space. `python main.py report --send` sends it now.
+
+## Free local script writer (Ollama)
+
+If Claude is unavailable (Claude Code missing after an update, signed out, usage limit reached, or offline), scripts
+are written by a free open-weight model running on this PC through [Ollama](https://ollama.com), instead of the
+production failing. Install Ollama, then pull the model named in `production.ollama.model` (default `qwen2.5:3b`,
+about 2 GB, chosen for modest laptops):
+
+```bash
+ollama pull qwen2.5:3b
+```
+
+The fallback switches on by itself once the model is present (`production.ollama.fallback`); the status card shows it.
+Set `production.script_backend: ollama` to use it for every script and need no subscription at all. Drafts go through
+the same TypeSafe QA and repeat check as Claude's. Local models write less vividly than Claude and are slow on a CPU
+(minutes per draft on a 2-core laptop); a bigger model such as `qwen2.5:7b` or `gemma3:4b` writes better on a faster PC.
 
 ## Disk space
 

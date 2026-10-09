@@ -177,7 +177,7 @@ class Scheduler:
                 "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count",
                                                       "channel_factor", "channel_videos", "channel_basis", "source")} for b in pool],
                 "source": cfg.get("source", "trends"), "profile": cfg.get("profile", ""),
-                "retries": self.state.get("retries", []), "queue": _queue_summary()}
+                "retries": self.state.get("retries", []), "queue": _queue_summary(), "publish": _publish_summary()}
 
     # ---------------------------------------------------------------- execution
     def start(self) -> None:
@@ -364,5 +364,13 @@ def _queue_summary() -> dict[str, Any] | None:
     try:
         from .upload_queue import summary
         return summary()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _publish_summary() -> dict[str, Any] | None:
+    try:
+        from .publish_times import describe
+        return describe()
     except Exception:  # noqa: BLE001
         return None

@@ -143,6 +143,7 @@ def video_status(video_ids: list[str]) -> dict[str, dict[str, Any]]:
         r = with_retries(lambda: youtube.videos().list(part="status,statistics", id=batch).execute(), "read video status")
         for v in r.get("items", []):
             out[v["id"]] = {"privacy": v["status"].get("privacyStatus"), "upload": v["status"].get("uploadStatus"),
+                            "publish_at": v["status"].get("publishAt"),
                             "views": int(v.get("statistics", {}).get("viewCount", 0))}
     return out
 
@@ -165,11 +166,15 @@ def sync_output_status(output_dir: Path) -> int:
     changed = 0
     for vid, path in metas.items():
         privacy = live[vid]["privacy"] if vid in live else "deleted"
+        publish_at = live[vid].get("publish_at") if vid in live else None
         meta = load_json(path)                 # re-read right before writing: a job may have updated it meanwhile
-        if not meta or meta.get("youtube_id") != vid or meta.get("privacy") == privacy:
+        if not meta or meta.get("youtube_id") != vid or (meta.get("privacy") == privacy
+                                                         and meta.get("publish_at") == publish_at):
             continue
-        log.info("%s is now %s on YouTube (console had %s)", vid, privacy, meta.get("privacy"))
+        if meta.get("privacy") != privacy:
+            log.info("%s is now %s on YouTube (console had %s)", vid, privacy, meta.get("privacy"))
         meta["privacy"] = privacy
+        meta["publish_at"] = publish_at        # cleared when it went public or the schedule was cancelled in Studio
         save_json(path, meta)
         changed += 1
     return changed
@@ -184,7 +189,8 @@ def set_thumbnail(video_id: str, image_path: Path) -> None:
 
 
 def upload_video(video_path: Path, *, title: str, description: str, tags: list[str],
-                 privacy: str = "private", category_id: str = "22", interactive: bool = True) -> dict[str, Any]:
+                 privacy: str = "private", category_id: str = "22", interactive: bool = True,
+                 publish_at: str | None = None) -> dict[str, Any]:
     """Resumable upload. A dropped connection resumes from the last confirmed chunk instead of starting over or
     failing; up to len(BACKOFF_SECONDS) consecutive transient failures are tolerated. `interactive=False` (the
     automatic queue) never opens a browser for consent; it raises so the owner gets an alert instead."""
@@ -196,6 +202,8 @@ def upload_video(video_path: Path, *, title: str, description: str, tags: list[s
                     "categoryId": category_id},
         "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False},
     }
+    if publish_at:                        # YouTube makes it public by itself at this time (must start private)
+        body["status"].update(privacyStatus="private", publishAt=publish_at)
     media = MediaFileUpload(str(video_path), chunksize=8 * 1024 * 1024, resumable=True, mimetype="video/mp4")
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None

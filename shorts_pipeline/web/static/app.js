@@ -50,7 +50,8 @@ async function loadStatus() {
   $("#statuscards").innerHTML = [
     card("ffmpeg", !!s.ffmpeg, s.ffmpeg ? "ready" : `missing <button id="installffmpeg">Install ffmpeg</button>`),
     card("TypeSafe", s.typesafe, s.typesafe ? "connected" : "key missing"),
-    card("Script writer", !!s.script_backend, s.script_backend === "api" ? "Anthropic API" : s.script_backend === "claude_code" ? "Claude subscription" : "not configured"),
+    card("Script writer", !!s.script_backend || !!(s.ollama && s.ollama.model_ready), (s.script_backend === "api" ? "Anthropic API" : s.script_backend === "claude_code" ? "Claude subscription" : (s.ollama && s.ollama.model_ready ? "free local model only" : "not configured"))
+      + (s.ollama && s.ollama.model_ready ? ` · free fallback: ${s.ollama.model}` : (s.ollama && s.ollama.server ? " · Ollama running, model not pulled" : ""))),
     card("Backgrounds", s.pexels || s.ai_images, s.pexels ? `Pexels footage${s.ai_images ? " + AI images" : ""}` : s.ai_images ? "AI images" : "generated gradient"),
     card("Music", s.music_tracks > 0, s.music_tracks > 0 ? `${s.music_tracks} track${s.music_tracks === 1 ? "" : "s"}` : "no tracks (Settings)"),
     card("Telegram", s.telegram, s.telegram ? "delivery on" : "not connected"),
@@ -261,8 +262,10 @@ async function loadOutputs(afterStatusSync = false) {
         ${!o.youtube_id && o.upload_state === "expired" ? `<span class="tag warn">not uploaded automatically (waited too long)</span>` : ""}
         ${!o.youtube_id && o.upload_state === "failed" ? `<span class="tag warn" title="${esc(o.upload_error || "")}">automatic upload failed</span>` : ""}
         ${o.youtube_id && o.privacy === "deleted" ? `<span class="tag warn">removed from YouTube (${esc(o.youtube_id)})</span>` : ""}
+        ${o.youtube_id && o.publish_at && o.privacy === "private" ? `<span class="tag ok" title="YouTube publishes it by itself at this time">goes public ${esc(new Date(o.publish_at).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }))}</span>
+             <button data-publish="${o.dir}" data-privacy="private" title="cancel the planned publish; it stays private">Keep private</button>` : ""}
         ${o.youtube_id && o.privacy !== "deleted" ? `<a class="tag ${o.privacy === "private" ? "warn" : "ok"}" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">on YouTube${o.privacy ? ` (${o.privacy})` : ""}${o.channel_stats ? `: ${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : `: ${o.youtube_id}`}</a>
-             ${o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="public">Make public</button>` : ""}
+             ${o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="public">${o.publish_at ? "Publish now" : "Make public"}</button>` : ""}
              ${o.privacy !== "unlisted" && o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="unlisted">Unlisted</button>` : ""}
              ${o.privacy === "public" ? `<button data-publish="${o.dir}" data-privacy="private">Make private</button>` : ""}`
           : `<button data-upload="${o.dir}">Upload to YouTube</button>`}
@@ -337,6 +340,7 @@ async function loadSchedule() {
     : `Upload queue: <b>${q.queued}</b> waiting${q.below_min ? ` (${q.below_min} below priority ${q.min_priority}, waiting for you)` : ""} · uploaded ${q.uploaded_24h}/${q.limit} in 24 h`
       + (q.paused_until ? ` · <span class="warn">paused until ${esc(q.paused_until)} (${esc(q.paused_reason || "")})</span>` : "")
       + (q.next ? ` · next: <span class="tag ok">${q.next.priority} ${esc(q.next.title.slice(0, 50))}</span>` : (q.waiting_reason ? ` · ${esc(q.waiting_reason)}` : ""))
+      + (p.publish && p.publish.enabled ? ` · goes public at good hours (next free ${esc(p.publish.next_publish)})` : "")
       + ((p.retries || []).length ? ` · retries pending: ${p.retries.map((r) => `${esc(r.due.slice(11, 16))} (${esc(r.reason)})`).join(", ")}` : "");
   loadChannel();
   const detail = (h) => h.params ? (h.params.blueprint || h.params.blueprint_key || (h.params.title ? `${h.params.priority ?? ""} ${h.params.title}` : "-")) : (h.retry_at ? `retry at ${h.retry_at}` : "-");
@@ -536,10 +540,15 @@ async function loadSettings() {
   set("production.voice", c.production.voice); set("production.target_seconds", c.production.target_seconds);
   set("production.background_source", c.production.background_source); set("production.script_backend", c.production.script_backend || "auto");
   set("upload.privacy", c.upload.privacy);
+  const ol = c.production.ollama || {};
+  $(`[name="production.ollama.fallback"]`).checked = ol.fallback !== false; set("production.ollama.model", ol.model || "qwen2.5:3b");
   const up = c.upload || {};
   $(`[name="upload.auto"]`).checked = up.auto !== false;
   set("upload.daily_limit", up.daily_limit ?? 20); set("upload.min_priority", up.min_priority ?? 30);
   set("upload.max_age_hours", up.max_age_hours ?? 36); set("upload.min_gap_minutes", up.min_gap_minutes ?? 20);
+  $(`[name="upload.schedule_publish"]`).checked = up.schedule_publish !== false;
+  set("upload.review_hours", up.review_hours ?? 2); set("upload.max_per_hour", up.max_per_hour ?? 2);
+  api("/api/publish-times").then((p) => { $("#publishhours").textContent = `Best hours for this channel (your time, learned from ${p.videos} videos): ${p.best_local_hours.map((h) => String(h).padStart(2, "0") + ":00").join(", ")}. Next free publish time: ${p.next_publish}.`; }).catch(() => {});
   const tgc = (c.notifications || {}).telegram || {};
   $(`[name="notifications.telegram.alerts"]`).checked = tgc.alerts !== false;
   set("notifications.telegram.daily_report_hour", tgc.daily_report_hour === null || tgc.daily_report_hour === false ? "" : (tgc.daily_report_hour ?? 22));
@@ -555,6 +564,8 @@ $("#cfgform").addEventListener("submit", async (ev) => {
     ranking: { weights: Object.fromEntries(["velocity", "engagement", "replicable", "hook", "evergreen"].map((k) => [k, num(`ranking.weights.${k}`)])) },
     production: { voice: g("production.voice"), target_seconds: num("production.target_seconds"),
       background_source: g("production.background_source"), script_backend: g("production.script_backend"),
+      ollama: { ...(state.settings.config.production.ollama || {}), fallback: $(`[name="production.ollama.fallback"]`).checked,
+        model: g("production.ollama.model") || "qwen2.5:3b" },
       music: { default: g("production.music.default"), volume_db: num("production.music.volume_db"),
         fade_seconds: num("production.music.fade_seconds"), duck: $(`[name="production.music.duck"]`).checked },
       captions: capRead(),
@@ -568,7 +579,9 @@ $("#cfgform").addEventListener("submit", async (ev) => {
         text: g("production.outro.text") || "Follow for more", handle: g("production.outro.handle"), seconds: num("production.outro.seconds") || 2 } },
     upload: { privacy: g("upload.privacy"), auto: $(`[name="upload.auto"]`).checked,
       daily_limit: num("upload.daily_limit") || 20, min_priority: Math.min(100, Math.max(0, num("upload.min_priority"))),
-      max_age_hours: num("upload.max_age_hours") || 36, min_gap_minutes: Math.max(0, num("upload.min_gap_minutes")) },
+      max_age_hours: num("upload.max_age_hours") || 36, min_gap_minutes: Math.max(0, num("upload.min_gap_minutes")),
+      schedule_publish: $(`[name="upload.schedule_publish"]`).checked, review_hours: Math.max(0, num("upload.review_hours")),
+      max_per_hour: num("upload.max_per_hour") || 2 },
     notifications: { telegram: { alerts: $(`[name="notifications.telegram.alerts"]`).checked,
       daily_report_hour: g("notifications.telegram.daily_report_hour") === "" ? null : num("notifications.telegram.daily_report_hour") } },
     schedule: { enabled: $(`[name="schedule.enabled"]`).checked, produces_per_day: num("schedule.produces_per_day") || 20,

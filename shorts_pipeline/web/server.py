@@ -557,6 +557,20 @@ def _sync_youtube_status(force: bool = False) -> bool:
     return True
 
 
+def _ollama_status() -> dict[str, Any]:
+    try:
+        from ..ollama_backend import status as ollama_status
+        return ollama_status()
+    except Exception:  # noqa: BLE001
+        return {"model_ready": False}
+
+
+@app.get("/api/publish-times")
+def publish_times_info() -> dict[str, Any]:
+    from ..publish_times import describe
+    return describe()
+
+
 @app.post("/api/outputs/refresh-status")
 def refresh_output_status(force: bool = False) -> dict[str, Any]:
     started = _sync_youtube_status(force=force)
@@ -590,6 +604,7 @@ def list_outputs() -> list[dict[str, Any]]:
             "youtube_id": meta.get("youtube_id"),
             "privacy": meta.get("privacy"),
             "upload_state": meta.get("upload_state"), "upload_priority": meta.get("upload_priority"),
+            "publish_at": meta.get("publish_at"),
             "priority_parts": meta.get("priority_parts"), "upload_error": meta.get("upload_error"),
             "channel_stats": meta.get("channel_stats"),
             "mode": meta.get("mode", "blueprint"),
@@ -628,6 +643,7 @@ def status() -> dict[str, Any]:
         "ffmpeg": str(ffmpeg_dir) if ffmpeg_dir else None,
         "typesafe": bool(values.get("TYPESAFE_API_KEY")),
         "script_backend": "api" if values.get("ANTHROPIC_API_KEY") else ("claude_code" if values.get("CLAUDE_CODE_OAUTH_TOKEN") else None),
+        "ollama": _ollama_status(),
         "pexels": bool(values.get("PEXELS_API_KEY")),
         "ai_images": _ai_images_on(),
         "youtube_upload": (ROOT / (values.get("YOUTUBE_CLIENT_SECRETS") or "client_secrets.json")).exists(),

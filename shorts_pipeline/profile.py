@@ -175,6 +175,10 @@ def _style_guide(channel_name: str, exemplars: list[dict[str, Any]]) -> dict[str
             resp = client.messages.parse(model=script_gen.MODEL, max_tokens=3000, system=system,
                                          messages=[{"role": "user", "content": prompt}], output_format=StyleGuide)
             return resp.parsed_output.model_dump()
+        if backend == "ollama":
+            from . import ollama_backend
+            data = ollama_backend.generate_json(system, prompt, StyleGuide.model_json_schema())
+            return StyleGuide.model_validate(data).model_dump()
         from . import claude_code_backend
         data = claude_code_backend.generate_json(system, prompt, StyleGuide.model_json_schema())
         return StyleGuide.model_validate(data).model_dump()

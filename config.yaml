@@ -77,7 +77,12 @@ production:
     style: "cinematic photograph, natural light, realistic, sharp detail, vertical composition, no text, no watermark, no logo"
   cache_max_gb: 4             # downloaded Pexels clips kept for reuse; least recently used are deleted beyond this
   min_free_gb: 3              # a production stops early (instead of writing empty files) below this much free disk
-  script_backend: auto        # auto | api | claude_code  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription)
+  script_backend: auto        # auto | api | claude_code | ollama  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription; ollama = free local model)
+  ollama:
+    fallback: true            # when Claude is unavailable (missing, signed out, usage limit, offline), write with the local model
+    model: qwen2.5:3b         # any model pulled with `ollama pull`; bigger (qwen2.5:7b, gemma3:4b) writes better but slower
+    url: http://127.0.0.1:11434
+    timeout_seconds: 900
   script_max_attempts: 3      # regenerate if TypeSafe QA says the hook is weak
   script_min_hook_score: 2    # 0-3, see judge.SCRIPT_QA_QUESTIONS
 
@@ -110,4 +115,9 @@ upload:
   min_priority: 30            # predicted priority (0-100) a Short needs to upload automatically; lower ones wait for you
   max_age_hours: 36           # a Short waiting longer than this is not uploaded automatically any more
   min_gap_minutes: 20         # spacing between automatic uploads
+  schedule_publish: true      # automatic uploads (when privacy is private) go public by themselves at a good hour
+  review_hours: 2             # ...but not before this many hours after the upload: your window to cancel
+  max_per_hour: 2             # at most this many Shorts go public in the same hour
+  publish_gap_minutes: 25     # and at least this many minutes apart
+  horizon_hours: 24           # a Short waits at most this long for a good hour
   category_id: "22"           # 22 = People & Blogs, 24 = Entertainment, 27 = Education, 28 = Science & Technology

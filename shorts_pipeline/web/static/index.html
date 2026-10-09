@@ -276,7 +276,9 @@
             <label>Voice<input name="production.voice"></label>
             <label>Target seconds<input type="number" name="production.target_seconds" min="15" max="180"></label>
             <label>Background<select name="production.background_source"><option>auto</option><option>pexels</option><option>generated</option></select></label>
-            <label>Script backend<select name="production.script_backend"><option>auto</option><option>api</option><option>claude_code</option></select></label>
+            <label>Script backend<select name="production.script_backend"><option>auto</option><option>api</option><option>claude_code</option><option>ollama</option></select></label>
+            <label class="inline" title="free local model through Ollama, used when Claude is unavailable"><input type="checkbox" name="production.ollama.fallback"> local fallback (Ollama)</label>
+            <label>Local model<input name="production.ollama.model" size="14"></label>
             <label>Upload privacy<select name="upload.privacy"><option>private</option><option>unlisted</option><option>public</option></select></label>
           </div>
           <h3>Automatic uploads</h3>
@@ -288,6 +290,12 @@
             <label>Expire after (hours)<input type="number" min="1" max="240" name="upload.max_age_hours"></label>
             <label>Minutes between uploads<input type="number" min="0" max="600" name="upload.min_gap_minutes"></label>
           </div>
+          <div class="row">
+            <label class="inline"><input type="checkbox" name="upload.schedule_publish"> make automatic uploads public by themselves at the channel's best hours</label>
+            <label>Review window (hours)<input type="number" min="0" max="72" step="0.5" name="upload.review_hours"></label>
+            <label>Max public per hour<input type="number" min="1" max="10" name="upload.max_per_hour"></label>
+          </div>
+          <p class="muted" id="publishhours"></p>
           <h3>Alerts</h3>
           <div class="row">
             <label class="inline"><input type="checkbox" name="notifications.telegram.alerts"> Telegram alert when a scheduled or automatic job fails</label>

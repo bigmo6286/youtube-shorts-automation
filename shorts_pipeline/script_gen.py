@@ -170,16 +170,31 @@ def custom_script(text: str, *, title: str = "", description: str = "", hashtags
     return finalize_metadata(script)
 
 
+def _ollama_fallback_ready() -> bool:
+    from . import ollama_backend
+    return bool(ollama_backend.config()["fallback"]) and ollama_backend.available()
+
+
 def pick_backend(preference: str = "auto") -> str:
-    """'api' needs ANTHROPIC_API_KEY; 'claude_code' uses Claude Code headless on a Pro/Max subscription."""
+    """'api' needs ANTHROPIC_API_KEY; 'claude_code' uses Claude Code headless on a Pro/Max subscription;
+    'ollama' is a free local model. With 'auto' (or when Claude is missing) a ready Ollama model is the fallback."""
     from .config import has_anthropic
     from . import claude_code_backend
+    if preference == "ollama":
+        from . import ollama_backend
+        if ollama_backend.available():
+            return "ollama"
+        raise RuntimeError(f"No script backend: Ollama is not running or the model {ollama_backend.config()['model']!r} "
+                           "is not pulled (run `ollama pull <model>`).")
     if preference == "api" or (preference == "auto" and has_anthropic()):
         return "api"
     if preference in ("claude_code", "auto"):
         binary = claude_code_backend.find_claude_binary()
         if binary:
             return "claude_code"
+        if _ollama_fallback_ready():
+            log.warning("Claude Code was not found; writing with the free local model (Ollama) instead")
+            return "ollama"
         from .config import env
         token_note = ("CLAUDE_CODE_OAUTH_TOKEN is set, but" if env("CLAUDE_CODE_OAUTH_TOKEN")
                       else "no CLAUDE_CODE_OAUTH_TOKEN is set and")
@@ -191,7 +206,10 @@ def pick_backend(preference: str = "auto") -> str:
                        "CLAUDE_CODE_OAUTH_TOKEN (see README).")
 
 
-def _draft(client, system: str, user_prompt: str) -> ShortScript:
+def _draft(client, system: str, user_prompt: str, backend: str = "") -> ShortScript:
+    if backend == "ollama":
+        from . import ollama_backend
+        return ShortScript.model_validate(ollama_backend.generate_json(system, user_prompt, ShortScript.model_json_schema()))
     if client is not None:
         response = client.messages.parse(model=MODEL, max_tokens=4000, system=system,
                                          messages=[{"role": "user", "content": user_prompt}], output_format=ShortScript)
@@ -214,7 +232,16 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
     feedback = ""
     best: dict[str, Any] | None = None
     for attempt in range(1, max_attempts + 1):
-        parsed = _draft(client, system, user_prompt + feedback)
+        try:
+            parsed = _draft(client, system, user_prompt + feedback, backend)
+        except Exception as exc:  # noqa: BLE001
+            # Claude unreachable, signed out or over its usage limit: finish the job with the free local model.
+            if backend == "ollama" or not _ollama_fallback_ready():
+                raise
+            log.warning("Claude failed (%s); switching to the free local model (Ollama) for this script",
+                        str(exc)[:160])
+            backend, client = "ollama", None
+            parsed = _draft(client, system, user_prompt + feedback, backend)
         script = parsed.model_dump()
         script["backend"] = backend
         script["full_text"] = " ".join([script["hook"], *[ln["text"] for ln in script["lines"]], script["cta"]])

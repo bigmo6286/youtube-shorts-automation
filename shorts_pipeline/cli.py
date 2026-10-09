@@ -515,9 +515,15 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
     desc = meta["description"]
     if "#shorts" not in desc.lower():
         desc += "\n\n#Shorts"
+    publish_at = None
+    if not interactive and cfg["privacy"] == "private":
+        from . import publish_times
+        if publish_times.config()["schedule_publish"]:
+            publish_at = publish_times.rfc3339(publish_times.choose())
     try:
         resp = upload.upload_video(Path(meta["video"]), title=meta["title"], description=desc, tags=tags,
-                                   privacy=cfg["privacy"], category_id=cfg["category_id"], interactive=interactive)
+                                   privacy=cfg["privacy"], category_id=cfg["category_id"], interactive=interactive,
+                                   publish_at=publish_at)
     except Exception as exc:  # noqa: BLE001
         error = f"{type(exc).__name__}: {exc}"
         note = upload_queue.on_upload_error(out_dir, error)    # learns the daily limit, counts attempts
@@ -526,13 +532,19 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
     vid = resp.get("id")
     meta = load_json(out_dir / "meta.json") or meta           # re-read: the queue may have touched it
     meta["youtube_id"] = vid
-    meta["privacy"] = cfg["privacy"]
+    meta["privacy"] = "private" if publish_at else cfg["privacy"]
+    meta["publish_at"] = publish_at
     meta["uploaded_at"] = time.time()
     if meta.get("upload_state") in ("queued", "expired", "failed", None):
         meta["upload_state"] = "uploaded"
     save_json(out_dir / "meta.json", meta)
     print(f"Uploaded as {cfg['privacy']}: https://youtube.com/shorts/{vid}")
-    if cfg["privacy"] == "private":
+    if publish_at:
+        from datetime import datetime as _dt
+        when = _dt.fromisoformat(publish_at.replace("Z", "+00:00")).astimezone().strftime("%a %H:%M")
+        print(f"Goes public by itself on {when} (a good hour for this channel). Until then: 'Publish now' or "
+              "'Keep private' on its card, or change it in YouTube Studio.")
+    elif cfg["privacy"] == "private":
         print("It is PRIVATE until you publish it: use 'Make public' on the card, `python main.py publish <dir>`, "
               "or set upload.privacy to public in Settings to skip the review step.")
     thumb = meta.get("thumbnail")
@@ -641,8 +653,9 @@ def cmd_publish(args) -> None:
     if not meta or not meta.get("youtube_id"):
         sys.exit(f"{out_dir.name} has not been uploaded yet.")
     privacy = getattr(args, "privacy", None) or "public"
-    upload.set_privacy(meta["youtube_id"], privacy)
+    upload.set_privacy(meta["youtube_id"], privacy)       # replaces the whole status: any planned publish time is dropped
     meta["privacy"] = privacy
+    meta["publish_at"] = None
     save_json(out_dir / "meta.json", meta)
     print(f"{meta['youtube_id']} is now {privacy}: https://youtube.com/shorts/{meta['youtube_id']}")
 
