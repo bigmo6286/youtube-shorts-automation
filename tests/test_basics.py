@@ -93,3 +93,16 @@ def test_cli_parser_knows_every_command():
                  ["channels", "add", "second", "--label", "Two"], ["channel", "connect-analytics"], ["report", "--send"],
                  ["queue"], ["web", "--port", "8790"]):
         assert p.parse_args(argv).func
+
+
+def test_workflow_files_are_valid_yaml():
+    """GitHub rejects a workflow with a YAML error before running anything (a colon in a step name did that once)."""
+    import yaml
+    files = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    assert files
+    for f in files:
+        wf = yaml.safe_load(f.read_text(encoding="utf-8"))
+        assert wf.get("jobs"), f.name
+        for job in wf["jobs"].values():
+            for step in job.get("steps", []):
+                assert isinstance(step.get("name", ""), str), f"{f.name}: {step}"
