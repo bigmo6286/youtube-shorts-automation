@@ -343,7 +343,7 @@ async function loadSchedule() {
       + (q.next ? ` · next: <span class="tag ok">${q.next.priority} ${esc(q.next.title.slice(0, 50))}</span>` : (q.waiting_reason ? ` · ${esc(q.waiting_reason)}` : ""))
       + (p.publish && p.publish.enabled ? ` · goes public at good hours (next free ${esc(p.publish.next_publish)})` : "")
       + ((p.retries || []).length ? ` · retries pending: ${p.retries.map((r) => `${esc(r.due.slice(11, 16))} (${esc(r.reason)})`).join(", ")}` : "");
-  loadChannel();
+  loadChannel(); loadComments();
   const detail = (h) => h.params ? (h.params.blueprint || h.params.blueprint_key || (h.params.title ? `${h.params.priority ?? ""} ${h.params.title}` : "-")) : (h.retry_at ? `retry at ${h.retry_at}` : "-");
   $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
       <td class="${h.status === "error" ? "err" : ""}">${esc(h.status)}${h.retry_at ? ` → retry ${esc(h.retry_at)}` : ""}</td><td>${esc(String(detail(h)))}</td></tr>`).join("")
@@ -372,6 +372,28 @@ async function loadChannel() {
        : `<br><span class="warn">Retention is not used yet.</span> Connect YouTube Analytics (read-only) so formats are also judged by how long viewers stay.`);
 }
 $("#channelsync").addEventListener("click", () => startJob("channel", { action: "sync" }));
+async function loadComments() {
+  let c;
+  try { c = await api("/api/comments"); } catch (_) { return; }
+  $("#commentsconnect").style.display = c.connected ? "none" : "";
+  const drafts = c.pending.filter((x) => x.status === "drafted"), flagged = c.pending.filter((x) => x.status === "needs_owner");
+  $("#commentscount").textContent = c.connected ? `${drafts.length} reply drafts, ${flagged.length} need you, ${c.spam_ignored} spam ignored`
+    : "not connected: Connect comments to post questions and draft replies";
+  $("#commentslist").innerHTML = c.pending.map((x) => `<div class="comment"><div><b>${esc(x.author)}</b> on <i>${esc(x.title || x.video_id)}</i>: ${esc(x.text)}</div>
+      ${x.status === "needs_owner" ? `<div class="warn">needs you: <a href="https://www.youtube.com/watch?v=${esc(x.video_id)}&lc=${esc(x.id)}" target="_blank">answer on YouTube</a></div>` :
+      `<div class="row"><input class="grow" data-draft="${esc(x.id)}" value="${esc(x.draft || "")}"><button data-postreply="${esc(x.id)}">Post reply</button></div>`}
+      <button data-dismiss="${esc(x.id)}">Dismiss</button></div>`).join("") || `<p class="muted">Nothing waiting.</p>`;
+  $$("button[data-postreply]").forEach((b) => b.addEventListener("click", async () => {
+    const text = $(`[data-draft="${b.dataset.postreply}"]`).value;
+    try { await api(`/api/comments/${b.dataset.postreply}/post`, { method: "POST", body: JSON.stringify({ text }) }); toast("Reply posted"); loadComments(); }
+    catch (e) { toast(e.message, true); }
+  }));
+  $$("button[data-dismiss]").forEach((b) => b.addEventListener("click", async () => {
+    await api(`/api/comments/${b.dataset.dismiss}/dismiss`, { method: "POST" }); loadComments();
+  }));
+}
+$("#commentsconnect").addEventListener("click", () => { toast("A Google page opens: approve managing comments"); startJob("comments", { action: "connect" }); });
+$("#commentsrun").addEventListener("click", () => startJob("comments", { action: "run" }));
 $("#analyticsconnect").addEventListener("click", () => { toast("A Google page opens: approve YouTube Analytics (read-only)"); startJob("channel", { action: "connect_analytics" }); });
 
 // ---------------------------------------------------------------- telegram

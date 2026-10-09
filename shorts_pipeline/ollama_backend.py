@@ -71,7 +71,7 @@ def _server_up() -> bool:
 
 # Hard limits for small local models: without them they can keep writing until the timeout.
 LIMITS = {"title": 90, "hook": 160, "text": 150, "visual_keyword": 60, "cta": 120, "description": 400,
-          "visual_fallback": 50, "thumbnail_text": 40, "lines": (5, 12), "hashtags": (3, 6)}
+          "visual_fallback": 50, "thumbnail_text": 40, "comment_question": 200, "lines": (5, 12), "hashtags": (3, 6)}
 MAX_TOKENS = 900
 
 

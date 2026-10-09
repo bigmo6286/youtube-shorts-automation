@@ -24,6 +24,7 @@ REUSE_RUN_HOURS = 3          # a trend refresh is skipped when a run (any channe
 RETRY_DELAY_MINUTES = 30     # a scheduled production that failed for a temporary reason runs again this much later
 EXPIRE_EVERY_SECONDS = 600
 CLEANUP_EVERY_SECONDS = 6 * 3600
+COMMENTS_EVERY_SECONDS = 2 * 3600
 DEFAULTS = {
     "enabled": False,
     "produces_per_day": 20,
@@ -140,6 +141,7 @@ class Scheduler:
         self._job_error = job_error or (lambda _id: None)
         self._last_expire = 0.0
         self._last_cleanup = 0.0
+        self._last_comments = 0.0
         self._lock = threading.Lock()
         self.state = load_json(STATE_PATH, None) or {"date": "", "done": [], "history": [], "next_blueprint": 0}
         self._thread: threading.Thread | None = None
@@ -264,6 +266,7 @@ class Scheduler:
                 self._save()
                 return
             self._upload_from_queue(now)
+            self._run_comments(now)
             self._save()
 
     # ---------------------------------------------------------------- retries and the upload queue
@@ -311,6 +314,22 @@ class Scheduler:
             log.info("upload queue: uploading %r (priority %d) -> job %s", item["title"][:60], item["priority"], job["id"])
         except Exception:  # noqa: BLE001
             log.exception("upload queue step failed")
+
+    def _run_comments(self, now: datetime) -> None:
+        if time.time() - self._last_comments < COMMENTS_EVERY_SECONDS:
+            return
+        try:
+            from . import comments
+            if not comments.config()["enabled"] or not comments.connected():
+                return
+            job = self._submit("comments", {"action": "run", "auto": True})
+            if job is not None:
+                self._last_comments = time.time()
+                self.state["history"].append({"kind": "comments", "slot": now.strftime("%Y-%m-%d %H:%M"),
+                                              "started": datetime.now().strftime("%H:%M:%S"), "job": job["id"],
+                                              "status": job["status"]})
+        except Exception:  # noqa: BLE001
+            log.exception("comments step failed")
 
     def _queue_full(self) -> bool:
         try:

@@ -77,3 +77,6 @@ main { padding-bottom: 260px; }
 .toast.error { border-color: var(--danger); }
 
 #chanpick { width: auto; max-width: 220px; flex: 0 0 auto; margin: 0 12px; }
+
+.comment { border-top: 1px solid var(--line, #333); padding: 8px 0; }
+.comment .grow { flex: 1; min-width: 200px; }

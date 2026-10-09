@@ -510,6 +510,33 @@ def cmd_cleanup(args) -> None:
         print(f"Footage cache trimmed by {removed:.1f} GB.")
 
 
+def cmd_comments(args) -> None:
+    from . import comments
+    action = getattr(args, "action", "run") or "run"
+    if action == "connect":
+        print("A Google page opens: approve YouTube (including managing comments).")
+        comments.connect()
+        print("Comments connected.")
+        action = "run"
+    if action == "run":
+        s = comments.run(interactive=False)
+        print(f"comments: {s['new']} new, {s['drafted']} reply drafts, {s['posted']} posted, {s['needs_owner']} need you, "
+              f"{s['spam']} spam ignored, {s['questions']} question comments posted")
+    elif action == "list":
+        for c in comments.pending():
+            print(f"  [{c['status']}] {c['id']}  {c['author']}: {c['text'][:80]}\n      draft: {c.get('draft', '')}")
+    elif action == "post":
+        print("posted reply", comments.post_reply(args.target or "", getattr(args, "text", None)))
+    elif action == "dismiss":
+        comments.dismiss(args.target or "")
+
+
+def cmd_setup_voice(args) -> None:
+    from . import tts
+    path = tts.download_kokoro()
+    print(f"Kokoro voice files in {path}; available: {tts.kokoro_available()}")
+
+
 def cmd_queue(args) -> None:
     from . import upload_queue
     s = upload_queue.summary()
@@ -917,6 +944,15 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("report", help="print today's report (produced, uploaded, queue, failures); --send posts it to Telegram")
     rp.add_argument("--send", action="store_true")
     rp.set_defaults(func=cmd_report)
+
+    cm = sub.add_parser("comments", help="question comments, reply drafts for viewer comments: connect | run | list | post <id> | dismiss <id>")
+    cm.add_argument("action", nargs="?", default="run", choices=["connect", "run", "list", "post", "dismiss"])
+    cm.add_argument("target", nargs="?")
+    cm.add_argument("--text")
+    cm.set_defaults(func=cmd_comments)
+
+    sv = sub.add_parser("setup-voice", help="download the free local Kokoro voice (~120 MB), used when edge-tts fails")
+    sv.set_defaults(func=cmd_setup_voice)
 
     cl = sub.add_parser("cleanup", help="free disk: render pieces of uploaded Shorts, old video files (YouTube has them)")
     cl.add_argument("--dry-run", dest="dry_run", action="store_true")

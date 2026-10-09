@@ -33,6 +33,7 @@ KEY_FIELDS = {
     "ANTHROPIC_API_KEY": "Anthropic API key (script writing, optional if using a subscription token)",
     "CLAUDE_CODE_OAUTH_TOKEN": "Claude subscription token from `claude setup-token`",
     "PEXELS_API_KEY": "Pexels API key (stock footage backgrounds, optional)",
+    "PIXABAY_API_KEY": "Pixabay API key (free, second footage source)",
     "YOUTUBE_API_KEY": "YouTube Data API key (channel performance feedback; also an extra discovery source)",
     "TELEGRAM_BOT_TOKEN": "Telegram bot token from @BotFather (delivery of finished Shorts)",
     "TOGETHER_API_KEY": "Together AI key (optional: FLUX images instead of the free generator)",
@@ -160,7 +161,7 @@ def _args(job: Job) -> SimpleNamespace:
         blueprint=int(p["blueprint"]) if str(p.get("blueprint") or "").isdigit() else 1,
         blueprint_key=(p.get("blueprint_key") or (str(p.get("blueprint"))[8:] if str(p.get("blueprint") or "").startswith("channel:") else None)),
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
-        exemplar=p.get("exemplar") or None, auto=bool(p.get("auto")),
+        exemplar=p.get("exemplar") or None, auto=bool(p.get("auto")), text=p.get("text") or None,
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
@@ -177,7 +178,8 @@ COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
-    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "report": cli.cmd_report, "cleanup": cli.cmd_cleanup, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
+    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "report": cli.cmd_report, "cleanup": cli.cmd_cleanup, "comments": cli.cmd_comments,
+    "setup_voice": cli.cmd_setup_voice, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
 }
 
 
@@ -640,6 +642,35 @@ def _ollama_status() -> dict[str, Any]:
         return ollama_status()
     except Exception:  # noqa: BLE001
         return {"model_ready": False}
+
+
+@app.get("/api/comments")
+def get_comments() -> dict[str, Any]:
+    from .. import comments
+    state = comments._state()
+    return {"connected": comments.connected(), "pending": comments.pending()[:50],
+            "spam_ignored": state.get("spam_ignored", 0), "config": comments.config()}
+
+
+class ReplyRequest(BaseModel):
+    text: str = ""
+
+
+@app.post("/api/comments/{thread_id}/post")
+def post_comment_reply(thread_id: str, req: ReplyRequest) -> dict[str, Any]:
+    from .. import comments
+    try:
+        reply_id = comments.post_reply(thread_id, req.text or None)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)[:300]) from exc
+    return {"posted": reply_id}
+
+
+@app.post("/api/comments/{thread_id}/dismiss")
+def dismiss_comment(thread_id: str) -> dict[str, Any]:
+    from .. import comments
+    comments.dismiss(thread_id)
+    return {"dismissed": thread_id}
 
 
 @app.get("/api/publish-times")

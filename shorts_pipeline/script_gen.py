@@ -33,6 +33,9 @@ class ShortScript(BaseModel):
     hashtags: list[str] = Field(description="3-6 hashtags without the # sign, first one shorts, never more than 15")
     visual_fallback: str = Field(description=(
         "One literal stock-footage term for the video's overall subject (2-4 plain words), used when a line's own term finds nothing"))
+    comment_question: str = Field(default="", description=(
+        "A short, specific question about the video's subject that the channel posts as the first comment, inviting "
+        "viewers to answer (not 'like and subscribe'), e.g. 'Which of these would you have guessed was fake?'"))
     thumbnail_text: str = Field(description=(
         "3-6 punchy words for the thumbnail, the most curiosity-provoking idea in the video, no punctuation needed, e.g. 'ONE HEART STOPS'"))
 

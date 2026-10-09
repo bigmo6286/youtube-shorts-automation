@@ -266,6 +266,35 @@ loop and sends drafts that do not loop back for a rewrite. The "Follow for more"
 music does not fade out, because both break the loop. The video's punchiest words (its thumbnail text) appear as big
 text at the top from the first frame until the hook sentence ends (`production.hook_overlay`).
 
+## Free local voice (Kokoro)
+
+The voice is Microsoft's online neural voice (edge-tts, free, exact word timings). If it fails (no audio, network),
+the Short is voiced by Kokoro-82M, a free open-source voice that runs on this PC (`production.tts`):
+
+```bash
+python main.py setup-voice
+```
+
+downloads it once (~120 MB, shared by all channels). Kokoro gives no word timings, so each sentence is voiced
+separately and words are spread across it by length, with pauses after commas; captions stay in sync per sentence.
+It is slow on a weak CPU (about 3 minutes for a 40-second voiceover on a 2-core laptop). `production.tts.engine:
+kokoro` uses it for every Short.
+
+## Second footage source (Pixabay)
+
+With a free Pixabay API key (pixabay.com, sign up, then https://pixabay.com/api/docs/ shows your key; no card) in
+Settings, every line gets Pixabay videos and vertical photos as extra candidates next to Pexels, and TypeSafe picks the
+best fit from both. A clip already used in the same Short is only reused when nothing new fits.
+
+## Comment engagement
+
+Click **Connect comments** in the console (one more Google permission: managing comments). Every script now carries a
+question for the comment section, and the engine posts it as the channel's first comment once the Short is public.
+Every two hours it reads new viewer comments; TypeSafe judges each one (spam, needs you personally, worth a reply).
+Spam is ignored, comments that need you go to Telegram with a link, and replies to the rest are drafted in the
+channel's voice and wait under Overview -> Comments (edit, Post reply, or Dismiss). `comments.auto_reply: true` posts
+drafts automatically (never the ones that need you). `python main.py comments run|list|post <id>|dismiss <id>`.
+
 ## Thumbnails
 
 Every Short gets `thumbnail.jpg` (1080x1920): a frame from the first footage clip, a dark band, and a

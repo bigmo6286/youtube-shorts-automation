@@ -13,3 +13,4 @@ uvicorn[standard]>=0.30
 python-multipart>=0.0.9
 huggingface_hub>=0.30
 pillow>=10.0
+kokoro-onnx>=0.6

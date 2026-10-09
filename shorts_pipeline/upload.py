@@ -18,7 +18,9 @@ SCOPES = ["https://www.googleapis.com/auth/youtube"]
 # Read-only YouTube Analytics (retention: average % viewed, view duration, engaged views). Optional: uploads never
 # require it, so a token granted before this existed keeps working; every new consent asks for both.
 ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
-CONSENT_SCOPES = SCOPES + [ANALYTICS_SCOPE]
+# Posting comments and replies (comment engagement). Optional like Analytics: uploads never need it.
+COMMENTS_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+CONSENT_SCOPES = SCOPES + [ANALYTICS_SCOPE, COMMENTS_SCOPE]
 T = TypeVar("T")
 BACKOFF_SECONDS = [5, 15, 30, 60, 120, 180]     # ~7 minutes in total before an upload step gives up
 

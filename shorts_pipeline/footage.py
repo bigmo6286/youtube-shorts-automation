@@ -91,6 +91,67 @@ def search_photos(keyword: str) -> list[dict[str, Any]]:
     return out
 
 
+# ---------------------------------------------------------------------------------------------- Pixabay (second source)
+PIXABAY_PER_SEARCH = 6
+
+
+def _pixabay(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    key = env("PIXABAY_API_KEY")
+    if not key:
+        return []
+    try:
+        r = requests.get(f"https://pixabay.com/api/{path}", params={**params, "key": key, "safesearch": "true"}, timeout=20)
+        r.raise_for_status()
+        return r.json().get("hits", [])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("pixabay search failed for %r: %s", params.get("q"), str(exc)[:120])
+        return []
+
+
+def search_pixabay_videos(keyword: str) -> list[dict[str, Any]]:
+    """Free Pixabay videos (PIXABAY_API_KEY). Mostly landscape; portrait files are preferred when offered."""
+    key = f"pbv:{keyword.lower()}"
+    cached = _SEARCH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    out = []
+    for h in _pixabay("videos/", {"q": keyword, "per_page": PIXABAY_PER_SEARCH, "video_type": "film"}):
+        files = [f for f in (h.get("videos") or {}).values() if isinstance(f, dict) and f.get("url")]
+        if not files:
+            continue
+        # portrait first, then the size closest to 1080 wide x 1920 high once cropped (height ~1080 is plenty)
+        files.sort(key=lambda f: (0 if (f.get("height") or 0) >= (f.get("width") or 0) else 1, abs((f.get("height") or 0) - 1080)))
+        f = files[0]
+        shape = "vertical" if (f.get("height") or 0) >= (f.get("width") or 0) else "horizontal, cropped to vertical"
+        out.append({"id": f"pb{h['id']}", "kind": "video", "source": "pixabay",
+                    "description": f"{h.get('tags', keyword)} ({shape})", "duration": h.get("duration", 0),
+                    "link": f["url"], "page": h.get("pageURL", "")})
+    _SEARCH_CACHE.set(key, out)
+    return out
+
+
+def search_pixabay_photos(keyword: str) -> list[dict[str, Any]]:
+    key = f"pbp:{keyword.lower()}"
+    cached = _SEARCH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    out = [{"id": f"pbp{h['id']}", "kind": "photo", "source": "pixabay", "description": h.get("tags", keyword),
+            "link": h.get("largeImageURL") or h.get("webformatURL"), "page": h.get("pageURL", "")}
+           for h in _pixabay("", {"q": keyword, "per_page": PIXABAY_PER_SEARCH, "image_type": "photo",
+                                  "orientation": "vertical"}) if h.get("largeImageURL") or h.get("webformatURL")]
+    _SEARCH_CACHE.set(key, out)
+    return out
+
+
+def video_candidates(keyword: str) -> list[dict[str, Any]]:
+    """Pexels first (vertical files), then Pixabay; ids never collide."""
+    return search_videos(keyword) + search_pixabay_videos(keyword)
+
+
+def photo_candidates(keyword: str) -> list[dict[str, Any]]:
+    return search_photos(keyword) + search_pixabay_photos(keyword)
+
+
 def choose(line_text: str, keyword: str, candidates: list[dict[str, Any]], *, strict: bool = True,
            used: set[str] | None = None) -> tuple[dict[str, Any] | None, float]:
     """TypeSafe picks the candidate that best illustrates the line; returns (candidate, fit probability).
@@ -241,19 +302,26 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
     if fallback_keyword:
         attempts.append((fallback_keyword, False))
     attempts.append((keyword, False))
+    reuse: tuple[dict[str, Any], float, str, bool] | None = None    # a clip already in this Short: last resort only
     for kw, strict in attempts:
-        pick, fit = choose(line_text, kw, search_videos(kw), strict=strict, used=used)
-        if pick and fit >= MIN_FIT:
-            clip = _download(pick["link"], PEXELS_CACHE / f"{pick['id']}.mp4")
+        for kind, cands in (("video", video_candidates(kw)), ("photo", photo_candidates(kw))):
+            pick, fit = choose(line_text, kw, cands, strict=strict, used=used)
+            if not pick or fit < MIN_FIT:
+                continue
+            if pick["id"] in used:
+                reuse = reuse or (pick, fit, kw, strict)
+                continue
+            clip = _materialize(pick, kind, seconds, work_dir, index)
             if clip:
                 used.add(pick["id"])
-                return clip, f"video '{pick['description']}' ({fit:.0%} {'literal' if strict else 'same-subject'} fit, '{kw}')"
-        pick, fit = choose(line_text, kw, search_photos(kw), strict=strict, used=used)
-        if pick and fit >= MIN_FIT:
-            clip = photo_clip(pick["link"], pick["id"], seconds, work_dir / f"bg_{index}.mp4")
-            if clip:
-                used.add(pick["id"])
-                return clip, f"photo '{pick['description'][:60]}' ({fit:.0%} {'literal' if strict else 'same-subject'} fit, '{kw}')"
+                src = " on Pixabay" if pick.get("source") == "pixabay" else ""
+                return clip, (f"{kind} '{pick['description'][:60]}'{src} ({fit:.0%} "
+                              f"{'literal' if strict else 'same-subject'} fit, '{kw}')")
+    if reuse and not ai_on:
+        pick, fit, kw, strict = reuse
+        clip = _materialize(pick, pick.get("kind", "video"), seconds, work_dir, index)
+        if clip:
+            return clip, f"{pick.get('kind', 'video')} '{pick['description'][:60]}' again (nothing new fit '{kw}')"
     if ai_on:
         img = imagegen.generate(line_text, keyword, fallback_keyword)
         clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
@@ -261,6 +329,12 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
             return clip, f"AI image ({ai['provider']}) for '{keyword}' (nothing on Pexels matched)"
     clip = generated_background(work_dir / f"bg_{index}.mp4", seconds + 0.5, seed=index)
     return clip, f"generated background (nothing on Pexels matched '{keyword}' or '{fallback_keyword}')"
+
+
+def _materialize(pick: dict[str, Any], kind: str, seconds: float, work_dir: Path, index: int) -> Path | None:
+    if kind == "photo":
+        return photo_clip(pick["link"], pick["id"], seconds, work_dir / f"bg_{index}.mp4")
+    return _download(pick["link"], PEXELS_CACHE / f"{pick['id']}.mp4")
 
 
 def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_seconds: float,

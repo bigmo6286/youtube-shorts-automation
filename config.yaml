@@ -44,6 +44,10 @@ ranking:
 # Production
 production:
   voice: en-US-AndrewNeural   # any edge-tts voice; `edge-tts --list-voices`
+  tts:
+    engine: edge              # edge = Microsoft's online voices (exact word timings) | kokoro = free local voice for everything
+    fallback: kokoro          # when edge-tts fails, voice with Kokoro (run `python main.py setup-voice` once; ~120 MB)
+    kokoro_voice: am_michael  # e.g. am_michael, am_adam, af_heart, af_bella, bm_george
   voice_rate: "+8%"
   target_seconds: 40          # script length target (30-55 is the Shorts sweet spot)
   captions:
@@ -128,6 +132,11 @@ schedule:
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
   retry_failed: true          # a production that failed for a temporary reason (network, render, voice) runs once more 30 min later
   skip_when_queue_full: true  # skip a production slot while the upload queue already holds a day's worth of uploads
+
+comments:
+  enabled: true               # needs Connect comments in the console (youtube.force-ssl permission)
+  post_questions: true        # post each Short's question as the channel's first comment once it is public
+  auto_reply: false           # false = reply drafts wait in the console; true = post them (never the ones that need you)
 
 upload:
   privacy: private            # private | unlisted | public
