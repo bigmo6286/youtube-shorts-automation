@@ -27,7 +27,8 @@ class ShortScript(BaseModel):
     title: str = Field(description="YouTube title: 40-70 characters, hard maximum 100, no hashtags, includes the hook idea, no clickbait lies")
     hook: str = Field(description="The first spoken sentence. Must stop the scroll within 2 seconds.")
     lines: list[ScriptLine] = Field(description="The body, in order, after the hook")
-    cta: str = Field(description="One short closing line (question to the viewer or a soft follow ask)")
+    cta: str = Field(description="The final spoken line. When the prompt asks for a loop ending: a short bridge that the "
+                                 "hook completes when the video replays. Otherwise a short question to the viewer.")
     description: str = Field(description="YouTube description: 1-3 sentences, then the hashtags on their own line")
     hashtags: list[str] = Field(description="3-6 hashtags without the # sign, first one shorts, never more than 15")
     visual_fallback: str = Field(description=(
@@ -87,6 +88,12 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
             f"- Do: {'; '.join(style.get('dos') or [])}\n"
             f"- Never: {'; '.join(style.get('donts') or [])}\n"
         )
+    if loop_endings():
+        angle_line += (
+            "\nLOOP ENDING (Shorts replay automatically, and replays count as views): deliver the payoff in the body, then "
+            "make `cta` a short bridge clause that the hook completes when the video restarts, so the last line runs "
+            "straight into the first. Example: last line \"And the reason that frog survives is that\" -> first line "
+            "\"This frog freezes solid every winter.\" No closing question, no 'follow for more', no sign-off.\n")
     return (
         f"Format: {blueprint['format']}\nTopic: {blueprint['topic']}\nHook style: {blueprint['hook_style']}\n"
         f"Why this works right now: {blueprint.get('why_it_works', '')}\n"
@@ -105,6 +112,11 @@ TITLE_MAX = 100
 TITLE_TARGET = 70
 DESCRIPTION_MAX = 5000
 HASHTAGS_MAX = 15
+
+
+def loop_endings() -> bool:
+    from .config import load_config
+    return bool((load_config().get("production") or {}).get("loop_endings", True))
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -238,7 +250,7 @@ LOCAL_MAX_POLICY_RISK = 0.3     # stricter than for Claude: small models state i
 
 def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], backend: str, max_attempts: int,
                    min_hook_score: float, original_text: str | None = None,
-                   repeat_check: Any = None) -> dict[str, Any]:
+                   repeat_check: Any = None, loop: bool = False) -> dict[str, Any]:
     """Draft, have TypeSafe judge it, send the reviewer notes back, up to `max_attempts` times."""
     backend = pick_backend(backend)
     log.info("script backend: %s", backend)
@@ -275,7 +287,7 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
                      "Pick a completely different subject (a different story, fact, person or experiment) and write it again.")
             user_prompt += taken
             continue
-        qa = judge_script(script, blueprint, original_text=original_text)
+        qa = judge_script(script, blueprint, original_text=original_text, loop=loop)
         script["qa"] = qa
         script["qa_problems"] = []
         if qa is None:
@@ -288,6 +300,9 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
             problems.append("the script risks violating YouTube policy; remove any risky claim or instruction")
         if original_text is None and qa["matches_format"]["noul"] < 0.5:
             problems.append(f"it drifted away from the {blueprint['format']} format / {blueprint['hook_style']} hook")
+        if loop and qa.get("loops", {}).get("noul", 1.0) < 0.5:
+            problems.append("the last line does not lead back into the hook; end on a short bridge that the first line "
+                            "completes when the Short replays, with no closing question")
         if qa["has_payoff"]["noul"] < 0.5:
             problems.append("it never pays off what the hook promised; end with the answer")
         if qa["clarity"]["score"] < 1.0:
@@ -324,7 +339,8 @@ def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angl
     return _write_with_qa(system=SYSTEM, user_prompt=_prompt(blueprint, target_seconds, angle, avoid_titles),
                           blueprint=blueprint, backend=backend, max_attempts=max(max_attempts, 4 if check_repeats else 0),
                           min_hook_score=min_hook_score,
-                          repeat_check=(lambda s: history.find_repeat(s, known)) if check_repeats else None)
+                          repeat_check=(lambda s: history.find_repeat(s, known)) if check_repeats else None,
+                          loop=loop_endings())
 
 
 ENHANCE_SYSTEM = SYSTEM + """

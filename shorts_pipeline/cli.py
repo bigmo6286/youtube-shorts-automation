@@ -310,6 +310,9 @@ def cmd_produce(args) -> Path:
             sys.exit(f"Script writing failed: {exc}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    if script.get("backend") != "custom" and not (script_text and getattr(args, "title", "")):
+        from . import titles
+        titles.improve(script)                         # search-driven title, picked by TypeSafe
     save_json(out_dir / "script.json", script)
     print(f"\nTITLE: {script['title']}\n\n{script['full_text']}\n")
     if script.get("qa_problems"):
@@ -336,6 +339,12 @@ def cmd_produce(args) -> Path:
     # Captions are burned onto the body stream before the intro is concatenated in front of it, so their
     # clock is body-local: no offset here (the intro card carries its own subtitle file).
     ass_path = captions.write_ass(words, out_dir / "captions.ass", style=_caption_style(cfg), full_text=script["full_text"])
+    hook_cfg = cfg.get("hook_overlay") or {}
+    if hook_cfg.get("enabled", True) and (script.get("thumbnail_text") or script.get("hook")):
+        n = len((script.get("hook") or "").split())
+        hook_end = words[min(len(words), max(n, 1)) - 1]["end"] + 0.5 if words and n else 2.5
+        seconds = max(1.5, min(float(hook_cfg.get("max_seconds", 3.5)), hook_end))
+        captions.add_hook_overlay(ass_path, script.get("thumbnail_text") or script["hook"], seconds, style=_caption_style(cfg))
     segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir)
 
     music_cfg = dict(cfg.get("music") or {})
@@ -360,7 +369,9 @@ def cmd_produce(args) -> Path:
     video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
                           music_path=Path(track["path"]) if track else None,
                           music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
-                          fade_seconds=float(music_cfg.get("fade_seconds", 1.5)), intro=intro, outro=outro)
+                          fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro
+                                        else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
+                          intro=intro, outro=outro)
     meta = {"run": run_name, "blueprint": blueprint, "video": str(video),
             "title": script["title"], "description": description,
             "hashtags": script["hashtags"], "duration": total,

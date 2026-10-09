@@ -1,6 +1,8 @@
 """Caption styling: presets + overrides rendered to ASS subtitle files (word-by-word highlight, cards)."""
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 from typing import Any
 
@@ -184,3 +186,39 @@ def subtitles_filter(ass_path: Path) -> str:
         fonts = str(FONTS_DIR.resolve()).replace("\\", "/").replace(":", "\\:")
         arg += f":fontsdir='{fonts}'"
     return arg
+
+
+def add_hook_overlay(ass_path: Path, text: str, seconds: float, *, style: dict[str, Any] | None = None,
+                     width: int = 1080, height: int = 1920) -> Path:
+    """Large on-screen hook from the first frame (the punchiest words of the video), above the captions, for the
+    first `seconds`. Viewers decide in about a second whether to keep watching; words on screen before the voice has
+    finished a sentence help them stay. Appends a style and one event to an existing captions file."""
+    st = resolve_style(style)
+    words = re.sub(r"\s+", " ", (text or "").strip()).upper().split()
+    if not words or seconds <= 0:
+        return ass_path
+    # two balanced lines at most
+    if len(" ".join(words)) > 16 and len(words) > 1:
+        half = max(1, round(len(words) / 2))
+        body = " ".join(words[:half]) + r"\N" + " ".join(words[half:])
+    else:
+        body = " ".join(words)
+    size = int(int(st["size"]) * 1.25)
+    y = int(height * (0.40 if st["position"] == "top" else 0.14))   # stay clear of the running captions
+    color = _ass_color(st["highlight"])
+    outline_c = _ass_color(st["outline_color"])
+    style_line = (f"Style: HookTitle,{st['font']},{size},{color},&H0000FFFF,{outline_c},&H96000000,-1,0,0,0,100,100,"
+                  f"{int(st.get('spacing', 0))},0,1,{max(6, int(st['outline']) + 2)},3,8,70,70,0,1")
+    event = (f"Dialogue: 1,{_ts(0.0)},{_ts(seconds)},HookTitle,,0,0,0,,"
+             f"{{\\an8\\pos({width // 2},{y})\\fad(0,250)}}{body}")
+    content = ass_path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    out, styled = [], False
+    for line in lines:
+        out.append(line)
+        if not styled and line.startswith("Style: "):
+            out.append(style_line)
+            styled = True
+    out.append(event)
+    ass_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return ass_path

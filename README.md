@@ -250,6 +250,22 @@ winners becomes views-factor^0.6 x retention-factor^0.4. The script writer also 
 openings as examples of technique (their subjects stay off limits). Uploads never depend on this permission. Analytics
 lag about two days, and videos under 20 views are ignored.
 
+## Titles people search for
+
+After the script is written, two-word phrases about its subject are sent to YouTube's free search-suggest endpoint
+(no key), which returns what people actually type (e.g. "octopus heartbeat", "octopus hearts and brains"). The script
+writer rewrites the title a few ways around those phrases, and TypeSafe judges which title a Shorts viewer is most
+likely to tap (a Choice over all candidates) and whether each is accurate to the script (a Noul per title). The
+original title stays unless a variant is accurate and clearly preferred. Settings: `production.search_titles`.
+
+## Loops and the on-screen hook
+
+Shorts replay automatically and replays count as views, so scripts end on a short bridge that the opening line
+completes when the video restarts, instead of a closing question (`production.loop_endings`). TypeSafe checks the
+loop and sends drafts that do not loop back for a rewrite. The "Follow for more" outro card is off by default and the
+music does not fade out, because both break the loop. The video's punchiest words (its thumbnail text) appear as big
+text at the top from the first frame until the hook sentence ends (`production.hook_overlay`).
+
 ## Thumbnails
 
 Every Short gets `thumbnail.jpg` (1080x1920): a frame from the first footage clip, a dark band, and a

@@ -61,12 +61,20 @@ production:
     seconds: 1.5
     clip: assets/intro.mp4
   outro:
-    enabled: true
+    enabled: false            # a closing card breaks the loop (see loop_endings); turn on for a "Follow for more" card
     mode: card
     text: "Follow for more"
     handle: ""                # e.g. "@yourchannel", shown under the outro text
     seconds: 2.0
     clip: assets/outro.mp4
+  loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views)
+  hook_overlay:
+    enabled: true             # the video's punchiest words as big text at the top from the first frame
+    max_seconds: 3.5
+  search_titles:
+    enabled: true             # rewrite the title around phrases people type into YouTube search; TypeSafe picks the best
+    variants: 3
+    region: US
   thumbnail:
     enabled: true             # 1080x1920 thumbnail.jpg per video: first footage frame + dark band + 3-6 word line
     band: true                # dark band behind the text

@@ -264,7 +264,14 @@ def judge_short(meta: dict[str, Any], *, use_cache: bool = True) -> dict[str, An
     return plain
 
 
-def judge_script(script: dict[str, Any], blueprint: dict[str, Any], original_text: str | None = None) -> dict[str, Any] | None:
+LOOP_QUESTION = _q("noul", (
+    "Shorts replay automatically. Does the final spoken line (`script.cta`) lead straight back into the opening line "
+    "(`script.hook`), so that when the video restarts the two read as one continuous sentence or thought, with no "
+    "closing question, 'follow for more' or sign-off in between?"), None)
+
+
+def judge_script(script: dict[str, Any], blueprint: dict[str, Any], original_text: str | None = None,
+                 loop: bool = False) -> dict[str, Any] | None:
     if not has_typesafe():
         return None
     state = {
@@ -274,6 +281,8 @@ def judge_script(script: dict[str, Any], blueprint: dict[str, Any], original_tex
         "title": script.get("title", ""),
     }
     questions = dict(SCRIPT_QA_QUESTIONS)
+    if loop:
+        questions["loops"] = LOOP_QUESTION
     if original_text:
         state["original_script"] = original_text
         questions.update(ENHANCE_QA_QUESTIONS)
