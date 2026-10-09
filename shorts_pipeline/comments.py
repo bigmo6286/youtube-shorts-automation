@@ -149,6 +149,8 @@ def triage(items: list[dict[str, Any]], context: dict[str, dict[str, str]]) -> N
                                  "harassment or hate, a personal or private matter, or anything risky to answer automatically?", None),
         "worth": q("noul", "Is `comment.text` a genuine reaction or question from a viewer that a short, friendly reply from "
                            "the channel would add to (not just an emoji or a single word)?", None),
+        "idea": q("noul", "Does `comment.text` ask for, or suggest, a subject for a future video, or ask a question that a "
+                          "whole new Short could answer (not just a question about this video's facts)?", None),
     }
     with judge._client() as client:
         for it in items:
@@ -157,7 +159,7 @@ def triage(items: list[dict[str, Any]], context: dict[str, dict[str, str]]) -> N
             try:
                 r = client.system_one(state=state, questions=questions)
                 it.update(spam=float(r.answers["spam"].noul), needs_owner=float(r.answers["needs_owner"].noul),
-                          worth=float(r.answers["worth"].noul))
+                          worth=float(r.answers["worth"].noul), idea=float(r.answers["idea"].noul))
             except Exception as exc:  # noqa: BLE001
                 log.warning("comment triage failed: %s", str(exc)[:120])
                 it.update(spam=0.0, needs_owner=1.0, worth=0.0)        # unsure: leave it to the owner
@@ -227,6 +229,11 @@ def run(interactive: bool = False) -> dict[str, Any]:
         raise RuntimeError("comments are not connected: use Connect comments in the console (or `comments connect`)")
     yt = _service(interactive)
     stats["questions"] = post_questions(yt)
+    try:
+        from .specials import post_followups
+        stats["followups"] = post_followups(yt)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sequel / viewer follow-ups failed: %s", str(exc)[:160])
     items = fetch_new(yt)
     stats["new"] = len(items)
     if not items:

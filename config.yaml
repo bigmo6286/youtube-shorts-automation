@@ -135,6 +135,14 @@ schedule:
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
   retry_failed: true          # a production that failed for a temporary reason (network, render, voice) runs once more 30 min later
   skip_when_queue_full: true
+  specials:
+    explore_share: 0.2        # share of productions that try a format x topic never made on this channel
+    sequels: true             # make a "Part 2" of uploads that beat the channel's typical views per hour by sequel_factor
+    sequels_per_day: 1
+    sequel_factor: 3.0
+    sequel_min_views: 300
+    ideas: true               # turn comments that ask for a topic into a Short, and reply to the viewer with the link
+    ideas_per_day: 1
   tuning:
     learn_volume: true        # daily upload limit learned from views per day at each upload volume (min 3/day)
     learn_length: true        # script length learned from views and retention by video length (18-55 s)  # skip a production slot while the upload queue already holds a day's worth of uploads

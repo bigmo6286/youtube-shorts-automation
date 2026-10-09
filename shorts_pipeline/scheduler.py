@@ -122,6 +122,35 @@ def choose_blueprint(blueprints: list[dict[str, Any]], cfg: dict[str, Any], stat
     return pick["index"]
 
 
+def explore_choice(blueprints: list[dict[str, Any]], cfg: dict[str, Any]) -> int | None:
+    """About `explore_share` of productions try a format x topic pair the channel has never made, picked from the trend
+    run by opportunity, so new winners can be found instead of only repeating known ones. Returns a 1-based index."""
+    import random
+    try:
+        from .specials import config as specials_config
+        share = float(specials_config()["explore_share"])
+    except Exception:  # noqa: BLE001
+        share = 0.0
+    if share <= 0 or random.random() >= share:
+        return None
+    tried: set[str] = set()
+    try:
+        from .channel import labelled_uploads
+        from .history import known_videos
+        from .judge import canonical_topic
+        tried |= {f"{u.get('format')}|{canonical_topic(u.get('topic') or '')}" for u in labelled_uploads()}
+        tried |= {k.get("key", "") for k in known_videos()}
+    except Exception:  # noqa: BLE001
+        return None
+    untried = [(i + 1, b) for i, b in enumerate(blueprints)
+               if not (cfg.get("skip_stretch", True) and b.get("stretch")) and f"{b.get('format')}|{b.get('topic')}" not in tried]
+    if not untried:
+        return None
+    index, bp = random.choices(untried, weights=[max(0.01, float(b.get("opportunity") or 0)) for _, b in untried], k=1)[0]
+    log.info("exploration: trying %s x %s, never made on this channel", bp.get("format"), bp.get("topic"))
+    return index
+
+
 def slots_for(day: datetime, count: int, start_hour: float, end_hour: float) -> list[datetime]:
     """`count` times evenly spread over [start_hour, end_hour) of `day`, first slot at start_hour."""
     if count <= 0:
@@ -372,8 +401,25 @@ class Scheduler:
                     self.state["history"].append({"kind": "refresh (no blueprints yet)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
                                                   "started": datetime.now().strftime("%H:%M:%S"), "job": job["id"], "status": job["status"]})
                 return job is not None
+            special = None
+            try:
+                from .specials import next_special
+                special = next_special()
+            except Exception:  # noqa: BLE001
+                log.exception("special production check failed")
+            if special:
+                params = {**special, "music": "random", "scheduled": True}
+                job = self._submit("produce", params)
+                if job is None:
+                    return False
+                self.state["history"].append({"kind": "produce (sequel)" if "sequel_of" in special else "produce (viewer idea)",
+                                              "slot": slot.strftime("%Y-%m-%d %H:%M"), "started": datetime.now().strftime("%H:%M:%S"),
+                                              "job": job["id"], "status": job["status"], "params": special})
+                log.info("scheduled special production (slot %s) -> job %s", slot.strftime("%H:%M"), job["id"])
+                return True
+            explore_index = explore_choice(blueprints, cfg)
             snapshot = dict(self.state)        # choose_blueprint mutates rotation state; keep it only if the job starts
-            choice = choose_blueprint(blueprints, cfg, snapshot)
+            choice = explore_index or choose_blueprint(blueprints, cfg, snapshot)
             if choice is None:
                 log.warning("scheduled produce skipped: no eligible blueprint")
                 return False
@@ -381,6 +427,8 @@ class Scheduler:
                 params = {"blueprint_key": choice.split(":", 1)[1], "music": "random", "scheduled": True}
             else:
                 params = {"run": run_dir.name, "blueprint": choice, "music": "random", "scheduled": True}
+            if explore_index:
+                params["explore"] = True
             job = self._submit("produce", params)
             if job is not None:
                 self.state.update({k: snapshot[k] for k in ("next_blueprint", "last_blueprint_key") if k in snapshot})

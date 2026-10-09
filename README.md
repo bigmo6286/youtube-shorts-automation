@@ -309,6 +309,17 @@ On every channel sync the engine re-reads your public uploads (at least 48 hours
 Both move halfway from their previous value on each sync, so one odd week cannot swing the channel. The Overview and
 the daily report show the current values.
 
+## Exploration, sequels and viewers' requests (`schedule.specials`)
+
+- **Exploration.** About 20 % of scheduled productions try a format x topic pair the channel has never made, picked
+  from the trend run by opportunity, so new winners can be found instead of only repeating known ones.
+- **Sequels.** A public upload with clearly better views per hour than the channel's typical Short (3x by default,
+  300+ views, retention not below the channel median) gets one "Part 2" with new material on the same subject,
+  part 1 linked in the description; once part 2 is public, a comment under part 1 points to it. At most one a day.
+- **Viewers' requests.** Comment triage also asks TypeSafe whether a comment requests a topic; at most one a day
+  becomes a Short in the format of the video it was left on, and the viewer gets a reply with the link once it is public.
+These experiments and specials get a priority lift in the upload queue so they are published and measured.
+
 ## Originality guard
 
 YouTube's monetisation policy turns down repetitive, mass-produced channels. The engine counts title and opening

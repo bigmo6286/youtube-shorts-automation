@@ -262,6 +262,33 @@ def cmd_produce(args) -> Path:
                                                 backend=cfg.get("script_backend", "auto"), avoid_titles=None)
         except RuntimeError as exc:
             sys.exit(f"Script writing failed: {exc}")
+    elif getattr(args, "sequel_of", None) or getattr(args, "idea", None):
+        # A sequel of a winning upload, or a Short a viewer asked for in the comments (see specials.py).
+        from . import specials
+        try:
+            if args.sequel_of:
+                blueprint, angle, source = specials.sequel_blueprint(args.sequel_of)
+                allow = [source["title"]]
+                run_name = "sequel"
+            else:
+                blueprint, angle, source = specials.idea_blueprint(args.idea)
+                allow = [source.get("title", "")]
+                run_name = "viewer_idea"
+            script_gen.pick_backend(cfg.get("script_backend", "auto"))
+        except RuntimeError as exc:
+            sys.exit(str(exc))
+        log.info("%s: %s x %s", run_name.replace("_", " "), blueprint["format"], blueprint["topic"])
+        out_dir = OUTPUT_DIR / f"{now_iso()}_{run_name}_{blueprint['format']}"
+        try:
+            script = script_gen.generate_script(blueprint, target_seconds=_learned_seconds(blueprint, cfg), angle=angle,
+                                                max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=None, allow_repeat_of=allow)
+        except RuntimeError as exc:
+            sys.exit(f"Script writing failed: {exc}")
+        if args.sequel_of:
+            if "part 2" not in script["title"].lower():
+                script["title"] = script_gen._shorten(script["title"], script_gen.TITLE_MAX - 9) + " (Part 2)"
+            script["description"] = (f"Part 1: https://youtube.com/shorts/{args.sequel_of}\n\n" + script["description"]).strip()
     elif getattr(args, "blueprint_key", None):
         # One of your channel's own winners (format x topic that beats your channel median), independent of the trend run.
         from .channel import CHANNEL_BLUEPRINTS_PATH, channel_blueprints
@@ -374,6 +401,9 @@ def cmd_produce(args) -> Path:
                           fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro
                                         else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
                           intro=intro, outro=outro)
+    for flag in ("explore",):
+        if getattr(args, flag, False):
+            blueprint = {**blueprint, flag: True}
     meta = {"run": run_name, "blueprint": blueprint, "video": str(video),
             "title": script["title"], "description": description,
             "hashtags": script["hashtags"], "duration": total,
@@ -383,6 +413,9 @@ def cmd_produce(args) -> Path:
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
+    if getattr(args, "sequel_of", None) or getattr(args, "idea", None):
+        from . import specials
+        specials.record("sequel" if args.sequel_of else "idea", args.sequel_of or args.idea, out_dir.name)
     from . import history
     try:
         housekeeping.prune_cache()
@@ -903,6 +936,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
     pr.add_argument("--profile", help="produce in the style of an analysed channel (see `profile add`)")
     pr.add_argument("--exemplar", help="with --profile: remake one of that channel's Shorts by video id (see `profile show`)")
+    pr.add_argument("--sequel-of", dest="sequel_of", help="make a Part 2 of this upload (YouTube video id)")
+    pr.add_argument("--idea", help="make the Short a viewer asked for (comment thread id, see `comments list`)")
     pr.add_argument("--blueprint-key", dest="blueprint_key", help="one of your channel's winners, e.g. storytime|psychology_mind (see `channel report`)")
     pr.add_argument("--seconds", type=int, help="target length for --profile (default: the channel's typical length)")
     pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")

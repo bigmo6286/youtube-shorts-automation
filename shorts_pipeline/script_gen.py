@@ -345,10 +345,14 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
 
 def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angle: str | None = None,
                     max_attempts: int = 3, min_hook_score: float = 2.0, backend: str = "auto",
-                    avoid_titles: list[str] | None = None, check_repeats: bool = True) -> dict[str, Any]:
+                    avoid_titles: list[str] | None = None, check_repeats: bool = True,
+                    allow_repeat_of: list[str] | None = None) -> dict[str, Any]:
     from . import history
 
     known = history.known_videos() if check_repeats else []
+    if allow_repeat_of:                     # a sequel or a viewer's follow-up shares its subject on purpose
+        allowed = {t.strip().lower() for t in allow_repeat_of}
+        known = [k for k in known if k["title"].strip().lower() not in allowed]
     if avoid_titles is None:
         avoid_titles = history.avoid_titles(blueprint)
     return _write_with_qa(system=SYSTEM, user_prompt=_prompt(blueprint, target_seconds, angle, avoid_titles),

@@ -246,7 +246,13 @@ def score_short(out_dir: Path, meta: dict[str, Any] | None = None, script: dict[
     else:
         hook = float(((script.get("qa") or {}).get("hook_strength") or {}).get("score", 1.5)) / 3
         value = 0.7 * hook + 0.3 * factor_part
-    return {"priority": int(round(100 * value)), "parts": parts}
+    priority = int(round(100 * value))
+    # Experiments (untried formats) score low on "fits the channel" by definition, and sequels / viewer requests are
+    # made on purpose: lift them so they get published and measured instead of expiring in the queue.
+    if bp.get("explore") or bp.get("source") in ("sequel", "viewer_idea"):
+        priority = min(100, max(priority + 10, int(config()["min_priority"]) + 15))
+        parts["special_bonus"] = 1.0
+    return {"priority": priority, "parts": parts}
 
 
 def enqueue(out_dir: Path) -> dict[str, Any]:
