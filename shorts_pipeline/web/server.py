@@ -522,7 +522,7 @@ def _sync_youtube_status(force: bool = False) -> bool:
     def work() -> None:
         try:
             from ..upload import sync_output_status
-            sync_output_status(OUTPUT_DIR)
+            _STATUS_SYNC["changed"] = sync_output_status(OUTPUT_DIR)
             _STATUS_SYNC["error"] = None
         except Exception as exc:  # noqa: BLE001 - consent needed, offline, quota: show the old state
             _STATUS_SYNC["error"] = str(exc)[:200]
@@ -536,7 +536,14 @@ def _sync_youtube_status(force: bool = False) -> bool:
 
 @app.post("/api/outputs/refresh-status")
 def refresh_output_status(force: bool = False) -> dict[str, Any]:
-    return {"started": _sync_youtube_status(force=force), "last_error": _STATUS_SYNC["error"]}
+    started = _sync_youtube_status(force=force)
+    return {"started": started, "running": _STATUS_SYNC["running"], "last_error": _STATUS_SYNC["error"]}
+
+
+@app.get("/api/outputs/refresh-status")
+def output_status_progress() -> dict[str, Any]:
+    return {"running": _STATUS_SYNC["running"], "changed": _STATUS_SYNC.get("changed", 0),
+            "last_error": _STATUS_SYNC["error"], "last": _STATUS_SYNC["last"]}
 
 
 @app.get("/api/outputs")
@@ -614,6 +621,15 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 app.mount("/music", StaticFiles(directory=str(ROOT / "assets" / "music")), name="music")
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+
+@app.middleware("http")
+async def _no_stale_ui(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"      # revalidate (ETag) instead of reusing an old copy
+    return response
 
 
 @app.get("/")

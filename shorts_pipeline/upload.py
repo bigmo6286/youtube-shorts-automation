@@ -81,7 +81,8 @@ def _credentials(interactive: bool = True):
 
 def youtube_service(interactive: bool = True):
     from googleapiclient.discovery import build
-    return build("youtube", "v3", credentials=_credentials(interactive=interactive))
+    # static_discovery: use the API description bundled with the client instead of downloading it (~13 s) each time
+    return build("youtube", "v3", credentials=_credentials(interactive=interactive), static_discovery=True)
 
 
 def set_privacy(video_id: str, privacy: str) -> dict[str, Any]:

@@ -226,8 +226,14 @@ async function loadOutputs(afterStatusSync = false) {
   // Ask the server to re-read privacy from YouTube (throttled); redraw once it has had time to finish,
   // so a video made public in YouTube Studio shows as public here.
   if (!afterStatusSync) {
-    api("/api/outputs/refresh-status", { method: "POST" })
-      .then((r) => { if (r.started) setTimeout(() => loadOutputs(true), 6000); }).catch(() => {});
+    api("/api/outputs/refresh-status", { method: "POST" }).then(async (r) => {
+      if (!r.started && !r.running) return;
+      for (let i = 0; i < 45; i++) {                       // wait for YouTube's answer (up to ~90 s)
+        await new Promise((res) => setTimeout(res, 2000));
+        const s = await api("/api/outputs/refresh-status");
+        if (!s.running) { if (s.changed) loadOutputs(true); return; }
+      }
+    }).catch(() => {});
   }
   const outs = await api("/api/outputs");
   state.outputs = Object.fromEntries(outs.map((o) => [o.dir, o]));
