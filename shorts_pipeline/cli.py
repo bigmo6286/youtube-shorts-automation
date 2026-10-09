@@ -352,6 +352,13 @@ def cmd_produce(args) -> Path:
             # lose the Telegram delivery or mark the whole production as failed. Upload it from the card later.
             upload_error = f"{type(exc).__name__}: {str(exc)[:300]}"
             log.error("upload failed, the video is saved in %s and can be uploaded from its Studio card: %s", out_dir.name, upload_error)
+    elif getattr(args, "scheduled", False) and script.get("backend") == "ollama":
+        meta["upload_state"] = "review"
+        meta["written_by"] = "local model"
+        save_json(out_dir / "meta.json", meta)
+        queue_note = ("Written by the free local model because Claude was unavailable. Check the facts, then use "
+                      "Upload on its card; it is not uploaded automatically.")
+        print(queue_note)
     elif getattr(args, "scheduled", False):
         from . import upload_queue
         if upload_queue.config()["auto"]:

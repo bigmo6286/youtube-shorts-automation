@@ -343,9 +343,15 @@ ollama pull qwen2.5:3b
 ```
 
 The fallback switches on by itself once the model is present (`production.ollama.fallback`); the status card shows it.
-Set `production.script_backend: ollama` to use it for every script and need no subscription at all. Drafts go through
-the same TypeSafe QA and repeat check as Claude's. Local models write less vividly than Claude and are slow on a CPU
-(minutes per draft on a 2-core laptop); a bigger model such as `qwen2.5:7b` or `gemma3:4b` writes better on a faster PC.
+If Claude fails in the middle of a job, that script is finished with the local model. Set
+`production.script_backend: ollama` to use it for every script and need no subscription at all.
+
+Small local models are much weaker than Claude: on a 2-core laptop `qwen2.5:3b` takes 3-5 minutes per draft (about 2
+tokens/s), often ignores "pick another subject" feedback, and can state invented facts with confidence. So local
+drafts are held to stricter rules: at most 3 drafts, every TypeSafe check must pass, and the policy/accuracy risk must
+stay under 30% (Claude: 50%); otherwise the slot fails with an alert and is retried later (when Claude may be back).
+A Short written by the local model is never uploaded automatically: it is sent to Telegram and its card says
+"review before upload". A bigger model (`qwen2.5:7b`, `gemma3:4b`) writes better on a faster PC.
 
 ## Disk space
 

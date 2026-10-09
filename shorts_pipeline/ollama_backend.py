@@ -69,28 +69,50 @@ def _server_up() -> bool:
         return False
 
 
-def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
-    """Resolve $ref/$defs so small models and the grammar converter see one plain schema."""
-    defs = schema.get("$defs") or schema.get("definitions") or {}
+# Hard limits for small local models: without them they can keep writing until the timeout.
+LIMITS = {"title": 90, "hook": 160, "text": 150, "visual_keyword": 60, "cta": 120, "description": 400,
+          "visual_fallback": 50, "thumbnail_text": 40, "lines": (5, 12), "hashtags": (3, 6)}
+MAX_TOKENS = 900
 
-    def walk(node: Any) -> Any:
-        if isinstance(node, dict):
-            if "$ref" in node:
-                name = node["$ref"].split("/")[-1]
-                return walk(dict(defs.get(name, {})))
-            return {k: walk(v) for k, v in node.items() if k not in ("$defs", "definitions", "title")}
+
+def _inline_refs(schema: dict[str, Any], limits: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resolve $ref/$defs so small models and the grammar converter see one plain schema; drop schema metadata
+    (titles of schemas, not properties named "title"); add length limits per property name."""
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+    limits = limits or {}
+
+    def walk(node: Any, name: str = "") -> Any:
         if isinstance(node, list):
             return [walk(x) for x in node]
-        return node
+        if not isinstance(node, dict):
+            return node
+        if "$ref" in node:
+            return walk(dict(defs.get(node["$ref"].split("/")[-1], {})), name)
+        out: dict[str, Any] = {}
+        for k, v in node.items():
+            if k in ("$defs", "definitions", "title"):
+                continue                                   # metadata; real properties live under "properties"
+            if k == "properties" and isinstance(v, dict):
+                out[k] = {prop: walk(sub, prop) for prop, sub in v.items()}
+            else:
+                out[k] = walk(v)
+        lim = limits.get(name)
+        if lim is not None and out.get("type") == "string" and isinstance(lim, int):
+            out["maxLength"] = lim
+        if lim is not None and out.get("type") == "array" and isinstance(lim, tuple):
+            out["minItems"], out["maxItems"] = lim
+        if name == "hashtags" and out.get("type") == "array":
+            out.setdefault("items", {})["maxLength"] = 30
+        return out
     return walk(schema)
 
 
 def generate_json(system: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
     cfg = config()
-    plain = _inline_refs(schema)
+    plain = _inline_refs(schema, LIMITS)
     body = {
         "model": cfg["model"], "stream": False, "format": plain, "keep_alive": "10m",
-        "options": {"temperature": float(cfg["temperature"]), "num_ctx": 8192},
+        "options": {"temperature": float(cfg["temperature"]), "num_ctx": 8192, "num_predict": MAX_TOKENS},
         "messages": [
             {"role": "system", "content": system + "\n\nAnswer with one JSON object only, matching the required schema."},
             {"role": "user", "content": prompt},

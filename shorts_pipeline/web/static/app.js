@@ -259,6 +259,7 @@ async function loadOutputs(afterStatusSync = false) {
         </div>
         <div class="muted small">${esc(o.folder)}</div>
         ${!o.youtube_id && o.upload_state === "queued" ? `<span class="tag ${o.upload_priority >= (state.minPriority ?? 30) ? "ok" : "warn"}" title="${esc(Object.entries(o.priority_parts || {}).map(([k, v]) => `${k} ${Math.round(v * 100)}`).join(", "))}">in upload queue · priority ${o.upload_priority}</span>` : ""}
+        ${!o.youtube_id && o.upload_state === "review" ? `<span class="tag warn" title="Claude was unavailable; check the facts before uploading">written by the local model: review before upload</span>` : ""}
         ${!o.youtube_id && o.upload_state === "expired" ? `<span class="tag warn">not uploaded automatically (waited too long)</span>` : ""}
         ${!o.youtube_id && o.upload_state === "failed" ? `<span class="tag warn" title="${esc(o.upload_error || "")}">automatic upload failed</span>` : ""}
         ${o.youtube_id && o.privacy === "deleted" ? `<span class="tag warn">removed from YouTube (${esc(o.youtube_id)})</span>` : ""}

@@ -222,12 +222,18 @@ def _draft(client, system: str, user_prompt: str, backend: str = "") -> ShortScr
     return ShortScript.model_validate(data)
 
 
+LOCAL_MAX_ATTEMPTS = 3          # each local draft takes minutes on a laptop CPU
+LOCAL_MAX_POLICY_RISK = 0.3     # stricter than for Claude: small models state invented "facts" confidently
+
+
 def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], backend: str, max_attempts: int,
                    min_hook_score: float, original_text: str | None = None,
                    repeat_check: Any = None) -> dict[str, Any]:
     """Draft, have TypeSafe judge it, send the reviewer notes back, up to `max_attempts` times."""
     backend = pick_backend(backend)
     log.info("script backend: %s", backend)
+    if backend == "ollama":
+        max_attempts = min(max_attempts, LOCAL_MAX_ATTEMPTS)
     client = anthropic.Anthropic() if backend == "api" else None
     feedback = ""
     best: dict[str, Any] | None = None
@@ -241,6 +247,7 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
             log.warning("Claude failed (%s); switching to the free local model (Ollama) for this script",
                         str(exc)[:160])
             backend, client = "ollama", None
+            max_attempts = min(max_attempts, attempt + LOCAL_MAX_ATTEMPTS - 1)
             parsed = _draft(client, system, user_prompt + feedback, backend)
         script = parsed.model_dump()
         script["backend"] = backend
@@ -267,7 +274,7 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
         hook = qa["hook_strength"]["score"]
         if hook < min_hook_score:
             problems.append(f"the hook scored {hook:.1f}/3 for scroll-stopping power; make it more specific and surprising")
-        if qa["policy_risk"]["noul"] > 0.5:
+        if qa["policy_risk"]["noul"] > (LOCAL_MAX_POLICY_RISK if backend == "ollama" else 0.5):
             problems.append("the script risks violating YouTube policy; remove any risky claim or instruction")
         if original_text is None and qa["matches_format"]["noul"] < 0.5:
             problems.append(f"it drifted away from the {blueprint['format']} format / {blueprint['hook_style']} hook")
@@ -289,6 +296,10 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
     if best is None:
         # Every draft repeated an existing video: better no Short than a duplicate on the channel.
         raise RuntimeError(f"all {max_attempts} drafts repeated subjects that were already made; nothing produced")
+    if backend == "ollama" and (best["qa_problems"] or (best.get("qa") or {}).get("policy_risk", {}).get("noul", 0) > LOCAL_MAX_POLICY_RISK):
+        # Small local models invent facts and miss payoffs; only a draft that passes every check is used.
+        raise RuntimeError("free local writer: no draft passed the quality checks ("
+                           + "; ".join(best["qa_problems"] or ["policy or accuracy risk too high"]) + ")")
     return finalize_metadata(best)
 
 
