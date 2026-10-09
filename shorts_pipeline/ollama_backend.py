@@ -107,6 +107,11 @@ def _inline_refs(schema: dict[str, Any], limits: dict[str, Any] | None = None) -
     return walk(schema)
 
 
+def _thinks(model: str) -> bool:
+    m = model.lower()
+    return m.startswith(("qwen3", "deepseek-r1", "magistral")) or ":thinking" in m
+
+
 def generate_json(system: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
     cfg = config()
     plain = _inline_refs(schema, LIMITS)
@@ -118,9 +123,14 @@ def generate_json(system: str, prompt: str, schema: dict[str, Any]) -> dict[str,
             {"role": "user", "content": prompt},
         ],
     }
+    if _thinks(cfg["model"]):
+        body["think"] = False          # reasoning models (qwen3.x, deepseek-r1) would spend minutes "thinking" first
     started = time.time()
     try:
         r = requests.post(_url("/api/chat"), json=body, timeout=float(cfg["timeout_seconds"]))
+        if r.status_code == 400 and "think" in r.text.lower() and "think" in body:
+            body.pop("think")          # this model or Ollama version does not accept the switch
+            r = requests.post(_url("/api/chat"), json=body, timeout=float(cfg["timeout_seconds"]))
     except requests.RequestException as exc:
         raise RuntimeError(f"Ollama is not reachable at {cfg['url']} ({exc}); is the Ollama app running?") from exc
     if r.status_code != 200:

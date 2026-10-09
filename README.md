@@ -351,7 +351,20 @@ tokens/s), often ignores "pick another subject" feedback, and can state invented
 drafts are held to stricter rules: at most 3 drafts, every TypeSafe check must pass, and the policy/accuracy risk must
 stay under 30% (Claude: 50%); otherwise the slot fails with an alert and is retried later (when Claude may be back).
 A Short written by the local model is never uploaded automatically: it is sent to Telegram and its card says
-"review before upload". A bigger model (`qwen2.5:7b`, `gemma3:4b`) writes better on a faster PC.
+"review before upload".
+
+Which model fits depends on the graphics card (check with `nvidia-smi --query-gpu=name,memory.total --format=csv`).
+A model that fits in the card's memory runs many times faster than on the CPU:
+
+| Graphics memory | Example laptops | Model |
+|---|---|---|
+| none / 2 GB | older laptops, GeForce 840M | `qwen2.5:3b` (CPU, minutes per draft) |
+| 4 GB | GTX 1650, RTX 3050 | `qwen3.5:4b` |
+| 6 GB | GTX 1660 Ti, RTX 2060, RTX 3060, RTX 4050 | `qwen2.5:7b` (or `qwen3.5:9b`, partly on the CPU) |
+| 8 GB or more | RTX 4060, RTX 4070 | `qwen3.5:9b` |
+
+Pull it, then enter its name under Settings -> Local model (saved per machine). Reasoning models (qwen3.x,
+deepseek-r1) are asked to answer without their thinking phase.
 
 ## Disk space
 
