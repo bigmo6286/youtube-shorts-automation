@@ -106,3 +106,20 @@ def test_workflow_files_are_valid_yaml():
         for job in wf["jobs"].values():
             for step in job.get("steps", []):
                 assert isinstance(step.get("name", ""), str), f"{f.name}: {step}"
+
+
+def test_save_json_retries_while_windows_holds_the_file(tmp_path, monkeypatch):
+    """Regression: os.replace raised 'Access is denied' while the console was reading meta.json."""
+    import os as _os
+    calls = {"n": 0}
+    real = _os.replace
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(5, "Access is denied")
+        return real(src, dst)
+    monkeypatch.setattr(_os, "replace", flaky)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    storage.save_json(tmp_path / "m.json", {"ok": 1})
+    assert storage.load_json(tmp_path / "m.json") == {"ok": 1} and calls["n"] == 3

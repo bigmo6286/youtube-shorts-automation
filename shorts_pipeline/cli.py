@@ -340,6 +340,8 @@ def cmd_produce(args) -> Path:
     if script.get("backend") != "custom" and not (script_text and getattr(args, "title", "")):
         from . import titles
         titles.improve(script)                         # search-driven title, picked by TypeSafe
+        if getattr(args, "sequel_of", None) and "part 2" not in script["title"].lower():
+            script["title"] = script_gen._shorten(script["title"], script_gen.TITLE_MAX - 9) + " (Part 2)"
     save_json(out_dir / "script.json", script)
     print(f"\nTITLE: {script['title']}\n\n{script['full_text']}\n")
     if script.get("qa_problems"):

@@ -43,7 +43,15 @@ def save_json(path: Path, data: Any) -> None:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        for attempt in range(20):           # Windows refuses the swap while another process is reading the file
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                import time
+                time.sleep(0.1)
     except BaseException:
         try:
             tmp.unlink()
