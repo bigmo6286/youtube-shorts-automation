@@ -359,6 +359,7 @@ A model that fits in the card's memory runs many times faster than on the CPU:
 | Graphics memory | Example laptops | Model |
 |---|---|---|
 | none / 2 GB | older laptops, GeForce 840M | `qwen2.5:3b` (CPU, minutes per draft) |
+| 3 GB | GTX 1050 3 GB | `qwen2.5:3b` (fits fully on the card) |
 | 4 GB | GTX 1650, RTX 3050 | `qwen3.5:4b` |
 | 6 GB | GTX 1660 Ti, RTX 2060, RTX 3060, RTX 4050 | `qwen2.5:7b` (or `qwen3.5:9b`, partly on the CPU) |
 | 8 GB or more | RTX 4060, RTX 4070 | `qwen3.5:9b` |
