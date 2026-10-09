@@ -21,6 +21,7 @@ ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
 # Posting comments and replies (comment engagement). Optional like Analytics: uploads never need it.
 COMMENTS_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
 CONSENT_SCOPES = SCOPES + [ANALYTICS_SCOPE, COMMENTS_SCOPE]
+CONSENT_WAIT_SECONDS = 900      # time to approve the Google page
 T = TypeVar("T")
 BACKOFF_SECONDS = [5, 15, 30, 60, 120, 180]     # ~7 minutes in total before an upload step gives up
 
@@ -132,8 +133,17 @@ def _credentials(interactive: bool = True, extra_scopes: tuple[str, ...] = ()):
             raise RuntimeError("YouTube access needs a new consent: run an upload or 'Sync channel now' from the console "
                                "(or `python main.py channel sync` in a terminal) and approve the browser prompt.")
         flow = InstalledAppFlow.from_client_secrets_file(str(secrets), CONSENT_SCOPES)
-        creds = flow.run_local_server(port=0, open_browser=True, authorization_prompt_message=
-                                      "\nApprove access in the browser window that just opened (URL: {url})\n")
+        # The local page that receives Google's answer must wait for the person, not for whatever global socket
+        # timeout another library set (that made it give up after a minute or two with WSGITimeoutError).
+        import socket as _socket
+        previous = _socket.getdefaulttimeout()
+        _socket.setdefaulttimeout(None)
+        try:
+            creds = flow.run_local_server(port=0, open_browser=True, timeout_seconds=CONSENT_WAIT_SECONDS,
+                                          authorization_prompt_message=
+                                          "\nApprove access in the browser window that just opened (URL: {url})\n")
+        finally:
+            _socket.setdefaulttimeout(previous)
         TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         data = json.loads(creds.to_json())
         granted = getattr(creds, "granted_scopes", None)
