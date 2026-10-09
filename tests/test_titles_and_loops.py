@@ -12,9 +12,25 @@ SCRIPT = {"title": "Every Time an Octopus Swims, One of Its Hearts Stops", "hook
 
 def test_seed_queries_are_two_word_subject_phrases():
     seeds = titles.seed_queries(SCRIPT)
-    assert seeds[0] == "octopus swimming"
     assert all(len(s.split()) == 2 for s in seeds) and len(seeds) <= 4
-    assert any(s.startswith("octopus heart") for s in seeds)
+    assert "octopus swims" in seeds and not any("swimming" in s for s in seeds)    # title words, not the footage term
+    assert not any(s.startswith("time ") for s in seeds)                            # generic words are not subjects
+
+
+def test_seeds_ignore_the_stock_footage_term():
+    """Regression: 'vintage marathon race' (a footage search term) once made every seed start with 'vintage'."""
+    marathon = {"title": "The Slowest Marathon in History Took 54 Years to Finish", "thumbnail_text": "54 YEAR MARATHON",
+                "hook": "The slowest marathon in history took fifty-four years to finish.",
+                "full_text": "The slowest marathon in history took fifty-four years to finish.",
+                "visual_fallback": "vintage marathon race"}
+    assert titles.subject_words(marathon, 2) == ["marathon", "slowest"]
+    seeds = titles.seed_queries(marathon)
+    assert seeds[0] == "slowest marathon" and not any("vintage" in s for s in seeds)
+
+
+def test_suggestions_off_subject_are_dropped(monkeypatch):
+    monkeypatch.setattr(titles, "suggestions", lambda q, cfg=None: ["octopus heartbeat", "vintage history game", "octopus"])
+    assert titles.search_phrases(SCRIPT) == ["octopus heartbeat"]
 
 
 def test_suggestions_parse_youtube_format(monkeypatch):
