@@ -23,6 +23,7 @@ TICK_SECONDS = 20
 REUSE_RUN_HOURS = 3          # a trend refresh is skipped when a run (any channel's) is younger than this
 RETRY_DELAY_MINUTES = 30     # a scheduled production that failed for a temporary reason runs again this much later
 EXPIRE_EVERY_SECONDS = 600
+CLEANUP_EVERY_SECONDS = 6 * 3600
 DEFAULTS = {
     "enabled": False,
     "produces_per_day": 20,
@@ -138,6 +139,7 @@ class Scheduler:
         self._job_status = job_status
         self._job_error = job_error or (lambda _id: None)
         self._last_expire = 0.0
+        self._last_cleanup = 0.0
         self._lock = threading.Lock()
         self.state = load_json(STATE_PATH, None) or {"date": "", "done": [], "history": [], "next_blueprint": 0}
         self._thread: threading.Thread | None = None
@@ -209,6 +211,13 @@ class Scheduler:
         with self._lock:
             self._roll_day(now)
             self._update_history_statuses()
+            if time.time() - self._last_cleanup > CLEANUP_EVERY_SECONDS:
+                self._last_cleanup = time.time()
+                try:
+                    from .housekeeping import cleanup_outputs
+                    cleanup_outputs()
+                except Exception:  # noqa: BLE001
+                    log.exception("output cleanup failed")
             if not cfg["enabled"]:
                 self._save()
                 return

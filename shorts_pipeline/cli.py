@@ -487,6 +487,18 @@ def cmd_report(args) -> None:
         print("Sent to Telegram.")
 
 
+def cmd_cleanup(args) -> None:
+    from . import housekeeping
+    s = housekeeping.cleanup_outputs(dry_run=bool(getattr(args, "dry_run", False)))
+    c = housekeeping.cleanup_config()
+    print(f"{'Would free' if s['dry_run'] else 'Freed'} {s['freed_gb']} GB in {s['folders']} folders: render pieces of uploaded "
+          f"Shorts, {s['videos_removed']} video files on YouTube for {c['keep_video_days']}+ days or never uploaded for "
+          f"{c['keep_unuploaded_days']}+ days. Scripts, details and thumbnails are kept.")
+    _, removed = housekeeping.prune_cache()
+    if removed:
+        print(f"Footage cache trimmed by {removed:.1f} GB.")
+
+
 def cmd_queue(args) -> None:
     from . import upload_queue
     s = upload_queue.summary()
@@ -583,6 +595,9 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
     if meta.get("upload_state") in ("queued", "expired", "failed", None):
         meta["upload_state"] = "uploaded"
     save_json(out_dir / "meta.json", meta)
+    from . import housekeeping
+    if housekeeping.cleanup_config()["clean_after_upload"]:
+        housekeeping.remove_intermediates(out_dir)        # the render pieces are not needed any more
     print(f"Uploaded as {cfg['privacy']}: https://youtube.com/shorts/{vid}")
     if publish_at:
         from datetime import datetime as _dt
@@ -891,6 +906,10 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("report", help="print today's report (produced, uploaded, queue, failures); --send posts it to Telegram")
     rp.add_argument("--send", action="store_true")
     rp.set_defaults(func=cmd_report)
+
+    cl = sub.add_parser("cleanup", help="free disk: render pieces of uploaded Shorts, old video files (YouTube has them)")
+    cl.add_argument("--dry-run", dest="dry_run", action="store_true")
+    cl.set_defaults(func=cmd_cleanup)
 
     qp = sub.add_parser("queue", help="show the automatic upload queue")
     qp.set_defaults(func=cmd_queue)

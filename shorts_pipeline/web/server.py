@@ -177,7 +177,7 @@ COMMANDS = {
     "run": cli.cmd_run, "discover": cli.cmd_discover, "judge": cli.cmd_judge, "rank": cli.cmd_rank,
     "analyze": cli.cmd_analyze, "produce": cli.cmd_produce, "upload": cli.cmd_upload,
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
-    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "report": cli.cmd_report, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
+    "channel": cli.cmd_channel, "publish": cli.cmd_publish, "report": cli.cmd_report, "cleanup": cli.cmd_cleanup, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
 }
 
 
@@ -681,7 +681,7 @@ def list_outputs() -> list[dict[str, Any]]:
             "youtube_id": meta.get("youtube_id"),
             "privacy": meta.get("privacy"),
             "upload_state": meta.get("upload_state"), "upload_priority": meta.get("upload_priority"),
-            "publish_at": meta.get("publish_at"),
+            "publish_at": meta.get("publish_at"), "video_removed": meta.get("video_removed"),
             "priority_parts": meta.get("priority_parts"), "upload_error": meta.get("upload_error"),
             "channel_stats": meta.get("channel_stats"),
             "mode": meta.get("mode", "blueprint"),

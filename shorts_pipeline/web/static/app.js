@@ -241,7 +241,7 @@ async function loadOutputs(afterStatusSync = false) {
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
   const writer = (o) => o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API";
   $("#outputs").innerHTML = outs.map((o) => `<div class="out">
-      ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"${o.thumbnail_url ? ` poster="${o.thumbnail_url}"` : ""}></video>` : `<div class="novideo">no video</div>`}
+      ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"${o.thumbnail_url ? ` poster="${o.thumbnail_url}"` : ""}></video>` : `<div class="novideo">${o.video_removed ? (o.youtube_id ? "video file removed to save disk space; it is on YouTube" : "video file removed after 30 days unuploaded") : "no video"}</div>`}
       <div class="outbody">
         <h3>${esc(o.title)} <span class="tag ${o.title.length <= 100 ? "ok" : "warn"}" title="YouTube title limit is 100 characters; Shorts show about 70">${o.title.length}/100</span></h3>
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
@@ -252,10 +252,10 @@ async function loadOutputs(afterStatusSync = false) {
         <div class="row tight">
           <button data-copy="title" data-dir="${o.dir}" title="goes in YouTube's title box (100 char limit)">Copy title</button>
           <button data-copy="desc" data-dir="${o.dir}" title="goes in YouTube's description box">Copy description + hashtags</button>
-          <button data-telegram="${o.dir}">Send to Telegram</button>
+          ${o.video_url ? `<button data-telegram="${o.dir}">Send to Telegram</button>` : ""}
           ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
           ${o.thumbnail_url ? `<a class="btn" href="${o.thumbnail_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}_thumbnail.jpg" title="${esc(o.thumbnail_text || "")}">Download thumbnail</a>` : ""}
-          <button data-thumb="${o.dir}" title="${o.thumbnail_url ? "rebuild the thumbnail" : "build a thumbnail for this video"}${o.youtube_id ? " and set it on YouTube" : ""}">${o.thumbnail_url ? "Rebuild" : "Make"} thumbnail${o.youtube_id ? " + set on YouTube" : ""}</button>
+          ${!o.video_url && !o.thumbnail_url ? "" : ""}<button data-thumb="${o.dir}" ${o.video_url ? "" : "hidden"} title="${o.thumbnail_url ? "rebuild the thumbnail" : "build a thumbnail for this video"}${o.youtube_id ? " and set it on YouTube" : ""}">${o.thumbnail_url ? "Rebuild" : "Make"} thumbnail${o.youtube_id ? " + set on YouTube" : ""}</button>
         </div>
         <div class="muted small">${esc(o.folder)}</div>
         ${!o.youtube_id && o.upload_state === "queued" ? `<span class="tag ${o.upload_priority >= (state.minPriority ?? 30) ? "ok" : "warn"}" title="${esc(Object.entries(o.priority_parts || {}).map(([k, v]) => `${k} ${Math.round(v * 100)}`).join(", "))}">in upload queue · priority ${o.upload_priority}</span>` : ""}

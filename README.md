@@ -1,5 +1,7 @@
 # YouTube Shorts automation
 
+[![tests](https://github.com/bigmo6286/youtube-shorts-automation/actions/workflows/tests.yml/badge.svg)](https://github.com/bigmo6286/youtube-shorts-automation/actions/workflows/tests.yml)
+
 Finds what is trending on Shorts, judges every video with TypeSafe (System One / Jev), ranks them,
 works out which *formats* you can copy as a faceless creator, then writes, voices, captions, renders
 and (optionally) uploads a new Short in that style.
@@ -415,6 +417,21 @@ skipped when another channel refreshed in the last 3 hours), the footage and jud
 (rendering, trend refreshes, channel analysis) run one at a time across all channels on the machine; uploads and syncs
 do not wait. Telegram messages start with the channel's label. The channel's schedule starts off.
 
+## Tests
+
+```bash
+pip install pytest
+python -m pytest -q
+```
+
+The tests run offline (no API keys, no network) against a throwaway channel folder, so your data is never touched:
+error classification for alerts and retries, resumable uploads (dropped connections resume, upload limits are not
+retried), the upload queue (limit learning, attempts, best-first), publish times (review window, per-hour cap,
+spacing), the scheduler (retry once, queue uploads, skips when the queue is full), script QA (repeats rejected,
+stricter rules for the local writer, Claude-to-local fallback), caption joining, atomic JSON writes, channel folders,
+output cleanup, and a real ffmpeg render of a short captioned video. GitHub Actions runs them on every push
+(`.github/workflows/tests.yml`; free for public repositories).
+
 ## Disk space
 
 Downloaded stock clips are cached in `data/cache/pexels` so re-renders do not fetch them again. The cache is
@@ -422,6 +439,12 @@ trimmed after every production to `production.cache_max_gb` (default 4 GB), dele
 clips first. Before each production the engine checks the disk: below `production.min_free_gb` (default 3 GB)
 it trims the cache harder and, if that is still not enough, stops with a clear message instead of writing empty
 files. JSON files are written atomically, so a full disk never leaves a half-written file behind.
+
+Finished Shorts are cleaned up too (`production.cleanup`): once a Short is uploaded its render pieces (background clips,
+voice, caption files) are deleted, and its video file goes `keep_video_days` (default 3) days after upload, since
+YouTube has it. Shorts never uploaded keep everything for `keep_unuploaded_days` (default 30). The script, details and
+thumbnail always stay, so history, analytics and the console cards keep working. It runs every 6 hours;
+`python main.py cleanup --dry-run` shows what it would free.
 
 ## Tuning
 

@@ -84,6 +84,11 @@ production:
     model: ""                 # optional model id for together / huggingface / openai, e.g. black-forest-labs/FLUX.1-schnell
     style: "cinematic photograph, natural light, realistic, sharp detail, vertical composition, no text, no watermark, no logo"
   cache_max_gb: 4             # downloaded Pexels clips kept for reuse; least recently used are deleted beyond this
+  cleanup:
+    clean_after_upload: true  # delete the render pieces (background clips, voice, caption files) once a Short is uploaded
+    keep_video_days: 3        # delete the video file this many days after upload (YouTube has it); null = keep forever
+    keep_unuploaded_days: 30  # never-uploaded Shorts keep their video this long; null = keep forever
+                              # script, details and thumbnail always stay (history, analytics and the cards need them)
   min_free_gb: 3              # a production stops early (instead of writing empty files) below this much free disk
   script_backend: auto        # auto | api | claude_code | ollama  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription; ollama = free local model)
   ollama:

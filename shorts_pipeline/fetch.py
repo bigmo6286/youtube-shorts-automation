@@ -217,14 +217,18 @@ def _transcript(info: dict[str, Any], max_chars: int) -> str:
         data = r.json()
     except Exception:  # noqa: BLE001
         return ""
+    return join_caption_events(data)[:max_chars]
+
+
+def join_caption_events(data: dict[str, Any]) -> str:
+    """YouTube json3 captions to plain text. Segments inside one caption event carry their own spacing; separate
+    events (lines) need a space between them, or the last word of a line glues to the first of the next."""
     lines: list[str] = []
     for ev in data.get("events", []):
-        # segments inside one caption event carry their own spacing; separate events (lines) need a space between
         line = "".join(seg.get("utf8", "") for seg in ev.get("segs") or [] if seg.get("utf8", "") != "\n")
         if line.strip():
             lines.append(line.strip())
-    text = re.sub(r"\s+", " ", " ".join(lines)).strip()
-    return text[:max_chars]
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
 
 
 def enrich(candidates: list[dict[str, Any]], *, max_candidates: int, workers: int,
