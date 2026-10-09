@@ -240,6 +240,11 @@ class Scheduler:
     def tick(self, now: datetime | None = None) -> None:
         cfg = schedule_config()
         now = now or datetime.now()
+        try:
+            from .watchdog import keep_awake
+            keep_awake(bool(cfg["enabled"]) and float(cfg["start_hour"]) <= now.hour + now.minute / 60 < float(cfg["end_hour"]))
+        except Exception:  # noqa: BLE001
+            pass
         with self._lock:
             self._roll_day(now)
             self._update_history_statuses()
@@ -474,6 +479,7 @@ def _tuning_summary() -> dict[str, Any] | None:
         t = load_json(tuning.TUNING_PATH) or {}
         return {"uploads_per_day": (t.get("volume") or {}).get("recommended"), "reason": (t.get("volume") or {}).get("reason"),
                 "seconds": (t.get("length") or {}).get("channel"), "formats": (t.get("length") or {}).get("formats"),
-                "sameness": round(originality.sameness(), 2), "overused": [n for n, _ in originality.overused_formulas()]}
+                "sameness": round(originality.sameness(), 2), "overused": [n for n, _ in originality.overused_formulas()],
+                "retitles": __import__("shorts_pipeline.retitle", fromlist=["tally"]).tally()}
     except Exception:  # noqa: BLE001
         return None

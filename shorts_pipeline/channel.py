@@ -561,6 +561,13 @@ def sync() -> dict[str, Any]:
         tuning.update()                                   # daily upload volume and script length from these numbers
     except Exception as exc:  # noqa: BLE001
         log.warning("tuning skipped: %s", exc)
+    try:
+        from . import retitle
+        r = retitle.run()                                 # second-chance titles for the weakest recent Shorts
+        if r["retitled"] or r["judged"]:
+            log.info("second-chance titles: %d changed now, %d earlier changes judged", len(r["retitled"]), r["judged"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("second-chance titles skipped: %s", exc)
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
             "matched": matched, "performance": perf}
 

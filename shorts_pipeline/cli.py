@@ -577,6 +577,15 @@ def cmd_comments(args) -> None:
         comments.dismiss(args.target or "")
 
 
+def cmd_watchdog(args) -> None:
+    from . import watchdog
+    port = args.port
+    if port == 8787:
+        from .config import CHANNEL, channels
+        port = next((c["port"] for c in channels() if c["name"] == (CHANNEL or "main")), 8787)
+    watchdog.run(port)
+
+
 def cmd_setup_voice(args) -> None:
     from . import tts
     path = tts.download_kokoro()
@@ -999,6 +1008,10 @@ def build_parser() -> argparse.ArgumentParser:
     cm.add_argument("--text")
     cm.set_defaults(func=cmd_comments)
 
+    wd = sub.add_parser("watchdog", help="start the console and restart it if it stops answering (used by autostart)")
+    wd.add_argument("--port", type=int, default=8787)
+    wd.set_defaults(func=cmd_watchdog)
+
     sv = sub.add_parser("setup-voice", help="download the free local Kokoro voice (~120 MB), used when edge-tts fails")
     sv.set_defaults(func=cmd_setup_voice)
 
@@ -1102,11 +1115,12 @@ def cmd_autostart(args) -> None:
     # WScript.Shell.Run with window style 0 = hidden; pythonw avoids a console window as well
     vbs = ('Set sh = CreateObject("WScript.Shell")\n'
            f'sh.CurrentDirectory = "{ROOT}"\n'
-           f'sh.Run """{exe}"" ""{main_py}""{channel_arg} web --port {port}", 0, False\n')
+           f'sh.Run """{exe}"" ""{main_py}""{channel_arg} watchdog --port {port}", 0, False\n')
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(vbs, encoding="utf-8")
     print(f"Installed {script}")
-    print("The console now starts hidden at every logon. To start it right now without logging out, double-click that file")
+    print("At every logon a hidden watchdog starts the console and restarts it if it stops answering (Telegram alert).")
+    print("To start it right now without logging out, double-click that file")
     print("or run:  wscript \"" + str(script) + "\"")
     print("Keep the machine awake: Windows Settings -> System -> Power -> Sleep: Never (while plugged in).")
 

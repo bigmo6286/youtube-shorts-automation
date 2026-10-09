@@ -13,6 +13,51 @@ ensure_ffmpeg_on_path()
 
 W, H = 1080, 1920
 
+# ---------------------------------------------------------------------------------------------------- video encoder
+# Hardware encoders, tried in this order; the first that really works on this machine is remembered. Filtering
+# (scale, crop, captions) stays on the CPU, so the gain is in the encode step only: small on a weak laptop with
+# Intel Quick Sync, larger with an NVIDIA card (NVENC). libx264 is always the fallback.
+ENCODERS = {
+    "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"],
+    "h264_qsv": ["-c:v", "h264_qsv", "-global_quality", "21", "-preset", "veryfast"],
+    "h264_amf": ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "21", "-qp_p", "23"],
+    "libx264": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21"],
+}
+
+
+def _encoder_state_path() -> Path:
+    from .config import SHARED_DIR
+    return SHARED_DIR / "encoder.json"
+
+
+def probe_encoder(force: bool = False) -> str:
+    """The encoder to use: production.encoder, or (auto) the first hardware encoder that encodes a test clip here."""
+    from .config import load_config
+    from .storage import load_json, save_json
+    wanted = ((load_config().get("production") or {}).get("encoder") or "auto").strip()
+    if wanted != "auto":
+        return wanted if wanted in ENCODERS else "libx264"
+    state = load_json(_encoder_state_path()) or {}
+    if state.get("encoder") and not force:
+        return state["encoder"]
+    import tempfile
+    chosen = "libx264"
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in ("h264_nvenc", "h264_qsv", "h264_amf"):
+            out = Path(tmp) / f"{name}.mp4"
+            r = _run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1080x1920:rate=30",
+                      "-t", "1", "-pix_fmt", "yuv420p", *ENCODERS[name], str(out)], text=True, retries=0)
+            if r.returncode == 0 and out.exists() and out.stat().st_size > 1000:
+                chosen = name
+                break
+    save_json(_encoder_state_path(), {"encoder": chosen})
+    return chosen
+
+
+def _forget_encoder() -> None:
+    from .storage import save_json
+    save_json(_encoder_state_path(), {"encoder": "libx264", "hardware_failed": True})
+
 
 def probe_duration(path: Path) -> float:
     out = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
@@ -111,11 +156,22 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
     else:
         amap = f"{voice_idx}:a"
 
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", *inputs,
-           "-filter_complex", ";".join(filters),
-           "-map", "[vout]", "-map", amap,
-           "-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-           "-t", f"{total_seconds + 0.3:.3f}", out_path.name]
-    _run(cmd, check=True, cwd=str(work), text=True)
+    encoder = probe_encoder()
+
+    def command(enc: str) -> list[str]:
+        return ["ffmpeg", "-y", "-loglevel", "error", *inputs,
+                "-filter_complex", ";".join(filters),
+                "-map", "[vout]", "-map", amap,
+                *ENCODERS[enc], "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+                "-t", f"{total_seconds + 0.3:.3f}", out_path.name]
+    try:
+        _run(command(encoder), check=True, cwd=str(work), text=True)
+    except RuntimeError:
+        if encoder == "libx264":
+            raise
+        import logging
+        logging.getLogger(__name__).warning("hardware encoder %s failed on this render; using libx264 from now on", encoder)
+        _forget_encoder()
+        _run(command("libx264"), check=True, cwd=str(work), text=True)
     return out_path.resolve()

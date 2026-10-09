@@ -187,6 +187,11 @@ def daily_report(now: datetime | None = None) -> str:
         if t:
             lines.append(f"Learned from the channel: {t.get('volume', {}).get('recommended', '?')} uploads/day, "
                          f"{t.get('length', {}).get('channel', '?')} s Shorts · sameness {originality.sameness():.0%}")
+        from .retitle import tally
+        rt = tally()
+        if rt["tried"]:
+            lines.append(f"Second-chance titles: {rt['tried']} tried, {rt['improved']} improved, {rt['no_change']} no change, "
+                         f"{rt['pending']} still measuring")
     except Exception:  # noqa: BLE001
         pass
     lines.append(f"Disk: {housekeeping.free_gb():.1f} GB free · footage cache {housekeeping.cache_size_gb():.1f} GB")

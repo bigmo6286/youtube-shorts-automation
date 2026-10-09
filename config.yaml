@@ -74,6 +74,10 @@ production:
   originality:
     enabled: true             # avoid overused title/opening formulas (counted in recent uploads); vary the narrator
     voices: [en-US-AndrewNeural, en-US-BrianNeural, en-US-ChristopherNeural]   # rotated per Short; [] = always `voice`
+  retitle:
+    enabled: true             # 48 h after publishing, a Short in the bottom third gets its best alternative title once
+    after_hours: 48
+    max_per_sync: 2
   loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views)
   hook_overlay:
     enabled: true             # the video's punchiest words as big text at the top from the first frame
@@ -91,6 +95,7 @@ production:
     volume_db: -18            # music level relative to the voice; -14 louder, -22 quieter
     duck: true                # lower the music automatically while the voice speaks
     fade_seconds: 1.5
+  encoder: auto               # auto = first working hardware encoder (NVIDIA NVENC, Intel Quick Sync, AMD AMF), else libx264
   background_source: auto     # auto | pexels | generated
   ai_images:
     enabled: true

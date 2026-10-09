@@ -320,6 +320,21 @@ the daily report show the current values.
   becomes a Short in the format of the video it was left on, and the viewer gets a reply with the link once it is public.
 These experiments and specials get a priority lift in the upload queue so they are published and measured.
 
+## Second-chance titles, watchdog, hardware encoding
+
+- **Second-chance titles.** 48 hours after a Short went public, if its views per hour are in the bottom third of the
+  channel's recent Shorts, its title is changed once to the best alternative (a search-based variant TypeSafe judged
+  accurate and natural when it was produced, or fresh ones judged the same way). Another 48 hours later the engine
+  compares views per hour before and after; the tally shows on the Overview and in the daily report
+  (`production.retitle`).
+- **Watchdog.** `python main.py autostart install` now starts a hidden watchdog at logon; it starts the console and
+  checks every minute that it answers. After three missed checks (a crash or a hang) it stops the stuck process,
+  starts the console again and sends a Telegram alert. While the schedule is on and inside its hours, the console
+  also asks Windows not to sleep (the screen can still turn off; a closed laptop lid may still sleep it).
+- **Hardware encoding.** The final encode uses the first hardware encoder that works on the machine (NVIDIA NVENC,
+  Intel Quick Sync, AMD AMF), falling back to libx264 (`production.encoder`). Filtering stays on the CPU, so the gain
+  is modest on a weak laptop (about 15 % of a 1.5-minute render there) and larger with an NVIDIA card.
+
 ## Originality guard
 
 YouTube's monetisation policy turns down repetitive, mass-produced channels. The engine counts title and opening
