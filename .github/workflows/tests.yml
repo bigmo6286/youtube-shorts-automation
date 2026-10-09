@@ -18,5 +18,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core
       - name: Install dependencies
         run: pip install -r requirements.txt "pytest>=8"
-      - name: Run tests (offline: no API keys, no network)
+      - name: Run tests offline, no API keys or network
         run: python -m pytest -q
