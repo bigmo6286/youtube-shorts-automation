@@ -75,3 +75,5 @@ main { padding-bottom: 260px; }
 .toast.error { cursor: pointer; } .toast.error::after { content: "  (click to dismiss, details in the activity log)"; color: var(--muted); }
 .toast { position: fixed; bottom: 250px; right: 20px; background: var(--panel2); border: 1px solid var(--ok); color: var(--text); padding: 10px 14px; border-radius: 8px; box-shadow: 0 6px 24px #0008; }
 .toast.error { border-color: var(--danger); }
+
+#chanpick { width: auto; max-width: 220px; flex: 0 0 auto; margin: 0 12px; }
