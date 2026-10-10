@@ -59,7 +59,7 @@ production:
   font: Impact                # legacy; captions.font wins when set
   font_size: 96
   intro:
-    enabled: true
+    enabled: false            # a title card before the hook costs viewers in the first second and breaks the loop
     mode: card                # card = generated title card; clip = your own assets/intro.mp4 (muted, music plays over it)
     text: "{title}"           # {title} is replaced by the video title
     seconds: 1.5
@@ -124,6 +124,7 @@ notifications:
     on_produce: true          # send every finished Short (video + title + description + hashtags) to TELEGRAM_CHAT_ID
     alerts: true              # message you when a scheduled/automatic job fails, with the fix (same problem at most every 3 h)
     daily_report_hour: 22     # one summary a day at this hour (produced, uploaded, queued, failed, best videos); null = off
+    commands: true            # obey /status, /queue, /uploads, /publish N, /drafts, /reply N, /pause ... from TELEGRAM_CHAT_ID only
 
 # Built-in scheduler (runs while the web console is running; see README "Run it on a schedule")
 schedule:
@@ -156,6 +157,18 @@ comments:
   enabled: true               # needs Connect comments in the console (youtube.force-ssl permission)
   post_questions: true        # post each Short's question as the channel's first comment once it is public
   auto_reply: false           # false = reply drafts wait in the console; true = post them (never the ones that need you)
+
+dub:                          # only used by a second-language channel whose schedule.source is "dub"
+  language: es                # es | pt | fr | de | hi
+  voice: ""                   # empty = the default native voice for the language (es: es-MX-JorgeNeural)
+  source_channel: main        # the channel whose best Shorts are dubbed
+  min_lift: 1.0               # dub Shorts with at least this x the source channel's median views per hour
+
+backup:
+  enabled: true               # nightly zip of what the engine learned (never tokens or keys)
+  folder: ""                  # empty = OneDrive\ShortsBackups when OneDrive is set up, else ShortsBackups in your user folder
+  keep: 14
+  hour: 3
 
 upload:
   privacy: private            # private | unlisted | public

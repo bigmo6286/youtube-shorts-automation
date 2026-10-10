@@ -335,6 +335,26 @@ These experiments and specials get a priority lift in the upload queue so they a
   Intel Quick Sync, AMD AMF), falling back to libx264 (`production.encoder`). Filtering stays on the CPU, so the gain
   is modest on a weak laptop (about 15 % of a 1.5-minute render there) and larger with an NVIDIA card.
 
+## Telegram commands, nightly backup, dubbed channel
+
+- **Telegram commands.** The console obeys messages from your own chat (TELEGRAM_CHAT_ID) only: `/status`, `/queue`,
+  `/uploads` then `/publish N` or `/private N`, `/drafts` then `/reply N [your text]` or `/dismiss N`, `/report`,
+  `/pause`, `/resume`, `/help`. If two machines share one bot token, give each its own bot.
+- **Nightly backup.** At 03:00 everything the engine learned (history, stats, analytics, labels, winners, tuning,
+  queue, comments, profiles, settings, every Short's details and script) is zipped to OneDrive\ShortsBackups when
+  OneDrive is set up (else ShortsBackups in your user folder); 14 are kept. Tokens, .env and client_secrets.json are
+  never included. `python main.py backup [now|list|restore <zip>]`.
+- **Dubbed channel.** A second channel can carry your best Shorts in another language (es, pt, fr, de, hi):
+  1. Create the channel on YouTube (YouTube -> your avatar -> Settings -> Add or manage channels -> Create a channel).
+  2. `python main.py channels add es --label "My channel en español"`, put its `client_secrets.json` in
+     `channels/es/` (a separate Google Cloud project gives it its own upload quota), and start its console with
+     `python main.py --channel es web` (and `--channel es autostart install`).
+  3. Sign in with that channel on the consent page (Sync channel now), set Settings -> Schedule -> Source to
+     "dubbed versions of the main channel's best Shorts" and turn the schedule on.
+  Each slot translates the main channel's best not-yet-dubbed Short line by line (same facts, same footage search
+  terms, wording tightened to the original length) and produces it with a native voice; captions, hook, title,
+  description and hashtags are in that language. The English fallback voice is never used for a dub.
+
 ## Originality guard
 
 YouTube's monetisation policy turns down repetitive, mass-produced channels. The engine counts title and opening

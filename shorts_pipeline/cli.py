@@ -262,6 +262,24 @@ def cmd_produce(args) -> Path:
                                                 backend=cfg.get("script_backend", "auto"), avoid_titles=None)
         except RuntimeError as exc:
             sys.exit(f"Script writing failed: {exc}")
+    elif getattr(args, "dub_of", None):
+        # A dubbed version of one of the main channel's Shorts, for this (second-language) channel. See dub.py.
+        from . import dub
+        src_out, _ = dub._source_paths()
+        src = src_out / args.dub_of
+        original = load_json(src / "script.json")
+        src_meta = load_json(src / "meta.json") or {}
+        if not original:
+            sys.exit(f"No script for {args.dub_of} in {src_out}")
+        try:
+            script = dub.translate(original)
+        except RuntimeError as exc:
+            sys.exit(f"Translation failed: {exc}")
+        blueprint = {**(src_meta.get("blueprint") or {}), "source": "dub", "language": dub.config()["language"],
+                     "dub_of": args.dub_of}
+        run_name = f"dub_{dub.config()['language']}"
+        log.info("dub (%s): %r -> %r", dub.config()["language_name"], original.get("title"), script["title"])
+        out_dir = OUTPUT_DIR / f"{now_iso()}_dub_{dub.config()['language']}"
     elif getattr(args, "sequel_of", None) or getattr(args, "idea", None):
         # A sequel of a winning upload, or a Short a viewer asked for in the comments (see specials.py).
         from . import specials
@@ -337,7 +355,7 @@ def cmd_produce(args) -> Path:
             sys.exit(f"Script writing failed: {exc}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    if script.get("backend") != "custom" and not (script_text and getattr(args, "title", "")):
+    if script.get("backend") not in ("custom", "dub") and not (script_text and getattr(args, "title", "")):
         from . import titles
         titles.improve(script)                         # search-driven title, picked by TypeSafe
         if getattr(args, "sequel_of", None) and "part 2" not in script["title"].lower():
@@ -356,6 +374,9 @@ def cmd_produce(args) -> Path:
     voice_path = out_dir / "voice.mp3"
     from . import originality
     voice = originality.voice_for(script["title"], cfg["voice"])         # a few similar narrators, not one for every Short
+    if script.get("backend") == "dub":
+        from . import dub
+        voice = dub.config()["voice"]
     words = tts.synthesize(script["full_text"], voice_path, voice=voice, rate=cfg["voice_rate"])
     body_seconds = max(render.probe_duration(voice_path), words[-1]["end"] if words else 1.0) + 0.4
     save_json(out_dir / "words.json", words)
@@ -415,6 +436,9 @@ def cmd_produce(args) -> Path:
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)
+    if getattr(args, "dub_of", None):
+        from . import dub
+        dub.record(args.dub_of, out_dir.name)
     if getattr(args, "sequel_of", None) or getattr(args, "idea", None):
         from . import specials
         specials.record("sequel" if args.sequel_of else "idea", args.sequel_of or args.idea, out_dir.name)
@@ -575,6 +599,21 @@ def cmd_comments(args) -> None:
         print("posted reply", comments.post_reply(args.target or "", getattr(args, "text", None)))
     elif action == "dismiss":
         comments.dismiss(args.target or "")
+
+
+def cmd_backup(args) -> None:
+    from . import backup
+    action = getattr(args, "action", "now") or "now"
+    if action == "now":
+        print(f"Backup written: {backup.make()}")
+    elif action == "list":
+        for p in sorted(backup.folder().glob("shorts-*.zip")):
+            print(f"  {p.name}  {p.stat().st_size / 1e6:.1f} MB")
+        print(f"(in {backup.folder()})")
+    elif action == "restore":
+        if not args.target:
+            sys.exit("Give the zip to restore: python main.py backup restore <path>")
+        print(f"Restored {backup.restore(Path(args.target))} files (tokens and keys are never in a backup).")
 
 
 def cmd_watchdog(args) -> None:
@@ -947,6 +986,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
     pr.add_argument("--profile", help="produce in the style of an analysed channel (see `profile add`)")
     pr.add_argument("--exemplar", help="with --profile: remake one of that channel's Shorts by video id (see `profile show`)")
+    pr.add_argument("--dub-of", dest="dub_of", help="dub one of the main channel's Shorts (its output folder name) for this channel")
     pr.add_argument("--sequel-of", dest="sequel_of", help="make a Part 2 of this upload (YouTube video id)")
     pr.add_argument("--idea", help="make the Short a viewer asked for (comment thread id, see `comments list`)")
     pr.add_argument("--blueprint-key", dest="blueprint_key", help="one of your channel's winners, e.g. storytime|psychology_mind (see `channel report`)")
@@ -1007,6 +1047,11 @@ def build_parser() -> argparse.ArgumentParser:
     cm.add_argument("target", nargs="?")
     cm.add_argument("--text")
     cm.set_defaults(func=cmd_comments)
+
+    bk = sub.add_parser("backup", help="back up what the engine learned (nightly by itself): now | list | restore <zip>")
+    bk.add_argument("action", nargs="?", default="now", choices=["now", "list", "restore"])
+    bk.add_argument("target", nargs="?")
+    bk.set_defaults(func=cmd_backup)
 
     wd = sub.add_parser("watchdog", help="start the console and restart it if it stops answering (used by autostart)")
     wd.add_argument("--port", type=int, default=8787)

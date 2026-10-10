@@ -169,7 +169,7 @@ def synthesize(text: str, out_path: Path, *, voice: str, rate: str = "+0%") -> l
     try:
         return synthesize_edge(text, out_path, voice=voice, rate=rate)
     except Exception as exc:  # noqa: BLE001
-        if cfg.get("fallback") == "kokoro" and kokoro_available():
+        if cfg.get("fallback") == "kokoro" and kokoro_available() and voice.lower().startswith("en-"):
             log.warning("edge-tts failed (%s); voicing with the free local Kokoro voice instead", str(exc)[:120])
             return synthesize_kokoro(text, out_path, rate=rate)
         raise

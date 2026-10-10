@@ -26,10 +26,10 @@ def test_kokoro_takes_over_when_edge_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(tts, "synthesize_edge", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("NoAudioReceived")))
     monkeypatch.setattr(tts, "kokoro_available", lambda: True)
     monkeypatch.setattr(tts, "synthesize_kokoro", lambda text, out, **k: [{"text": "ok", "start": 0, "end": 1}])
-    assert tts.synthesize("Hi.", tmp_path / "v.mp3", voice="x")[0]["text"] == "ok"
+    assert tts.synthesize("Hi.", tmp_path / "v.mp3", voice="en-US-AndrewNeural")[0]["text"] == "ok"
     monkeypatch.setattr(tts, "kokoro_available", lambda: False)
     with pytest.raises(RuntimeError, match="NoAudioReceived"):
-        tts.synthesize("Hi.", tmp_path / "v.mp3", voice="x")
+        tts.synthesize("Hi.", tmp_path / "v.mp3", voice="en-US-AndrewNeural")
 
 
 # ------------------------------------------------------------------ footage

@@ -163,6 +163,7 @@ def _args(job: Job) -> SimpleNamespace:
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
         exemplar=p.get("exemplar") or None, auto=bool(p.get("auto")), text=p.get("text") or None,
         sequel_of=p.get("sequel_of") or None, idea=p.get("idea") or None, explore=bool(p.get("explore")),
+        dub_of=p.get("dub_of") or None,
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",
@@ -484,6 +485,11 @@ SCHEDULER = Scheduler(submit_job, lambda job_id: JOBS[job_id].status if job_id i
 @app.on_event("startup")
 def _start_scheduler() -> None:
     SCHEDULER.start()
+    try:
+        from ..telegram_bot import start as _tg_start
+        _tg_start()
+    except Exception:  # noqa: BLE001
+        log.exception("Telegram commands could not start")
 
 
 @app.get("/api/schedule")

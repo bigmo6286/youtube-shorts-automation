@@ -248,6 +248,11 @@ class Scheduler:
         with self._lock:
             self._roll_day(now)
             self._update_history_statuses()
+            try:
+                from .backup import maybe_nightly
+                maybe_nightly(now)
+            except Exception:  # noqa: BLE001
+                log.exception("nightly backup failed")
             if time.time() - self._last_cleanup > CLEANUP_EVERY_SECONDS:
                 self._last_cleanup = time.time()
                 try:
@@ -392,6 +397,16 @@ class Scheduler:
         if kind == "refresh":
             params: dict[str, Any] = {"top": 20, "scheduled": True}
             job = self._submit("run", params)
+        elif cfg.get("source") == "dub":
+            from .dub import next_source
+            src = next_source()
+            if not src:
+                log.info("dub slot %s skipped: nothing new to dub on the source channel", slot.strftime("%H:%M"))
+                self.state["history"].append({"kind": "produce (skipped: nothing to dub)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
+                                              "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
+                return True
+            params = {"dub_of": src, "music": "random", "scheduled": True}
+            job = self._submit("produce", params)
         elif cfg.get("source") == "profile" and cfg.get("profile"):
             params = {"profile": cfg["profile"], "music": "random", "scheduled": True}
             job = self._submit("produce", params)
