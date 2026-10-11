@@ -417,7 +417,11 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
     keywords = [first_kw, *[ln["visual_keyword"] for ln in script["lines"]], keywords_fallback(script)]
     fallback = keywords_fallback(script)
     lines = script["lines"]
-    named = [lines[0].get("named_subject", "") if lines else "", *[ln.get("named_subject", "") for ln in lines], ""]
+    # The hook and the closing line rarely name the subject ("And you'd walk right past it") but are about it: they
+    # show the video's main named subject, so a Short about one landmark does not end on some other place.
+    marked = [ln.get("named_subject", "").strip() for ln in lines if (ln.get("named_subject") or "").strip()]
+    main = max(set(marked), key=marked.count) if marked else ""
+    named = [(lines[0].get("named_subject") if lines else "") or main, *[ln.get("named_subject", "") for ln in lines], main]
     segments: list[dict[str, Any]] = []
     used: set[str] = set()
     idx, t = 0, 0.0

@@ -207,3 +207,19 @@ def test_named_subject_line_uses_a_credited_commons_photo(monkeypatch, tmp_path)
     assert "Wikimedia Commons" in note and made == [True] and used == {"wc1"}
     line = commons.credit_line(credits + credits)                  # the same photo twice is credited once
     assert line.count("A. Savin (CC BY-SA 3.0) https://c/1") == 1
+
+
+def test_hook_and_closing_line_show_the_main_named_subject(monkeypatch, tmp_path):
+    monkeypatch.setenv("PEXELS_API_KEY", "test")
+    seen = []
+    monkeypatch.setattr(footage, "footage_for_line",
+                        lambda chunk, kw, sec, wd, i, **k: seen.append(k["named_subject"]) or (tmp_path / f"{i}.mp4", "x"))
+    script = {"hook": "Its roof is at ground level.", "cta": "And you'd walk right past it.",
+              "lines": [{"text": "It is Saint George's church.", "visual_keyword": "rock church",
+                         "named_subject": "Church of Saint George, Lalibela"},
+                        {"text": "Workers cut down into rock.", "visual_keyword": "stone carving", "named_subject": ""}]}
+    words = [{"text": w, "start": i * 0.4, "end": i * 0.4 + 0.3}
+             for i, w in enumerate(" ".join([script["hook"], *[l["text"] for l in script["lines"]], script["cta"]]).split())]
+    footage.plan_backgrounds(script, words, words[-1]["end"] + 0.5, "pexels", tmp_path)
+    lalibela = "Church of Saint George, Lalibela"
+    assert seen == [lalibela, lalibela, "", lalibela]     # hook, line 1, a generic line, closing line
