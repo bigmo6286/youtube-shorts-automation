@@ -44,8 +44,13 @@ $$("nav button").forEach((b) => b.addEventListener("click", () => {
 }));
 
 // ---------------------------------------------------------------- overview
+let statusBusy = false;
 async function loadStatus() {
-  const s = await api("/api/status");
+  loadSchedule();
+  if (statusBusy) return;
+  statusBusy = true;
+  let s;
+  try { s = await api("/api/status"); } finally { statusBusy = false; }
   const card = (label, ok, text) => `<div class="card ${ok ? "ok" : "warn"}"><div class="label">${label}</div><div class="value">${text}</div></div>`;
   $("#statuscards").innerHTML = [
     card("ffmpeg", !!s.ffmpeg, s.ffmpeg ? "ready" : `missing <button id="installffmpeg">Install ffmpeg</button>`),
@@ -61,7 +66,6 @@ async function loadStatus() {
     card("Scheduler", s.schedule && s.schedule.enabled, s.schedule && s.schedule.enabled
       ? `${s.schedule.done_today} done today${s.schedule.next && s.schedule.next[0] ? `, next ${s.schedule.next[0].kind} ${s.schedule.next[0].time}` : ""}` : "off (Settings)"),
   ].join("");
-  loadSchedule();
   const inst = $("#installffmpeg");
   if (inst) inst.addEventListener("click", () => startJob("setup_ffmpeg"));
   if (s.job_running && (!state.job || state.job.id !== s.job_running.id)) attachJob(s.job_running.id);
@@ -325,8 +329,13 @@ $("#cap-reset").addEventListener("click", () => { capFill(state.capPresets[$("#c
 CAP_FIELDS.forEach((f) => { const el = $(`[name="captions.${f}"]`); if (el) el.addEventListener("input", capPreview); });
 
 // ---------------------------------------------------------------- schedule
+let scheduleBusy = false;
 async function loadSchedule() {
-  const p = await api("/api/schedule");
+  loadChannel(); loadComments();
+  if (scheduleBusy) return;
+  scheduleBusy = true;
+  let p;
+  try { p = await api("/api/schedule"); } finally { scheduleBusy = false; }
   const c = p.config;
   $("#schedsummary").textContent = c.enabled
     ? `on: ${c.produces_per_day} Shorts/day, ${c.refresh_per_day} trend refresh/day, ${String(c.start_hour).padStart(2, "0")}:00-${String(c.end_hour).padStart(2, "0")}:00, ${p.done_today}/${c.produces_per_day} done today`
@@ -344,7 +353,6 @@ async function loadSchedule() {
       + (p.tuning && p.tuning.uploads_per_day ? `<br>Learned from your channel: <b>${p.tuning.uploads_per_day}</b> uploads a day, Shorts of about <b>${p.tuning.seconds}s</b>${Object.keys(p.tuning.formats || {}).length ? " (" + Object.entries(p.tuning.formats).map(([f, s]) => `${esc(f)} ${s}s`).join(", ") + ")" : ""} · repetitiveness ${Math.round((p.tuning.sameness || 0) * 100)}%${(p.tuning.overused || []).length ? ` <span class="warn">(overused: ${p.tuning.overused.map(esc).join(", ")})</span>` : ""}${p.tuning.retitles && p.tuning.retitles.tried ? ` · second-chance titles: ${p.tuning.retitles.tried} tried, ${p.tuning.retitles.improved} improved, ${p.tuning.retitles.pending} measuring` : ""}<br>` : "")
       + (p.publish && p.publish.enabled ? ` · goes public at good hours (next free ${esc(p.publish.next_publish)})` : "")
       + ((p.retries || []).length ? ` · retries pending: ${p.retries.map((r) => `${esc(r.due.slice(11, 16))} (${esc(r.reason)})`).join(", ")}` : "");
-  loadChannel(); loadComments();
   const detail = (h) => h.params ? (h.params.blueprint || h.params.blueprint_key || (h.params.title ? `${h.params.priority ?? ""} ${h.params.title}` : "-")) : (h.retry_at ? `retry at ${h.retry_at}` : "-");
   $("#schedhistory tbody").innerHTML = p.history.map((h) => `<tr><td>${esc(h.slot)}</td><td>${esc(h.kind)}</td><td>${esc(h.started)}</td>
       <td class="${h.status === "error" ? "err" : ""}">${esc(h.status)}${h.retry_at ? ` → retry ${esc(h.retry_at)}` : ""}</td><td>${esc(String(detail(h)))}</td></tr>`).join("")

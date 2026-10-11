@@ -122,6 +122,52 @@ JOBS: dict[str, Job] = {}
 _JOB_LOCK = threading.Lock()          # one pipeline job at a time: YouTube rate limits and a small CPU
 _CURRENT: Job | None = None
 
+# On a busy PC (another program using the CPU) the overview's answers can take longer than the page waits between
+# polls. Requests for the same thing share one computation; once there is an answer, a stale one is returned at once
+# while a fresh one is computed in the background, so the page never waits on it again.
+_SHARED: dict[str, tuple[float, Any]] = {}
+_SHARED_LOCKS: dict[str, threading.Lock] = {}
+_SHARED_GUARD = threading.Lock()
+
+
+def _compute_shared(key: str, fn: Any) -> Any:
+    with _SHARED_GUARD:
+        lock = _SHARED_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        value = fn()
+        _SHARED[key] = (time.time(), value)
+        return value
+
+
+def _shared(key: str, ttl: float, fn: Any) -> Any:
+    hit = _SHARED.get(key)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    if hit:
+        lock = _SHARED_LOCKS.get(key)
+        if lock is None or not lock.locked():               # one background refresh at a time
+            def refresh() -> None:
+                try:
+                    _compute_shared(key, fn)
+                except Exception:  # noqa: BLE001 - keep showing the last answer
+                    log.exception("refreshing %s failed", key)
+            threading.Thread(target=refresh, name=f"refresh-{key}", daemon=True).start()
+        return hit[1]
+    with _SHARED_GUARD:
+        lock = _SHARED_LOCKS.setdefault(key, threading.Lock())
+    with lock:                                              # first answer: wait for whoever is computing it
+        hit = _SHARED.get(key)
+        if hit:
+            return hit[1]
+        value = fn()
+        _SHARED[key] = (time.time(), value)
+        return value
+
+
+def _forget_shared() -> None:
+    """After a settings change: the next request computes a fresh answer instead of showing the old one."""
+    _SHARED.clear()
+
 
 class _JobLogHandler(logging.Handler):
     def __init__(self, job: Job):
@@ -416,6 +462,7 @@ def update_settings(body: SettingsUpdate) -> dict[str, Any]:
         _write_env(updates)
     if body.config is not None:
         save_local_config({k: v for k, v in body.config.items() if isinstance(v, dict)})
+    _forget_shared()
     return get_settings()
 
 
@@ -485,6 +532,7 @@ SCHEDULER = Scheduler(submit_job, lambda job_id: JOBS[job_id].status if job_id i
 @app.on_event("startup")
 def _start_scheduler() -> None:
     SCHEDULER.start()
+    threading.Thread(target=lambda: (status(), channel_report()), name="warm-overview", daemon=True).start()
     try:
         from ..telegram_bot import start as _tg_start
         _tg_start()
@@ -494,7 +542,7 @@ def _start_scheduler() -> None:
 
 @app.get("/api/schedule")
 def get_schedule() -> dict[str, Any]:
-    return SCHEDULER.plan()
+    return _shared("schedule", 5, SCHEDULER.plan)
 
 
 # ------------------------------------------------------------------------------------ style profiles
@@ -519,8 +567,7 @@ def get_profile(handle: str) -> dict[str, Any]:
 @app.get("/api/channel")
 def channel_report() -> dict[str, Any]:
     from ..channel import cached_report, configured
-    report = cached_report()
-    return {"configured": configured(), "report": report}
+    return _shared("channel", 10, lambda: {"configured": configured(), "report": cached_report()})
 
 
 # ------------------------------------------------------------------------------------ telegram
@@ -569,7 +616,22 @@ def remove_music(file_name: str) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------------------------------ runs and outputs
 
+_RUN_SUMMARIES: dict[str, tuple[tuple[float, float], dict[str, Any]]] = {}
+
+
 def _run_summary(run_dir: Path) -> dict[str, Any]:
+    def mtime(p: Path) -> float:
+        return p.stat().st_mtime if p.exists() else 0.0
+    stamp = (mtime(run_dir / "shorts.json"), mtime(run_dir / "analysis.json"))
+    hit = _RUN_SUMMARIES.get(str(run_dir))
+    if hit and hit[0] == stamp:
+        return hit[1]
+    summary = _read_run_summary(run_dir)
+    _RUN_SUMMARIES[str(run_dir)] = (stamp, summary)
+    return summary
+
+
+def _read_run_summary(run_dir: Path) -> dict[str, Any]:
     shorts = load_json(run_dir / "shorts.json", []) or []
     analysis = load_json(run_dir / "analysis.json")
     return {
@@ -644,11 +706,13 @@ def _sync_youtube_status(force: bool = False) -> bool:
 
 
 def _ollama_status() -> dict[str, Any]:
-    try:
-        from ..ollama_backend import status as ollama_status
-        return ollama_status()
-    except Exception:  # noqa: BLE001
-        return {"model_ready": False}
+    def ask() -> dict[str, Any]:
+        try:
+            from ..ollama_backend import status as ollama_status
+            return ollama_status()
+        except Exception:  # noqa: BLE001
+            return {"model_ready": False}
+    return _shared("ollama", 60, ask)
 
 
 @app.get("/api/comments")
@@ -748,10 +812,20 @@ def _ai_images_on() -> bool:
     return bool(s.get("enabled")) and s.get("mode") != "never" and available(s.get("provider"))
 
 
+def _latest_run_summary() -> dict[str, Any] | None:
+    if not RUNS_DIR.exists():
+        return None
+    runs = sorted((p for p in RUNS_DIR.iterdir() if p.is_dir() and (p / "shorts.json").exists()), reverse=True)
+    return _run_summary(runs[0]) if runs else None
+
+
 @app.get("/api/status")
 def status() -> dict[str, Any]:
+    return _shared("status", 5, _status) | {"job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None}
+
+
+def _status() -> dict[str, Any]:
     values = _read_env()
-    runs = list_runs()
     from ..tools import find_ffmpeg
     ffmpeg_dir = find_ffmpeg()
     return {
@@ -765,10 +839,9 @@ def status() -> dict[str, Any]:
         "music_tracks": len(get_music()),
         "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),
         "channel": _channel_configured(),
-        "schedule": {k: v for k, v in SCHEDULER.plan().items() if k in ("next", "done_today")} | {"enabled": bool(load_config().get("schedule", {}).get("enabled"))},
-        "latest_run": runs[0] if runs else None,
-        "outputs": len(list_outputs()),
-        "job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None,
+        "schedule": {k: v for k, v in get_schedule().items() if k in ("next", "done_today")} | {"enabled": bool(load_config().get("schedule", {}).get("enabled"))},
+        "latest_run": _latest_run_summary(),
+        "outputs": sum(1 for d in OUTPUT_DIR.iterdir() if (d / "meta.json").exists()) if OUTPUT_DIR.exists() else 0,
     }
 
 

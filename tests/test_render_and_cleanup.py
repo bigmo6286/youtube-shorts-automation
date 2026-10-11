@@ -61,3 +61,32 @@ def test_cleanup_rules(tmp_path, monkeypatch):
     for d in (fresh, old, waiting):
         assert (d / "script.json").exists() and (d / "thumbnail.jpg").exists() and (d / "meta.json").exists()
     assert s["videos_removed"] == 1
+
+
+# ------------------------------------------------------------------ console answers on a busy PC
+def test_shared_answers_return_stale_at_once_and_refresh_in_background():
+    import threading
+    import time
+    from shorts_pipeline.web import server
+    server._forget_shared()
+    calls = []
+    release = threading.Event()
+
+    def slow():
+        calls.append(1)
+        if len(calls) > 1:
+            release.wait(5)
+        return len(calls)
+
+    assert server._shared("t", 0, slow) == 1                   # first answer: computed
+    t0 = time.time()
+    assert server._shared("t", 0, slow) == 1                   # stale answer at once, refresh started
+    assert server._shared("t", 0, slow) == 1                   # no second refresh while one runs
+    assert time.time() - t0 < 1 and len(calls) == 2
+    release.set()
+    for _ in range(50):
+        if server._SHARED["t"][1] == 2:
+            break
+        time.sleep(0.05)
+    assert server._shared("t", 60, slow) == 2
+    server._forget_shared()
