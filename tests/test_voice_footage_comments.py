@@ -23,13 +23,39 @@ def test_speed_follows_the_edge_rate():
 
 def test_kokoro_takes_over_when_edge_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(tts, "config", lambda: {"engine": "edge", "fallback": "kokoro", "kokoro_voice": "am_michael"})
-    monkeypatch.setattr(tts, "synthesize_edge", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("NoAudioReceived")))
+    monkeypatch.setattr(tts, "EDGE_WAITS", (0, 0))
+    tries = []
+    monkeypatch.setattr(tts, "synthesize_edge", lambda *a, **k: tries.append(1) or (_ for _ in ()).throw(RuntimeError("NoAudioReceived")))
     monkeypatch.setattr(tts, "kokoro_available", lambda: True)
     monkeypatch.setattr(tts, "synthesize_kokoro", lambda text, out, **k: [{"text": "ok", "start": 0, "end": 1}])
     assert tts.synthesize("Hi.", tmp_path / "v.mp3", voice="en-US-AndrewNeural")[0]["text"] == "ok"
+    assert len(tries) == 3                                       # edge-tts was given three chances first
     monkeypatch.setattr(tts, "kokoro_available", lambda: False)
+    monkeypatch.setattr(tts, "download_kokoro", lambda: (_ for _ in ()).throw(OSError("offline")))
     with pytest.raises(RuntimeError, match="NoAudioReceived"):
         tts.synthesize("Hi.", tmp_path / "v.mp3", voice="en-US-AndrewNeural")
+
+
+def test_edge_recovers_on_a_later_attempt(monkeypatch, tmp_path):
+    monkeypatch.setattr(tts, "config", lambda: {"engine": "edge", "fallback": "kokoro", "kokoro_voice": "am_michael"})
+    monkeypatch.setattr(tts, "EDGE_WAITS", (0, 0))
+    tries = []
+
+    def edge(*a, **k):
+        tries.append(1)
+        if len(tries) < 2:
+            raise RuntimeError("WSServerHandshakeError: 403")
+        return [{"text": "edge", "start": 0, "end": 1}]
+    monkeypatch.setattr(tts, "synthesize_edge", edge)
+    assert tts.synthesize("Hi.", tmp_path / "v.mp3", voice="en-US-AndrewNeural")[0]["text"] == "edge"
+
+
+def test_kokoro_is_fetched_the_first_time_it_is_needed(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(tts, "kokoro_available", lambda: bool(fetched))
+    monkeypatch.setattr(tts, "download_kokoro", lambda: fetched.append(1))
+    pytest.importorskip("kokoro_onnx")
+    assert tts.ensure_kokoro() and fetched == [1]
 
 
 # ------------------------------------------------------------------ footage

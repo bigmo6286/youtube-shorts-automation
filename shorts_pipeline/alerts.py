@@ -60,8 +60,10 @@ _RULES: list[tuple[str, Problem]] = [
     (r"repeated subjects|repeats a video already made",
      Problem("repeats", "Every draft repeated a subject already made",
              "Nothing to do: the next slot picks another blueprint. If this keeps happening, refresh the trends.", True)),
-    (r"NoAudioReceived|edge.?tts|No audio was received",
-     Problem("voice", "The voice service returned no audio", "Nothing to do unless it keeps happening.", True)),
+    (r"NoAudioReceived|edge.?tts|No audio was received|speech\.platform\.bing\.com|WSServerHandshakeError",
+     Problem("voice", "The voice service refused or returned no audio",
+             "Nothing to do unless it keeps happening: the free local voice takes over. If it keeps happening, check "
+             "this PC's clock is set automatically and run  pip install -U edge-tts", True)),
     (r"ffmpeg failed|ffmpeg.*exit|CalledProcessError.*ffmpeg|Could not open encoder|Error submitting",
      Problem("render", "The video render failed", "Nothing to do unless it keeps happening.", True)),
     (r"Can't reach the API|ServerNotFound|Unable to find the server|getaddrinfo|Name or service not known|"

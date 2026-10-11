@@ -1,8 +1,9 @@
 """Voiceover with word timings for captions.
 
-Main voice: edge-tts (Microsoft's online neural voices, free, exact word timings). Fallback: Kokoro-82M, a free
-open-source voice that runs on this PC (kokoro-onnx, ~120 MB in data/models/kokoro). It is used when edge-tts fails
-(no audio, network), or always with `production.tts.engine: kokoro`. Kokoro gives no word timings, so each sentence
+Main voice: edge-tts (Microsoft's online neural voices, free, exact word timings). Microsoft sometimes refuses
+requests for a while (HTTP 403, no audio), so edge-tts is tried a few times with pauses. Fallback: Kokoro-82M, a free
+open-source voice that runs on this PC (kokoro-onnx, ~120 MB in data/models/kokoro, fetched by itself the first
+time it is needed). It is used when edge-tts keeps failing, or always with `production.tts.engine: kokoro`. Kokoro gives no word timings, so each sentence
 is voiced separately (exact sentence timing) and the words inside a sentence are spread by their length.
 """
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 import wave
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,7 @@ KOKORO_FILES = {
 }
 DEFAULTS = {"engine": "edge", "fallback": "kokoro", "kokoro_voice": "am_michael"}
 SENTENCE_GAP = 0.12           # seconds of silence between Kokoro sentences
+EDGE_WAITS = (15, 45)         # pauses before the 2nd and 3rd edge-tts attempt
 
 
 def config() -> dict[str, Any]:
@@ -70,6 +73,24 @@ def kokoro_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def ensure_kokoro() -> bool:
+    """Kokoro ready to speak, fetching its model files the first time (the same as `python main.py setup-voice`)."""
+    if kokoro_available():
+        return True
+    try:
+        import kokoro_onnx  # noqa: F401
+    except ImportError:
+        log.warning("the free local voice is not installed: run  pip install -r requirements.txt")
+        return False
+    try:
+        log.info("fetching the free local voice (Kokoro, ~120 MB, once)")
+        download_kokoro()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not fetch the free local voice: %s", str(exc)[:160])
+        return False
+    return kokoro_available()
 
 
 def download_kokoro() -> Path:
@@ -166,10 +187,16 @@ def synthesize(text: str, out_path: Path, *, voice: str, rate: str = "+0%") -> l
     if cfg["engine"] == "kokoro" and kokoro_available():
         log.info("voice: Kokoro (%s), free local model", cfg["kokoro_voice"])
         return synthesize_kokoro(text, out_path, rate=rate)
-    try:
-        return synthesize_edge(text, out_path, voice=voice, rate=rate)
-    except Exception as exc:  # noqa: BLE001
-        if cfg.get("fallback") == "kokoro" and kokoro_available() and voice.lower().startswith("en-"):
-            log.warning("edge-tts failed (%s); voicing with the free local Kokoro voice instead", str(exc)[:120])
-            return synthesize_kokoro(text, out_path, rate=rate)
-        raise
+    for wait in (*EDGE_WAITS, None):
+        try:
+            return synthesize_edge(text, out_path, voice=voice, rate=rate)
+        except Exception as exc:  # noqa: BLE001
+            error = exc
+            if wait is not None:
+                log.warning("edge-tts failed (%s); trying again in %ss", str(exc)[:120], wait)
+                time.sleep(wait)
+    # the Kokoro voice speaks English only: a dub in another language waits for the next slot instead
+    if cfg.get("fallback") == "kokoro" and voice.lower().startswith("en-") and ensure_kokoro():
+        log.warning("edge-tts kept failing (%s); voicing with the free local Kokoro voice instead", str(error)[:120])
+        return synthesize_kokoro(text, out_path, rate=rate)
+    raise error

@@ -66,6 +66,7 @@ def test_translation_must_keep_every_line(monkeypatch):
 
 def test_english_fallback_voice_is_never_used_for_a_dub(monkeypatch, tmp_path):
     monkeypatch.setattr(tts, "config", lambda: {"engine": "edge", "fallback": "kokoro", "kokoro_voice": "am_michael"})
+    monkeypatch.setattr(tts, "EDGE_WAITS", (0, 0))
     monkeypatch.setattr(tts, "synthesize_edge", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no audio")))
     monkeypatch.setattr(tts, "kokoro_available", lambda: True)
     monkeypatch.setattr(tts, "synthesize_kokoro", lambda *a, **k: [{"text": "x", "start": 0, "end": 1}])
