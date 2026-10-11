@@ -448,7 +448,7 @@ def cmd_produce(args) -> Path:
         specials.record("sequel" if args.sequel_of else "idea", args.sequel_of or args.idea, out_dir.name)
     from . import history
     try:
-        housekeeping.prune_cache()
+        housekeeping.tidy()
     except Exception as exc:  # noqa: BLE001
         log.warning("footage cache cleanup failed: %s", exc)
     history.record(script["title"], hook=script.get("hook", ""), key=f"{blueprint.get('format')}|{blueprint.get('topic')}",

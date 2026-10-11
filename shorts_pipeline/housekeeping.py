@@ -2,7 +2,8 @@
 
 Every Pexels clip and photo the engine uses is cached under data/cache/pexels so a re-render does not
 download it again. At ~11 MB per full-HD clip and 20 Shorts a day that grows by gigabytes a week, so the
-cache is trimmed oldest-first (by last use) to `production.cache_max_gb` after every production.
+cache is trimmed oldest-first (by last use) to `production.cache_max_gb` after every production, and uploaded
+Shorts lose their video file (YouTube has it) at the same time.
 """
 from __future__ import annotations
 
@@ -91,7 +92,10 @@ def ensure_free_space() -> None:
     max_gb, min_free = _limits()
     if free_gb() >= min_free:
         return
-    log.warning("only %.1f GB free on the disk; trimming the footage cache", free_gb())
+    log.warning("only %.1f GB free on the disk; deleting uploaded videos and trimming the footage cache", free_gb())
+    cleanup_outputs(force_uploaded=True)                 # YouTube has them: they go before any footage
+    if free_gb() >= min_free:
+        return
     prune_cache(max_gb)
     if free_gb() < min_free:
         prune_cache(min(max_gb, 1.0))
@@ -105,7 +109,7 @@ def ensure_free_space() -> None:
 INTERMEDIATE_PATTERNS = ("bg_*.mp4", "bg_*.jpg", "bg_*.png", "outro_bg.mp4", "intro_bg.mp4", "voice.mp3", "*.ass",
                          "words.json", "*.tmp", ".*.tmp")
 KEEP_FILES = {"short.mp4", "meta.json", "script.json", "thumbnail.jpg"}
-CLEANUP_DEFAULTS = {"clean_after_upload": True, "keep_video_days": 3, "keep_unuploaded_days": 30}
+CLEANUP_DEFAULTS = {"clean_after_upload": True, "keep_video_days": 0, "keep_unuploaded_days": 30}
 
 
 def cleanup_config() -> dict[str, Any]:
@@ -133,14 +137,17 @@ def remove_intermediates(out_dir: Path, dry_run: bool = False) -> int:
     return _remove(sorted(f for f in files if f.name not in KEEP_FILES), dry_run)
 
 
-def cleanup_outputs(dry_run: bool = False, now: float | None = None) -> dict[str, Any]:
+def cleanup_outputs(dry_run: bool = False, now: float | None = None, force_uploaded: bool = False) -> dict[str, Any]:
     """Uploaded Shorts lose their render pieces at once and their video file after keep_video_days on YouTube
-    (YouTube keeps the video); Shorts never uploaded keep everything for keep_unuploaded_days. The script, details
-    and thumbnail always stay, so history, analytics and the console cards keep working."""
+    (0 = at the next cleanup; YouTube keeps the video); Shorts never uploaded keep everything for
+    keep_unuploaded_days. force_uploaded (low disk) removes every uploaded video file whatever the setting. The
+    script, details and thumbnail always stay, so history, analytics and the console cards keep working."""
     from .config import OUTPUT_DIR
     from .storage import load_json, save_json
 
     cfg = cleanup_config()
+    if force_uploaded:
+        cfg = {**cfg, "clean_after_upload": True, "keep_video_days": 0}
     now = now or time.time()
     stats = {"folders": 0, "pieces_bytes": 0, "videos_removed": 0, "video_bytes": 0, "dry_run": dry_run}
     if not OUTPUT_DIR.exists():
@@ -181,3 +188,12 @@ def cleanup_outputs(dry_run: bool = False, now: float | None = None) -> dict[str
                  stats["folders"], stats["videos_removed"], total)
     stats["freed_gb"] = round(total, 2)
     return stats
+
+
+def tidy() -> None:
+    """After every production: uploaded videos' files and render pieces go, then the cache is trimmed to its limit."""
+    try:
+        cleanup_outputs()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("output cleanup failed: %s", exc)
+    prune_cache()

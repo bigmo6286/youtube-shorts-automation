@@ -90,3 +90,23 @@ def test_shared_answers_return_stale_at_once_and_refresh_in_background():
         time.sleep(0.05)
     assert server._shared("t", 60, slow) == 2
     server._forget_shared()
+
+
+def test_uploaded_videos_go_at_the_next_cleanup_and_first_when_the_disk_is_low(tmp_path, monkeypatch):
+    monkeypatch.setattr("shorts_pipeline.config.OUTPUT_DIR", tmp_path)
+    now = time.time()
+    monkeypatch.setattr(housekeeping, "cleanup_config", lambda: dict(housekeeping.CLEANUP_DEFAULTS))
+    just = _folder(tmp_path, "2026-10-11T10-00-00Z_a", youtube_id="A", privacy="private", uploaded_at=now - 60)
+    waiting = _folder(tmp_path, "2026-10-11T11-00-00Z_b", upload_state="queued")
+    housekeeping.cleanup_outputs(now=now)
+    assert not (just / "short.mp4").exists() and (just / "thumbnail.jpg").exists()       # default: gone at once
+    assert (waiting / "short.mp4").exists()                                              # not on YouTube: kept
+    # a user who keeps uploaded videos for a week still loses them first when the disk is low
+    monkeypatch.setattr(housekeeping, "cleanup_config", lambda: {**housekeeping.CLEANUP_DEFAULTS, "keep_video_days": 7})
+    kept = _folder(tmp_path, "2026-10-11T12-00-00Z_c", youtube_id="C", privacy="public", uploaded_at=now - 60)
+    housekeeping.cleanup_outputs(now=now)
+    assert (kept / "short.mp4").exists()
+    monkeypatch.setattr(housekeeping, "free_gb", lambda path=None: 1.0 if (kept / "short.mp4").exists() else 5.0)
+    monkeypatch.setattr(housekeeping, "prune_cache", lambda *a: pytest.fail("footage must not go first"))
+    housekeeping.ensure_free_space()
+    assert not (kept / "short.mp4").exists() and (waiting / "short.mp4").exists()

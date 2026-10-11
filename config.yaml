@@ -110,10 +110,12 @@ production:
   cache_max_gb: 4             # downloaded Pexels clips kept for reuse; least recently used are deleted beyond this
   cleanup:
     clean_after_upload: true  # delete the render pieces (background clips, voice, caption files) once a Short is uploaded
-    keep_video_days: 3        # delete the video file this many days after upload (YouTube has it); null = keep forever
+    keep_video_days: 0        # delete the video file this many days after upload (0 = at the next cleanup, after
+                              # every production; YouTube has it); null = keep forever. Low disk: deleted regardless
     keep_unuploaded_days: 30  # never-uploaded Shorts keep their video this long; null = keep forever
                               # script, details and thumbnail always stay (history, analytics and the cards need them)
-  min_free_gb: 3              # a production stops early (instead of writing empty files) below this much free disk
+  min_free_gb: 3              # below this much free disk: uploaded videos, then old footage go; else the production stops
+  cache_max_gb: 4             # downloaded footage kept for reuse, least recently used deleted first
   script_backend: auto        # auto | api | claude_code | ollama  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription; ollama = free local model)
   ollama:
     fallback: true            # when Claude is unavailable (missing, signed out, usage limit, offline), write with the local model
