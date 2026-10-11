@@ -397,7 +397,8 @@ def cmd_produce(args) -> Path:
         hook_end = words[min(len(words), max(n, 1)) - 1]["end"] + 0.5 if words and n else 2.5
         seconds = max(1.5, min(float(hook_cfg.get("max_seconds", 3.5)), hook_end))
         captions.add_hook_overlay(ass_path, script.get("thumbnail_text") or script["hook"], seconds, style=_caption_style(cfg))
-    segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir)
+    photo_credits: list[dict] = []
+    segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir, credits=photo_credits)
 
     music_cfg = dict(cfg.get("music") or {})
     if "music_volume_db" in cfg and "volume_db" not in music_cfg:      # older config.yaml
@@ -411,6 +412,9 @@ def cmd_produce(args) -> Path:
             description = description.rstrip() + "\n\n" + credit
     else:
         log.info("music: none%s", "" if music.list_tracks() else " (assets/music is empty: fetch or upload tracks in Settings)")
+    if photo_credits:
+        from .commons import credit_line
+        description = description.rstrip() + "\n\n" + credit_line(photo_credits)     # what CC BY / BY-SA ask for
     thumb = None
     thumb_cfg = cfg.get("thumbnail") or {}
     if thumb_cfg.get("enabled", True):
@@ -432,7 +436,7 @@ def cmd_produce(args) -> Path:
             "hashtags": script["hashtags"], "duration": total,
             "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
             "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None, "voice": voice,
-            "segments": segments,
+            "segments": segments, "photo_credits": photo_credits,
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
     save_json(out_dir / "meta.json", meta)

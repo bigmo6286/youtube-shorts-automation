@@ -180,3 +180,30 @@ def test_setting_and_place_rules_for_footage():
     pick, _ = footage._pick_with_variety([etna, green], probs, oks, False, set(), needs_setting=.1,
                                          settings={"g": .1, "e": .1}, conflicts=conflicts)
     assert pick["id"] == "g"
+
+
+# ------------------------------------------------------------------ real photos of named things (Wikimedia Commons)
+def test_only_free_licences_are_used():
+    from shorts_pipeline import commons
+    for ok in ("CC BY-SA 4.0", "CC BY 2.0", "Public domain", "CC0", "cc-by-sa-3.0"):
+        assert commons.free_licence(ok), ok
+    for bad in ("CC BY-NC 2.0", "CC BY-ND 4.0", "CC BY-NC-SA 3.0", "Fair use", "All rights reserved", ""):
+        assert not commons.free_licence(bad), bad
+
+
+def test_named_subject_line_uses_a_credited_commons_photo(monkeypatch, tmp_path):
+    from shorts_pipeline import commons
+    photo = {"id": "wc1", "kind": "photo", "source": "commons", "description": "Bete Giyorgis, Lalibela",
+             "link": "https://upload.wikimedia.org/x.jpg", "landscape": True,
+             "credit": {"title": "Bete Giyorgis", "author": "A. Savin", "licence": "CC BY-SA 3.0", "url": "https://c/1"}}
+    monkeypatch.setattr(commons, "search", lambda subject: [photo])
+    monkeypatch.setattr(commons, "choose", lambda line, subject, cands, used=None: (cands[0], 0.95))
+    made = []
+    monkeypatch.setattr(footage, "photo_clip", lambda url, pid, sec, out, whole=False: made.append(whole) or out)
+    monkeypatch.setattr(footage, "video_candidates", lambda kw: pytest.fail("stock search must not run"))
+    credits, used = [], set()
+    clip, note = footage.footage_for_line("A church carved from one rock.", "rock church", 3.0, tmp_path, 0,
+                                          used=used, named_subject="Church of Saint George, Lalibela", credits=credits)
+    assert "Wikimedia Commons" in note and made == [True] and used == {"wc1"}
+    line = commons.credit_line(credits + credits)                  # the same photo twice is credited once
+    assert line.count("A. Savin (CC BY-SA 3.0) https://c/1") == 1

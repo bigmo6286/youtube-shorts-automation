@@ -1,8 +1,9 @@
 """Background footage that matches what is being said.
 
-For each script line: search Pexels for several portrait videos, ask TypeSafe which candidate actually
-illustrates the sentence (Pexels video slugs describe the clip), fall back to a Pexels photo with a slow
-zoom when no clip fits, and finally to a generated motion background. Without a Pexels key everything
+For each script line: when the line is about one specific named thing (a landmark, a famous person, a ship), a real
+photo of it from Wikimedia Commons comes first (see commons.py). Otherwise search Pexels for several portrait
+videos, ask TypeSafe which candidate actually illustrates the sentence (Pexels video slugs describe the clip), fall
+back to a Pexels photo with a slow zoom when no clip fits, and finally to a generated motion background. Without a Pexels key everything
 uses the generated background; without a TypeSafe key the first search result is used.
 """
 from __future__ import annotations
@@ -266,7 +267,12 @@ def _download(url: str, dest: Path) -> Path | None:
         return dest
     PEXELS_CACHE.mkdir(parents=True, exist_ok=True)
     try:
-        with requests.get(url, stream=True, timeout=90, headers=_headers()) as resp:
+        if "pexels.com" in url:
+            headers = _headers()
+        else:
+            from .commons import USER_AGENT
+            headers = {"User-Agent": USER_AGENT}
+        with requests.get(url, stream=True, timeout=90, headers=headers) as resp:
             resp.raise_for_status()
             with open(dest, "wb") as f:
                 for chunk in resp.iter_content(1 << 16):
@@ -278,20 +284,26 @@ def _download(url: str, dest: Path) -> Path | None:
         return None
 
 
-def photo_clip(photo_url: str, photo_id: str, seconds: float, out_path: Path) -> Path | None:
-    """Slow Ken Burns zoom over a portrait photo, rendered to a short mp4."""
+def photo_clip(photo_url: str, photo_id: str, seconds: float, out_path: Path, whole: bool = False) -> Path | None:
+    """Slow Ken Burns zoom over a photo, rendered to a short mp4."""
     img = _download(photo_url, PEXELS_CACHE / f"photo_{photo_id}.jpg")
     if not img:
         return None
-    return image_clip(img, seconds, out_path)
+    return image_clip(img, seconds, out_path, whole=whole)
 
 
-def image_clip(img: Path, seconds: float, out_path: Path) -> Path | None:
-    """Slow Ken Burns zoom over any local image (stock photo or AI-generated)."""
+def image_clip(img: Path, seconds: float, out_path: Path, whole: bool = False) -> Path | None:
+    """Slow Ken Burns zoom over any local image (stock photo or AI-generated). whole=True keeps a landscape photo
+    whole (over a blurred copy of itself) instead of cropping its middle third: a real landmark must stay visible."""
     frames = int((seconds + 0.5) * 30)
-    vf = (f"scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-          f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,format=yuv420p")
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(img), "-vf", vf,
+    zoom = f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,format=yuv420p"
+    if whole:
+        graph = ("[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                 "boxblur=28:4,eq=brightness=-0.12[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2," + zoom)
+        filt = ["-filter_complex", graph]
+    else:
+        filt = ["-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920," + zoom]
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(img), *filt,
            "-t", f"{seconds + 0.5:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", str(out_path)]
     try:
         _run(cmd, check=True, text=True)
@@ -320,10 +332,22 @@ def generated_background(out_path: Path, seconds: float, seed: int = 7) -> Path:
 
 
 def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Path, index: int,
-                     fallback_keyword: str = "", used: set[str] | None = None) -> tuple[Path, str]:
+                     fallback_keyword: str = "", used: set[str] | None = None, named_subject: str = "",
+                     credits: list[dict[str, Any]] | None = None) -> tuple[Path, str]:
     """Best matching background for one line. Returns (clip path, note for the log)."""
-    # Pass 1: the line's own term, literal match. Pass 2: the video's subject term, same-subject match.
+    # Pass 0: a real photo of the specific named thing the line is about. Pass 1: the line's own term, literal
+    # match. Pass 2: the video's subject term, same-subject match.
     used = used if used is not None else set()
+    if named_subject:
+        from . import commons
+        pick, fit = commons.choose(line_text, named_subject, commons.search(named_subject), used=used)
+        clip = pick and photo_clip(pick["link"], pick["id"], seconds, work_dir / f"bg_{index}.mp4",
+                                   whole=bool(pick.get("landscape")))
+        if clip:
+            used.add(pick["id"])
+            if credits is not None:
+                credits.append(pick["credit"])
+            return clip, f"photo of {named_subject} '{pick['credit']['title'][:50]}' from Wikimedia Commons ({fit:.0%} match)"
     from . import imagegen
 
     ai = imagegen.settings()
@@ -373,8 +397,9 @@ def _materialize(pick: dict[str, Any], kind: str, seconds: float, work_dir: Path
 
 
 def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_seconds: float,
-                     source: str, work_dir: Path) -> list[dict[str, Any]]:
-    """One background segment per script line (or one generated clip for the whole video)."""
+                     source: str, work_dir: Path, credits: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """One background segment per script line (or one generated clip for the whole video). Photos that need credit
+    (Wikimedia Commons) are appended to `credits`."""
     from . import imagegen
 
     use_pexels = source in ("auto", "pexels") and bool(env("PEXELS_API_KEY"))
@@ -391,17 +416,20 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
     first_kw = script["lines"][0]["visual_keyword"] if script["lines"] else script.get("title", "abstract")
     keywords = [first_kw, *[ln["visual_keyword"] for ln in script["lines"]], keywords_fallback(script)]
     fallback = keywords_fallback(script)
+    lines = script["lines"]
+    named = [lines[0].get("named_subject", "") if lines else "", *[ln.get("named_subject", "") for ln in lines], ""]
     segments: list[dict[str, Any]] = []
     used: set[str] = set()
     idx, t = 0, 0.0
-    for i, (chunk, kw) in enumerate(zip(chunks, keywords)):
+    for i, (chunk, kw, subject) in enumerate(zip(chunks, keywords, named)):
         n = len(chunk.split())
         group = words[idx: idx + n]
         idx += n
         end = total_seconds if i == len(chunks) - 1 else (group[-1]["end"] if group else t)
         if not chunk.strip() or end <= t:
             continue
-        clip, note = footage_for_line(chunk, kw, end - t, work_dir, i, fallback_keyword=fallback if kw != fallback else "", used=used)
+        clip, note = footage_for_line(chunk, kw, end - t, work_dir, i, fallback_keyword=fallback if kw != fallback else "",
+                                      used=used, named_subject=(subject or "").strip(), credits=credits)
         log.info("footage %d/%d: %s", i + 1, len(chunks), note)
         segments.append({"path": str(clip), "start": t, "end": end})
         t = end

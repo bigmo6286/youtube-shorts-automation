@@ -286,6 +286,16 @@ With a free Pixabay API key (pixabay.com, sign up, then https://pixabay.com/api/
 Settings, every line gets Pixabay videos and vertical photos as extra candidates next to Pexels, and TypeSafe picks the
 best fit from both. A clip already used in the same Short is only reused when nothing new fits.
 
+## Real photos of named places and people (Wikimedia Commons)
+
+Stock sites have "a church carved in rock", not *the* church a line is about. The script writer marks lines about one
+specific named thing (a landmark, building, ship, artwork or famous person), and those lines get a real photo of it from
+Wikimedia Commons, the free-licence library Wikipedia uses (no key). TypeSafe checks from each file's title, description
+and categories that the photo shows that very thing, not a map or a different place; landscape photos are kept whole
+over a blurred fill instead of cropped. Only public-domain, CC0, CC BY and CC BY-SA photos are used, and every one is
+credited in the video description, as those licences ask. Pictures found through Google are mostly copyrighted, which is
+why Commons is the source. Turn it off with `production.reference_images.enabled: false`.
+
 ## Comment engagement
 
 Click **Connect comments** in the console (one more Google permission: managing comments). Every script now carries a

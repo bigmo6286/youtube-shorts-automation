@@ -100,7 +100,8 @@ def translate(script: dict[str, Any]) -> dict[str, Any]:
     out = dict(script)
     out.update({k: data.get(k, script.get(k)) for k in ("title", "hook", "cta", "description", "hashtags",
                                                         "thumbnail_text", "comment_question")})
-    out["lines"] = [{"text": t, "visual_keyword": ln["visual_keyword"]} for t, ln in zip(tr_lines, lines)]
+    out["lines"] = [{"text": t, "visual_keyword": ln["visual_keyword"], "named_subject": ln.get("named_subject", "")}
+                    for t, ln in zip(tr_lines, lines)]
     out["full_text"] = " ".join([out["hook"], *tr_lines, out["cta"]])
     out["word_count"] = len(out["full_text"].split())
     out["language"] = config()["language"]

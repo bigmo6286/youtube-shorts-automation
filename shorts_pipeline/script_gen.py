@@ -23,6 +23,11 @@ class ScriptLine(BaseModel):
         "Name the concrete subject of the sentence; never abstract ideas, emotions or metaphors. When the line names "
         "a place, climate or setting, put it in the term (e.g. 'antarctica volcano ice', not 'volcano erupting'; "
         "'sahara desert dunes', not 'sand'), so the footage cannot contradict the line."))
+    named_subject: str = Field(default="", description=(
+        "Only when this line is about one specific, named real thing that generic stock footage would show wrongly "
+        "(a particular landmark, building, statue, ship, artwork, artifact or famous person): its proper name as an "
+        "encyclopedia titles it, with the place when that helps, e.g. 'Church of Saint George, Lalibela', 'Mount "
+        "Erebus', 'Mary Rose ship'. Otherwise an empty string; never a generic thing like 'a church' or 'volcano'."))
 
 
 class ShortScript(BaseModel):
