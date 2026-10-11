@@ -127,3 +127,19 @@ def test_local_writer_needs_every_check_to_pass(monkeypatch, writer):
 def test_claude_failure_switches_to_the_local_writer(monkeypatch, writer):
     s = _write(monkeypatch, "claude_code", _qa())
     assert s["backend"] == "ollama" and writer[:2] == ["claude_code", "ollama"]
+
+
+def test_skipped_slots_do_not_count_as_made(tmp_path, monkeypatch):
+    from datetime import datetime
+    from shorts_pipeline import scheduler
+    monkeypatch.setattr(scheduler, "STATE_PATH", tmp_path / "schedule.json")
+    s = scheduler.Scheduler(lambda kind, params: None, lambda job_id: None)
+    now = datetime(2026, 10, 11, 18, 0)
+    s._roll_day(now)
+    monkeypatch.setattr(s, "_queue_full", lambda: True)
+    assert s._fire("produce", 3, now, {"skip_when_queue_full": True})
+    s.state["done"] = ["produce:2", "produce:3"]
+    monkeypatch.setattr(scheduler, "schedule_config", lambda: {**scheduler.DEFAULTS, "produces_per_day": 10,
+                                                                "start_hour": 6, "end_hour": 24})
+    p = s.plan(now)
+    assert p["done_today"] == 1 and p["skipped_today"] == 1

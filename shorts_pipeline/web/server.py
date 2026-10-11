@@ -839,7 +839,7 @@ def _status() -> dict[str, Any]:
         "music_tracks": len(get_music()),
         "telegram": bool(values.get("TELEGRAM_BOT_TOKEN") and values.get("TELEGRAM_CHAT_ID")),
         "channel": _channel_configured(),
-        "schedule": {k: v for k, v in get_schedule().items() if k in ("next", "done_today")} | {"enabled": bool(load_config().get("schedule", {}).get("enabled"))},
+        "schedule": {k: v for k, v in get_schedule().items() if k in ("next", "done_today", "skipped_today")} | {"enabled": bool(load_config().get("schedule", {}).get("enabled"))},
         "latest_run": _latest_run_summary(),
         "outputs": sum(1 for d in OUTPUT_DIR.iterdir() if (d / "meta.json").exists()) if OUTPUT_DIR.exists() else 0,
     }

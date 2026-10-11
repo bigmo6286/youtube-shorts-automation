@@ -64,7 +64,7 @@ async function loadStatus() {
     card("Latest run", !!s.latest_run, s.latest_run ? `${s.latest_run.shorts} Shorts, ${s.latest_run.blueprints} blueprints` : "none yet"),
     card("Produced", s.outputs > 0, `${s.outputs} Shorts`),
     card("Scheduler", s.schedule && s.schedule.enabled, s.schedule && s.schedule.enabled
-      ? `${s.schedule.done_today} done today${s.schedule.next && s.schedule.next[0] ? `, next ${s.schedule.next[0].kind} ${s.schedule.next[0].time}` : ""}` : "off (Settings)"),
+      ? `${s.schedule.done_today} made today${s.schedule.skipped_today ? `, ${s.schedule.skipped_today} skipped` : ""}${s.schedule.next && s.schedule.next[0] ? `, next ${s.schedule.next[0].kind} ${s.schedule.next[0].time}` : ""}` : "off (Settings)"),
   ].join("");
   const inst = $("#installffmpeg");
   if (inst) inst.addEventListener("click", () => startJob("setup_ffmpeg"));
@@ -338,7 +338,7 @@ async function loadSchedule() {
   try { p = await api("/api/schedule"); } finally { scheduleBusy = false; }
   const c = p.config;
   $("#schedsummary").textContent = c.enabled
-    ? `on: ${c.produces_per_day} Shorts/day, ${c.refresh_per_day} trend refresh/day, ${String(c.start_hour).padStart(2, "0")}:00-${String(c.end_hour).padStart(2, "0")}:00, ${p.done_today}/${c.produces_per_day} done today`
+    ? `on: ${c.produces_per_day} Shorts/day, ${c.refresh_per_day} trend refresh/day, ${String(c.start_hour).padStart(2, "0")}:00-${String(c.end_hour).padStart(2, "0")}:00, ${p.done_today}/${c.produces_per_day} made today${p.skipped_today ? `, ${p.skipped_today} slots skipped because the upload queue is full (uploads are limited to ${p.queue && p.queue.limit != null ? p.queue.limit : "?"} a day)` : ""}`
     : "off. Turn it on under Settings.";
   $("#schednext").innerHTML = p.next.length ? "Next: " + p.next.map((n) => `<span class="tag">${n.time} ${esc(n.kind)}</span>`).join(" ") : (c.enabled ? "No more slots today." : "");
   $("#schedeligible").innerHTML = p.eligible && p.eligible.length

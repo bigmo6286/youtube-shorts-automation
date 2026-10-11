@@ -185,6 +185,7 @@ class Scheduler:
         if self.state.get("date") != today:
             self.state["date"] = today
             self.state["done"] = []
+            self.state["skipped"] = []          # produce slots that made nothing (queue full, nothing to dub)
             self.state["retries"] = []          # retries belong to the day of the failed slot
 
     # ---------------------------------------------------------------- planning
@@ -195,9 +196,12 @@ class Scheduler:
         refresh = slots_for(now, int(cfg["refresh_per_day"]), float(cfg["start_hour"]), float(cfg["end_hour"]))
         # run the refresh a little before the first produce of its slot so new blueprints are used
         refresh = [t - timedelta(minutes=15) if t > now.replace(hour=0, minute=15) else t for t in refresh]
-        done = set(self.state.get("done", [])) if self.state.get("date") == now.strftime("%Y-%m-%d") else set()
+        today = self.state.get("date") == now.strftime("%Y-%m-%d")
+        done = set(self.state.get("done", [])) if today else set()
+        skipped = set(self.state.get("skipped", [])) if today else set()
         def describe(kind: str, times: list[datetime]) -> list[dict[str, Any]]:
-            return [{"kind": kind, "index": i, "time": t.strftime("%H:%M"), "past": t <= now, "done": f"{kind}:{i}" in done}
+            return [{"kind": kind, "index": i, "time": t.strftime("%H:%M"), "past": t <= now, "done": f"{kind}:{i}" in done,
+                 "skipped": f"{kind}:{i}" in skipped}
                     for i, t in enumerate(times)]
         items = describe("produce", produce) + describe("refresh", refresh)
         upcoming = sorted((x for x in items if not x["past"]), key=lambda x: x["time"])
@@ -205,7 +209,8 @@ class Scheduler:
         analysis = load_json(run_dir / "analysis.json") if run_dir else None
         pool = eligible_blueprints((analysis or {}).get("blueprints") or [], cfg)
         return {"config": cfg, "today": items, "next": upcoming[:5],
-                "done_today": sum(1 for x in items if x["done"] and x["kind"] == "produce"),
+                "done_today": sum(1 for x in items if x["done"] and not x["skipped"] and x["kind"] == "produce"),
+                "skipped_today": sum(1 for x in items if x["skipped"] and x["kind"] == "produce"),
                 "history": self.state.get("history", [])[-15:][::-1], "running": self._thread is not None,
                 "run": run_dir.name if run_dir else None,
                 "eligible": [{k: b.get(k) for k in ("index", "format", "topic", "hook_style", "opportunity", "weight", "count",
@@ -385,6 +390,7 @@ class Scheduler:
     def _fire(self, kind: str, index: int, slot: datetime, cfg: dict[str, Any], retry_of: str | None = None) -> bool:
         if kind == "produce" and cfg.get("skip_when_queue_full", True) and self._queue_full():
             log.info("produce slot %s skipped: the upload queue already holds a day's worth of Shorts", slot.strftime("%H:%M"))
+            self.state.setdefault("skipped", []).append(f"{kind}:{index}")
             self.state["history"].append({"kind": "produce (skipped: upload queue full)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
                                           "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
             return True
@@ -402,6 +408,7 @@ class Scheduler:
             src = next_source()
             if not src:
                 log.info("dub slot %s skipped: nothing new to dub on the source channel", slot.strftime("%H:%M"))
+                self.state.setdefault("skipped", []).append(f"{kind}:{index}")
                 self.state["history"].append({"kind": "produce (skipped: nothing to dub)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
                                               "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
                 return True
