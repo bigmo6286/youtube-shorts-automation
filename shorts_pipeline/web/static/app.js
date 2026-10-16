@@ -259,6 +259,7 @@ async function loadOutputs(afterStatusSync = false) {
           ${o.video_url ? `<button data-telegram="${o.dir}">Send to Telegram</button>` : ""}
           ${o.video_url ? `<a class="btn" href="${o.video_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}.mp4">Download video</a>` : ""}
           ${o.thumbnail_url ? `<a class="btn" href="${o.thumbnail_url}" download="${esc(o.title).replace(/[^\w ]+/g, "").trim() || "short"}_thumbnail.jpg" title="${esc(o.thumbnail_text || "")}">Download thumbnail</a>` : ""}
+          <button class="danger" data-delete="${o.dir}" title="remove this Short from this computer and the upload queue">Delete</button>
           ${!o.video_url && !o.thumbnail_url ? "" : ""}<button data-thumb="${o.dir}" ${o.video_url ? "" : "hidden"} title="${o.thumbnail_url ? "rebuild the thumbnail" : "build a thumbnail for this video"}${o.youtube_id ? " and set it on YouTube" : ""}">${o.thumbnail_url ? "Rebuild" : "Make"} thumbnail${o.youtube_id ? " + set on YouTube" : ""}</button>
         </div>
         <div class="muted small">${esc(o.folder)}</div>
@@ -279,6 +280,19 @@ async function loadOutputs(afterStatusSync = false) {
   $$("button[data-telegram]").forEach((b) => b.addEventListener("click", () => startJob("telegram", { action: "send", path: `output/${b.dataset.telegram}` })));
   $$("button[data-publish]").forEach((b) => b.addEventListener("click", () => startJob("publish", { path: `output/${b.dataset.publish}`, privacy: b.dataset.privacy })));
   $$("button[data-thumb]").forEach((b) => b.addEventListener("click", () => startJob("thumbnail", { path: `output/${b.dataset.thumb}` })));
+  $$("button[data-delete]").forEach((b) => b.addEventListener("click", async () => {
+    const o = state.outputs[b.dataset.delete];
+    if (!confirm(`Delete "${o.title}"?\n\nIts video, script and thumbnail are removed from this computer and it leaves the upload queue. This cannot be undone.`)) return;
+    let youtube = false;
+    if (o.youtube_id && o.privacy !== "deleted") {
+      youtube = confirm(`It is also on YouTube (${o.privacy || "uploaded"}).\n\nOK: delete it from YouTube too (its views and comments go with it).\nCancel: only remove it from this computer and keep it on YouTube.`);
+    }
+    try {
+      const r = await api(`/api/outputs/${encodeURIComponent(o.dir)}?youtube=${youtube}`, { method: "DELETE" });
+      toast(r.youtube_deleted ? "Deleted here and on YouTube" : "Deleted");
+      loadOutputs(true); loadStatus();
+    } catch (e) { toast(e.message, true); }
+  }));
   $$("button[data-copy]").forEach((b) => b.addEventListener("click", () => {
     const o = state.outputs[b.dataset.dir]; const kind = b.dataset.copy;
     if (kind === "title") copyText(o.title.slice(0, 100), "Title");

@@ -623,7 +623,7 @@ def cmd_vision_check(args) -> None:
         for r in rows:
             res = r["result"]
             mark = "?" if res is None else ("ok " if r["passes"] else "BAD")
-            detail = "no frame" if res is None else f"shows {res['shows']:.0%}, contradicts {res['conflict']:.0%}"
+            detail = "no frame" if res is None else f"shows {res['shows']:.0%}, contradicts {res['conflict']:.0%}, off-topic {res.get('off_topic', 0):.0%}"
             print(f"  {mark} shot {r['shot']}: {detail}  [{r['subject'][:40]}]  {r['line'][:70]}")
         if checked >= args.limit:
             break

@@ -44,6 +44,7 @@ td:last-child, th:last-child { white-space: normal; } tr.sel td { background: va
 .bphead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
 .num { background: var(--accent); color: var(--accent-text); font-weight: 700; border-radius: 6px; padding: 0 7px; }
 .tag { font-size: 11px; padding: 2px 7px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); }
+button.danger { color: var(--danger); border-color: var(--danger); }
 .tag.ok { color: var(--ok); border-color: var(--ok); } .tag.warn { color: var(--warn); border-color: var(--warn); }
 .ex { margin: 6px 0; font-size: 13px; }
 

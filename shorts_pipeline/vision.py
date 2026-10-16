@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 HEADERS = {"TypeSafe-Danger-Zone-Images": "true"}
 PREVIEWS = CACHE_DIR / "pexels" / "previews"          # inside the footage cache, so its size limit covers them
 _RESULTS = JsonCache("vision_checks")
-DEFAULTS = {"mode": "off", "model": "jev-1.14.0", "min_shows": 0.5, "max_conflict": 0.5, "max_checks": 3}
+DEFAULTS = {"mode": "off", "model": "jev-1.14.0", "min_shows": 0.5, "max_conflict": 0.5, "max_checks": 4}
 MIN_SIDE, MAX_SIDE = 280, 1568                      # TypeSafe's limits; images outside them are rejected, not resized
 
 
@@ -106,11 +106,13 @@ def preview(candidate: dict[str, Any], clip: Path | None = None) -> bytes | None
     return data
 
 
-def judge(line_text: str, subject: str, candidate: dict[str, Any], clip: Path | None = None) -> dict[str, float] | None:
-    """{'shows': P(the frame shows the line's subject), 'conflict': P(it shows a contradicting setting or place)},
-    or None when there is no frame or the request failed."""
+def judge(line_text: str, subject: str, candidate: dict[str, Any], clip: Path | None = None,
+          topic: str = "") -> dict[str, float] | None:
+    """{'shows': P(the frame shows the line's subject), 'conflict': P(it contradicts the line's setting, place or
+    animal), 'off_topic': P(it shows something that does not belong in a video about `topic`)}, or None when there is
+    no frame or the request failed."""
     cfg = config()
-    key = hashlib.sha1(f"{candidate['id']}|{line_text}|{subject}|{cfg['model']}".encode()).hexdigest()[:20]
+    key = hashlib.sha1(f"v2|{candidate['id']}|{line_text}|{subject}|{topic}|{cfg['model']}".encode()).hexdigest()[:20]
     hit = _RESULTS.get(key)
     if hit:
         return hit
@@ -118,16 +120,19 @@ def judge(line_text: str, subject: str, candidate: dict[str, Any], clip: Path | 
     if data is None:
         return None
     from typesafe_sdk import Image, Noul, TypeSafeClient
-    state = {"spoken_line": line_text, "subject": subject, "frame": Image(data)}
-    # Narrow questions: a broad "could it play without contradicting the line" let a factory pass for a church.
+    state = {"spoken_line": line_text, "subject": subject, "video_topic": topic or subject, "frame": Image(data)}
+    # Narrow questions. A broad "could it play without contradicting the line" let a factory pass for a church, and
+    # asking about the subject *together with the line* let a man exhaling smoke pass for "something is coming out"
+    # of a lion's nose: the subject is asked about on its own.
     questions = {
-        "shows": Noul(instructions=(
-            "Does the image `frame` visibly show `subject`, the thing `spoken_line` is about, so a viewer would see "
-            "it while hearing the line?")),
+        "shows": Noul(instructions="Does the image `frame` visibly show `subject`?"),
         "conflict": Noul(instructions=(
             "Does the image `frame` show a setting, place or thing that contradicts `spoken_line`, for example green "
             "forest for a line set in Antarctica, a modern city for a line about an ancient ruin, or a different "
             "animal than the one named?")),
+        "off_topic": Noul(instructions=(
+            "Does the image `frame` show something that does not belong in a video about `video_topic`, for example "
+            "a person smoking, food, a product or an office in a video about a wild animal?")),
     }
     try:
         with TypeSafeClient(timeout=90.0) as client:
@@ -135,7 +140,7 @@ def judge(line_text: str, subject: str, candidate: dict[str, Any], clip: Path | 
     except Exception as exc:  # noqa: BLE001 - never block a render on an experimental check
         log.warning("image check failed for %s (%s); keeping the text check's pick", candidate["id"], str(exc)[:120])
         return None
-    out = {"shows": float(resp.answers["shows"].noul), "conflict": float(resp.answers["conflict"].noul)}
+    out = {k: float(resp.answers[k].noul) for k in ("shows", "conflict", "off_topic")}
     _RESULTS.set(key, out)
     return out
 
@@ -145,7 +150,8 @@ def verdict(result: dict[str, float] | None) -> bool:
     if result is None:
         return True
     cfg = config()
-    return result["shows"] >= float(cfg["min_shows"]) and result["conflict"] < float(cfg["max_conflict"])
+    return (result["shows"] >= float(cfg["min_shows"]) and result["conflict"] < float(cfg["max_conflict"])
+            and result.get("off_topic", 0.0) < float(cfg["max_conflict"]))
 
 
 def audit(out_dir: Path) -> list[dict[str, Any]]:
@@ -169,7 +175,7 @@ def audit(out_dir: Path) -> list[dict[str, Any]]:
             continue
         text, subject = chunks[i]
         cand = {"id": "shot_" + hashlib.sha1(str(path.resolve()).encode()).hexdigest()[:12], "kind": "video"}
-        result = judge(text, subject, cand, path)
+        result = judge(text, subject, cand, path, topic=meta.get("title", ""))
         rows.append({"shot": i + 1, "line": text, "subject": subject, "file": path.name, "result": result,
                      "passes": verdict(result) if result else None})
     return rows

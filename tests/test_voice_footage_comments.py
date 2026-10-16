@@ -241,7 +241,7 @@ def _vision_mode(monkeypatch, mode, judged):
     from shorts_pipeline import vision
     monkeypatch.setattr(vision, "config", lambda: dict(vision.DEFAULTS, mode=mode))
     monkeypatch.setattr(vision, "enabled", lambda: mode != "off")
-    monkeypatch.setattr(vision, "judge", lambda line, subject, pick, clip=None: judged[pick["id"]])
+    monkeypatch.setattr(vision, "judge", lambda line, subject, pick, clip=None, topic="": judged[pick["id"]])
 
 
 def test_a_clip_the_image_check_rejects_makes_room_for_the_next(monkeypatch, tmp_path):

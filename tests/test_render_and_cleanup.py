@@ -110,3 +110,21 @@ def test_uploaded_videos_go_at_the_next_cleanup_and_first_when_the_disk_is_low(t
     monkeypatch.setattr(housekeeping, "prune_cache", lambda *a: pytest.fail("footage must not go first"))
     housekeeping.ensure_free_space()
     assert not (kept / "short.mp4").exists() and (waiting / "short.mp4").exists()
+
+
+def test_delete_a_short_here_and_optionally_on_youtube(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+    from shorts_pipeline.web import server
+    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(server, "_CURRENT", None)
+    queued = _folder(tmp_path, "2026-10-16T12-00-00Z_a", upload_state="queued", title="Lion")
+    uploaded = _folder(tmp_path, "2026-10-16T13-00-00Z_b", youtube_id="YT1", privacy="private", title="Bird")
+    gone = []
+    monkeypatch.setattr("shorts_pipeline.upload.delete_video", lambda vid: gone.append(vid))
+    assert server.delete_output(queued.name) == {"deleted": queued.name, "youtube_deleted": False}
+    assert not queued.exists() and gone == []
+    assert server.delete_output(uploaded.name, youtube=True)["youtube_deleted"] and gone == ["YT1"]
+    assert not uploaded.exists()
+    for bad in ("..", "../x", "nope"):
+        with pytest.raises(HTTPException):
+            server.delete_output(bad)

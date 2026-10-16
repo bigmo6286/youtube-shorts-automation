@@ -336,7 +336,7 @@ def generated_background(out_path: Path, seconds: float, seed: int = 7) -> Path:
 
 def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Path, index: int,
                      fallback_keyword: str = "", used: set[str] | None = None, named_subject: str = "",
-                     credits: list[dict[str, Any]] | None = None) -> tuple[Path, str]:
+                     credits: list[dict[str, Any]] | None = None, topic: str = "") -> tuple[Path, str]:
     """Best matching background for one line. Returns (clip path, note for the log)."""
     # Pass 0: a real photo of the specific named thing the line is about. Pass 1: the line's own term, literal
     # match. Pass 2: the video's subject term, same-subject match.
@@ -345,7 +345,7 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
         from . import commons
         pick, fit = commons.choose(line_text, named_subject, commons.search(named_subject), used=used)
         if pick:
-            ok, seen = _looked_at(line_text, named_subject, pick)
+            ok, seen = _looked_at(line_text, named_subject, pick, topic=topic)
             pick = pick if ok else None
         clip = pick and photo_clip(pick["link"], pick["id"], seconds, work_dir / f"bg_{index}.mp4",
                                    whole=bool(pick.get("landscape")))
@@ -386,7 +386,7 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
                 seen = ""
                 if checks_left and (pick.get("preview") or kind == "photo"):     # look before downloading
                     checks_left -= 1
-                    ok, seen = _looked_at(line_text, subject, pick)
+                    ok, seen = _looked_at(line_text, subject, pick, topic=topic)
                     if not ok:
                         rejected.add(pick["id"])
                         continue
@@ -395,7 +395,7 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
                     break
                 if checks_left and not seen:                                    # no preview: a frame of the clip
                     checks_left -= 1
-                    ok, seen = _looked_at(line_text, subject, pick, clip)
+                    ok, seen = _looked_at(line_text, subject, pick, clip, topic=topic)
                     if not ok:
                         rejected.add(pick["id"])
                         continue
@@ -417,16 +417,18 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
     return clip, f"generated background (nothing on Pexels matched '{keyword}' or '{fallback_keyword}')"
 
 
-def _looked_at(line_text: str, subject: str, pick: dict[str, Any], clip: Path | None = None) -> tuple[bool, str]:
+def _looked_at(line_text: str, subject: str, pick: dict[str, Any], clip: Path | None = None,
+               topic: str = "") -> tuple[bool, str]:
     """The image check (vision.py): (use it?, note for the log). In log mode it never rejects."""
     from . import vision
     if not vision.enabled():
         return True, ""
-    result = vision.judge(line_text, subject, pick, clip)
+    result = vision.judge(line_text, subject, pick, clip, topic=topic)
     if result is None:
         return True, " · image check unavailable"
     ok = vision.verdict(result)
-    note = f" · image check: shows {result['shows']:.0%}, contradicts {result['conflict']:.0%}"
+    note = (f" · image check: shows {result['shows']:.0%}, contradicts {result['conflict']:.0%}, "
+            f"off-topic {result.get('off_topic', 0.0):.0%}")
     if not ok and vision.config()["mode"] == "log":
         log.info("image check would reject %s '%s'%s", pick["id"], pick.get("description", "")[:60], note)
         return True, note + " (would reject)"
@@ -478,7 +480,8 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
         if not chunk.strip() or end <= t:
             continue
         clip, note = footage_for_line(chunk, kw, end - t, work_dir, i, fallback_keyword=fallback if kw != fallback else "",
-                                      used=used, named_subject=(subject or "").strip(), credits=credits)
+                                      used=used, named_subject=(subject or "").strip(), credits=credits,
+                                      topic=script.get("title", ""))
         log.info("footage %d/%d: %s", i + 1, len(chunks), note)
         segments.append({"path": str(clip), "start": t, "end": end})
         t = end

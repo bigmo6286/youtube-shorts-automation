@@ -162,6 +162,12 @@ def youtube_service(interactive: bool = True):
     return build("youtube", "v3", credentials=_credentials(interactive=interactive), static_discovery=True)
 
 
+def delete_video(video_id: str) -> None:
+    """Delete an uploaded video from YouTube (permanent: its views, likes and comments go with it)."""
+    youtube = with_retries(youtube_service, "connect to YouTube")
+    with_retries(lambda: youtube.videos().delete(id=video_id).execute(), "delete the video")
+
+
 def set_privacy(video_id: str, privacy: str) -> dict[str, Any]:
     """Change an uploaded video's visibility: private | unlisted | public."""
     if privacy not in ("private", "unlisted", "public"):

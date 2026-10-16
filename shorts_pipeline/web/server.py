@@ -762,6 +762,46 @@ def output_status_progress() -> dict[str, Any]:
             "last_error": _STATUS_SYNC["error"], "last": _STATUS_SYNC["last"]}
 
 
+def _remove_tree(path: Path) -> None:
+    """rmtree that waits out Windows: a video the browser is still playing is locked for a moment."""
+    import shutil
+    import stat
+    for attempt in range(20):
+        try:
+            shutil.rmtree(path, onerror=lambda f, p, e: (os.chmod(p, stat.S_IWRITE), f(p)))
+            return
+        except OSError:
+            if attempt == 19:
+                raise
+            time.sleep(0.5)
+
+
+@app.delete("/api/outputs/{name}")
+def delete_output(name: str, youtube: bool = False) -> dict[str, Any]:
+    """Delete a Short you do not want: its folder (video, script, thumbnail) leaves this computer and the upload
+    queue. With youtube=true an uploaded one is also deleted from YouTube. Its title stays in the history, so the
+    same subject is not made again."""
+    folder = (OUTPUT_DIR / name).resolve()
+    if folder.parent != OUTPUT_DIR.resolve() or not folder.is_dir():
+        raise HTTPException(404, "no such Short")
+    busy = _CURRENT is not None and (name in json.dumps(_CURRENT.params) or not (folder / "meta.json").exists())
+    if busy:
+        raise HTTPException(409, "a job is working on this Short right now; try again when it is done")
+    meta = load_json(folder / "meta.json") or {}
+    deleted_on_youtube = False
+    if youtube and meta.get("youtube_id") and meta.get("privacy") != "deleted":
+        from ..upload import delete_video
+        try:
+            delete_video(meta["youtube_id"])
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, f"YouTube did not delete it ({str(exc)[:200]}); nothing was removed here") from exc
+        deleted_on_youtube = True
+    _remove_tree(folder)
+    _forget_shared()
+    log.info("deleted Short %s (%s)%s", name, meta.get("title", ""), " and its YouTube video" if deleted_on_youtube else "")
+    return {"deleted": name, "youtube_deleted": deleted_on_youtube}
+
+
 @app.get("/api/outputs")
 def list_outputs() -> list[dict[str, Any]]:
     if not OUTPUT_DIR.exists():
