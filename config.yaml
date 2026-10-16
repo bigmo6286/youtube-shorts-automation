@@ -122,6 +122,8 @@ production:
     compete_below: 0.85       # compete: try an AI image when the best clip shows the line less than this
     compete_margin: 0.10      # ...and use it when it shows the line at least this much better
     max_per_video: 4          # AI images per video at most (each takes a few seconds and may use provider credits)
+    pollinations_model: black-forest-labs/flux.2-klein-4b   # with a pollen key (POLLINATIONS_TOKEN): 0.005 pollen an
+                              # image; also good: tongyi-mai/z-image-turbo (0.004), black-forest-labs/flux.1-schnell (0.002)
     provider: pollinations    # pollinations (free, no key) | together (TOGETHER_API_KEY) | huggingface (HF_TOKEN) | openai (OPENAI_API_KEY, paid)
     model: ""                 # optional model id for together / huggingface / openai, e.g. black-forest-labs/FLUX.1-schnell
     style: "cinematic photograph, natural light, realistic, sharp detail, vertical composition, no text, no watermark, no logo"

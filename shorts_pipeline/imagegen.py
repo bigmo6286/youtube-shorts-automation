@@ -115,7 +115,38 @@ def _pollinations_turn() -> None:
     stamp.write_text(str(time.time()))
 
 
+POLLEN_MODEL = "black-forest-labs/flux.2-klein-4b"   # 0.005 pollen an image; scored best on prompt-following here
+
+
+def _pollen(prompt: str, dest: Path) -> Path:
+    """Pollinations with a pollen key (POLLINATIONS_TOKEN, sk_...): the gen.pollinations.ai API, no rate limit, a choice
+    of models (ai_images.pollinations_model) and no watermark."""
+    model = settings().get("pollinations_model") or POLLEN_MODEL
+    w, h = _dims(1080, 1920)
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = requests.get(f"https://gen.pollinations.ai/image/{quote(prompt)}",
+                             params={"model": model, "width": w, "height": h, "seed": 11 + attempt},
+                             headers={"Authorization": f"Bearer {env('POLLINATIONS_TOKEN')}"}, timeout=180)
+            if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
+                dest.write_bytes(r.content)
+                return dest
+            last = RuntimeError(f"HTTP {r.status_code} {r.text[:200]}")
+            if r.status_code in (401, 402, 403):        # bad key, no pollen left: no point retrying
+                break
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+        time.sleep(3 * (attempt + 1))
+    raise RuntimeError(f"pollinations (key) failed: {last}")
+
+
 def _pollinations(prompt: str, dest: Path) -> Path:
+    if env("POLLINATIONS_TOKEN"):
+        try:
+            return _pollen(prompt, dest)
+        except RuntimeError as exc:
+            log.warning("%s; using the free tier", str(exc)[:200])
     url = f"https://image.pollinations.ai/prompt/{quote(prompt)}"
     last: Exception | None = None
     for attempt in range(3):
@@ -261,7 +292,9 @@ def generate(line_text: str, keyword: str, subject: str = "", prompt: str = "", 
     if "pollinations" not in order:
         order.append("pollinations")
     for provider in order:
-        dest = _cache_path(prompt, provider)
+        keyed = provider == "pollinations" and env("POLLINATIONS_TOKEN")
+        # a keyed model draws differently from the free tier: its images are cached apart
+        dest = _cache_path(prompt + (f"|{cfg.get('pollinations_model') or POLLEN_MODEL}" if keyed else ""), provider)
         if dest.exists() and dest.stat().st_size > 1000:
             return dest
         t = time.time()
