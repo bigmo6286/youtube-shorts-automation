@@ -94,7 +94,7 @@ def _cache_path(prompt: str, provider: str) -> Path:
     return AIIMG_DIR / f"{provider}_{hashlib.sha1(prompt.encode()).hexdigest()[:16]}.jpg"
 
 
-POLLINATIONS_GAP = 46.0       # free tier: "1 image every 45 seconds per IP"; faster requests get HTTP 402 FREE_LIMIT
+POLLINATIONS_GAP = 65.0       # free tier: "1 image every 45 seconds per IP"; at 46 s it still answered 402 FREE_LIMIT
 
 
 def _pollinations_turn() -> None:
@@ -221,12 +221,35 @@ def _looks_like_limit(exc: Exception) -> bool:
                                   "insufficient", "billing", "monthly included"))
 
 
-def generate(line_text: str, keyword: str, subject: str = "") -> Path | None:
-    """Return a cached or freshly generated portrait image for this line, or None on failure.
+LIGHTING_WORDS = re.compile(r"\b(natural light(ing)?|well[- ]lit|natural colou?rs|soft daylight|daylight)\b,?\s*", re.I)
+
+
+def _look(style: str) -> str:
+    """The style's look without its lighting words: a director's prompt sets the light the scene really has (the
+    fixed "natural light" made a pitch-black deep sea look sunlit)."""
+    return re.sub(r"\s*,\s*,", ",", LIGHTING_WORDS.sub("", style)).strip(" ,")
+
+
+VARIANTS = ["", "", " A wider view of the same scene."]
+
+
+def generate(line_text: str, keyword: str, subject: str = "", prompt: str = "", variant: int = 0) -> Path | None:
+    """Return a cached or freshly generated image for this line (portrait, or landscape for a long video), or None.
+    `prompt` is the visual director's description of the scene (script_gen.image_prompts); without one the prompt is
+    built from the footage term. variant > 0 asks for another take of the same scene.
     The configured provider is tried first; if it fails (limits, credit, outage) the free keyless
     generator takes over, and a provider that hit a limit is skipped for an hour."""
     cfg = settings()
-    prompt = build_prompt(line_text, keyword, subject, _style_for_frame(cfg.get("style") or DEFAULT_STYLE))
+    style = _style_for_frame(cfg.get("style") or DEFAULT_STYLE)
+    if prompt:
+        scene = prompt.strip().rstrip(".")
+        if variant % len(VARIANTS) == 1:
+            # the first take missed its subject: free FLUX models follow the start of a prompt best, so it goes first
+            focus = re.sub(r"\b(close[- ]?up|macro|extreme|wide shot)\b", "", keyword, flags=re.I).strip(" ,")
+            scene = f"{focus}, clearly visible and in sharp focus in the center of the frame. {scene}"
+        prompt = f"{scene}.{VARIANTS[variant % len(VARIANTS)]} {_look(style)}"
+    else:
+        prompt = build_prompt(line_text, keyword, subject, style) + VARIANTS[variant % len(VARIANTS)]
     order = []
     if available(cfg["provider"]) and _PAUSED_UNTIL.get(cfg["provider"], 0) < time.time():
         order.append(cfg["provider"])

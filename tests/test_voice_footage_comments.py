@@ -303,3 +303,30 @@ def test_ai_images_only_never_uses_internet_footage(monkeypatch, tmp_path):
         assert note.startswith("generated background")
     finally:
         imagegen.override(None)
+
+
+def test_director_prompt_replaces_the_footage_term_and_drops_fixed_lighting(monkeypatch, tmp_path):
+    from shorts_pipeline import imagegen
+    assert imagegen._look("cinematic photograph, natural light, realistic, sharp detail") == "cinematic photograph, realistic, sharp detail"
+    seen = []
+    monkeypatch.setattr(imagegen, "settings", lambda: {"enabled": True, "mode": "only", "provider": "pollinations",
+                                                       "style": "cinematic photograph, natural light, realistic"})
+    monkeypatch.setattr(imagegen, "available", lambda provider=None: True)
+    monkeypatch.setattr(imagegen, "AIIMG_DIR", tmp_path)
+    monkeypatch.setitem(imagegen.PROVIDERS, "pollinations", lambda prompt, dest: seen.append(prompt) or dest.write_bytes(b"x" * 2000))
+    imagegen.generate("Millions of firefly squid turn a bay blue.", "firefly squid glowing japan",
+                      prompt="Toyama Bay at night, surf glowing electric blue with tiny firefly squid")
+    assert seen[0].startswith("Toyama Bay at night") and "natural light" not in seen[0] and "illustrating" not in seen[0]
+    imagegen.generate("x", "firefly squid close-up", prompt="Toyama Bay at night", variant=1)
+    assert seen[1].startswith("firefly squid, clearly visible")          # second take: the subject first
+
+
+def test_director_prompts_must_cover_every_line(monkeypatch):
+    from shorts_pipeline import script_gen
+    script = {"title": "T", "hook": "H.", "cta": "C.", "full_text": "H. A. B. C.", "visual_fallback": "v",
+              "lines": [{"text": "A.", "visual_keyword": "a"}, {"text": "B.", "visual_keyword": "b"}]}
+    monkeypatch.setattr(script_gen, "pick_backend", lambda pref: "claude_code")
+    monkeypatch.setattr(script_gen, "_draft", lambda *a, **k: script_gen._ImagePrompts(items=["p1", "p2", "p3", "p4"]))
+    assert script_gen.image_prompts(script) == ["p1", "p2", "p3", "p4"]
+    monkeypatch.setattr(script_gen, "_draft", lambda *a, **k: script_gen._ImagePrompts(items=["p1"]))
+    assert script_gen.image_prompts(script) == []                   # misaligned: fall back to the footage terms

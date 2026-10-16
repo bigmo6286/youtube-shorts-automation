@@ -359,7 +359,8 @@ def generated_background(out_path: Path, seconds: float, seed: int = 7) -> Path:
 
 def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Path, index: int,
                      fallback_keyword: str = "", used: set[str] | None = None, named_subject: str = "",
-                     credits: list[dict[str, Any]] | None = None, topic: str = "") -> tuple[Path, str]:
+                     credits: list[dict[str, Any]] | None = None, topic: str = "",
+                     image_prompt: str = "") -> tuple[Path, str]:
     """Best matching background for one line. Returns (clip path, note for the log)."""
     # Pass 0: a real photo of the specific named thing the line is about. Pass 1: the line's own term, literal
     # match. Pass 2: the video's subject term, same-subject match.
@@ -384,15 +385,12 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
     ai = imagegen.settings()
     ai_on = bool(ai.get("enabled")) and ai.get("mode") != "never" and imagegen.available()
     if ai_on and ai.get("mode") in ("always", "only"):
-        img = imagegen.generate(line_text, keyword, fallback_keyword)
+        img, result = _ai_image(line_text, keyword, fallback_keyword, image_prompt, keyword, topic,
+                                tries=int(ai.get("tries", 2)))
         clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
         if clip:
-            return clip, f"AI image ({img.stem.split('_')[0]}) for '{keyword}'"
-        if ai.get("mode") == "only":          # no internet footage at all: a second try, then the generated background
-            img = imagegen.generate(line_text, f"{keyword}, wide shot", fallback_keyword)
-            clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
-            if clip:
-                return clip, f"AI image ({img.stem.split('_')[0]}) for '{keyword}' (second try)"
+            return clip, f"AI image ({img.stem.split('_')[0]}) for '{keyword}'{_ai_note(result)}"
+        if ai.get("mode") == "only":          # no internet footage at all: the generated background
             clip = generated_background(work_dir / f"bg_{index}.mp4", seconds + 0.5, seed=index)
             return clip, f"generated background (no AI image for '{keyword}')"
     attempts = [(keyword, True)]
@@ -432,7 +430,7 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
                         continue
                 stock_shows = (_LAST_LOOK.get("result") or {}).get("shows") if seen else None
                 challenger = _ai_challenger(line_text, keyword, fallback_keyword, subject, named_subject, stock_shows,
-                                            seconds, work_dir, index, topic)
+                                            seconds, work_dir, index, topic, image_prompt)
                 if challenger:
                     return challenger
                 used.add(pick["id"])
@@ -445,10 +443,12 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
         if clip:
             return clip, f"{pick.get('kind', 'video')} '{pick['description'][:60]}' again (nothing new fit '{kw}')"
     if ai_on:
-        img = imagegen.generate(line_text, keyword, fallback_keyword)
+        img, result = _ai_image(line_text, keyword, fallback_keyword, image_prompt, keyword, topic,
+                                tries=int(ai.get("tries", 2)))
         clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
         if clip:
-            return clip, f"AI image ({ai['provider']}) for '{keyword}' (nothing on Pexels matched)"
+            return clip, (f"AI image ({img.stem.split('_')[0]}) for '{keyword}' (nothing on Pexels matched)"
+                          f"{_ai_note(result)}")
     clip = generated_background(work_dir / f"bg_{index}.mp4", seconds + 0.5, seed=index)
     return clip, f"generated background (nothing on Pexels matched '{keyword}' or '{fallback_keyword}')"
 
@@ -478,9 +478,35 @@ _LAST_LOOK: dict[str, Any] = {}
 _AI_BUDGET = {"left": 0}
 
 
+def _ai_image(line_text: str, keyword: str, fallback_keyword: str, image_prompt: str, subject: str, topic: str,
+              tries: int = 2) -> tuple[Path | None, dict[str, float] | None]:
+    """An AI image for the line, looked at by the image check: one that does not show the line is made again (another
+    take of the director's scene), up to `tries`; the take that showed the line best is returned."""
+    from . import imagegen, vision
+    best: tuple[Path | None, dict[str, float] | None] = (None, None)
+    for variant in range(max(1, tries)):
+        img = imagegen.generate(line_text, keyword, fallback_keyword, prompt=image_prompt, variant=variant)
+        if not img:
+            continue
+        if not vision.enabled():
+            return img, None
+        result = vision.judge(line_text, subject, {"id": "ai_" + img.stem, "kind": "photo", "local": str(img)}, topic=topic)
+        if result is None or vision.verdict(result):
+            return img, result
+        log.info("AI image take %d does not show %r well enough (shows %.0f%%, contradicts %.0f%%, off-topic %.0f%%)",
+                 variant + 1, subject, result["shows"] * 100, result["conflict"] * 100, result.get("off_topic", 0) * 100)
+        if best[0] is None or result["shows"] > (best[1] or {}).get("shows", -1):
+            best = (img, result)
+    return best
+
+
+def _ai_note(result: dict[str, float] | None) -> str:
+    return f" · image check: shows {result['shows']:.0%}" if result else ""
+
+
 def _ai_challenger(line_text: str, keyword: str, fallback_keyword: str, subject: str, named_subject: str,
                    stock_shows: float | None, seconds: float, work_dir: Path, index: int,
-                   topic: str) -> tuple[Path, str] | None:
+                   topic: str, image_prompt: str = "") -> tuple[Path, str] | None:
     """ai_images.mode = compete: when the best internet clip shows the line only weakly, generate an AI image, have
     the image check judge it the same way, and return it when it shows the line clearly better. Never for a line
     about a real named place or person (an invented picture of a real landmark would mislead viewers)."""
@@ -493,10 +519,9 @@ def _ai_challenger(line_text: str, keyword: str, fallback_keyword: str, subject:
     if stock >= float(ai["compete_below"]):
         return None
     _AI_BUDGET["left"] -= 1
-    img = imagegen.generate(line_text, keyword, fallback_keyword)
+    img, result = _ai_image(line_text, keyword, fallback_keyword, image_prompt, subject, topic, tries=1)
     if not img:
         return None
-    result = vision.judge(line_text, subject, {"id": "ai_" + img.stem, "kind": "photo", "local": str(img)}, topic=topic)
     if not result or not vision.verdict(result) or result["shows"] < stock + float(ai["compete_margin"]):
         log.info("AI image lost to the clip for %r (AI shows %s, clip %.0f%%)", keyword,
                  f"{result['shows']:.0%}" if result else "?", stock * 100)
@@ -543,6 +568,15 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
     segments: list[dict[str, Any]] = []
     used: set[str] = set()
     _AI_BUDGET["left"] = int(imagegen.settings().get("max_per_video", 4))
+    prompts = script.get("image_prompts") or []
+    if use_ai and ai.get("mode") in ("only", "always", "compete") and len(prompts) != len(chunks):
+        from .script_gen import image_prompts
+        prompts = image_prompts(script)                 # one call: the visual director sees the whole script
+        if prompts:
+            script["image_prompts"] = prompts
+            if (work_dir / "script.json").exists():
+                from .storage import save_json
+                save_json(work_dir / "script.json", script)
     idx, t = 0, 0.0
     for i, (chunk, kw, subject) in enumerate(zip(chunks, keywords, named)):
         n = len(chunk.split())
@@ -553,7 +587,8 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
             continue
         clip, note = footage_for_line(chunk, kw, end - t, work_dir, i, fallback_keyword=fallback if kw != fallback else "",
                                       used=used, named_subject=(subject or "").strip(), credits=credits,
-                                      topic=script.get("title", ""))
+                                      topic=script.get("title", ""),
+                                      image_prompt=prompts[i] if i < len(prompts) else "")
         log.info("footage %d/%d: %s", i + 1, len(chunks), note)
         segments.append({"path": str(clip), "start": t, "end": end})
         t = end

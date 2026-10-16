@@ -499,3 +499,49 @@ def assign_visuals(script: dict[str, Any], backend: str = "auto") -> dict[str, A
     script["visual_fallback"] = items[0].visual_keyword
     return script
 
+
+DIRECTOR_SYSTEM = """You are the visual director of a narrated video. For every spoken line you write the prompt an
+AI image generator (FLUX) gets, so the picture on screen shows exactly what that line says. Rules:
+- Describe a concrete scene, not the sentence: the specific subject named in the line with the features that make it
+  recognisable and accurate (shape, size, colour, markings, how many), what it is doing, where (setting, era, time of
+  day), the camera view (close-up, wide shot, aerial, underwater) and the light that really exists there (the deep sea
+  is black with only the animals' own glow; a 1930s scene looks like 1930s photographs).
+- Facts and numbers in a line are shown, not written: "millions of firefly squid turn a bay blue" is a dark shoreline
+  at night with the surf glowing electric blue from countless tiny squid.
+- When a line is abstract (a claim, a reason, a transition), show the subject the line is about doing something
+  telling; the last line shows the video's main subject.
+- Real animals, plants, objects and places must look scientifically and historically accurate. Never draw text,
+  numbers, labels, logos, watermarks or split-screen collages.
+- One visual style for the whole video. Each prompt 25-60 words, plain description, no quotation marks."""
+
+
+class _ImagePrompts(BaseModel):
+    items: list[str] = Field(description="One image prompt per numbered line, in the same order")
+
+
+def image_prompts(script: dict[str, Any], backend: str = "auto") -> list[str]:
+    """A director's image prompt for the hook, every line and the closing line (in that order), written with the
+    whole script in view. Empty when the writer is unavailable (the prompt is then built from the footage term)."""
+    chunks = [(script.get("hook", ""), script["lines"][0].get("visual_keyword", "") if script.get("lines") else "")]
+    chunks += [(ln["text"], ln.get("named_subject") or ln.get("visual_keyword", "")) for ln in script.get("lines", [])]
+    chunks.append((script.get("cta", ""), script.get("visual_fallback", "")))
+    try:
+        chosen = pick_backend(backend)
+        if chosen == "ollama":
+            return []
+        client = anthropic.Anthropic() if chosen == "api" else None
+        prompt = (f"Video title: {script.get('title', '')}\n"
+                  f"Whole script: {script.get('full_text', '')}\n\n"
+                  f"Write one image prompt for each of these {len(chunks)} spoken lines (the subject hint is the footage "
+                  "search term the writer chose for it):\n"
+                  + "\n".join(f"{i}. {text} [subject hint: {hint}]" for i, (text, hint) in enumerate(chunks, 1)))
+        out = _draft(client, DIRECTOR_SYSTEM, prompt, chosen, model_cls=_ImagePrompts,
+                     max_tokens=min(32000, 800 + 120 * len(chunks)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("image prompts could not be written (%s); using the footage terms", str(exc)[:160])
+        return []
+    if len(out.items) != len(chunks):
+        log.warning("image prompts: got %d for %d lines; using the footage terms", len(out.items), len(chunks))
+        return []
+    return [p.strip() for p in out.items]
+
