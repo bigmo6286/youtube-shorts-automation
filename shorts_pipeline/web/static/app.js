@@ -291,7 +291,7 @@ async function loadOutputs(afterStatusSync = false) {
       const r = await api(`/api/outputs/${encodeURIComponent(o.dir)}?youtube=${youtube}`, { method: "DELETE" });
       toast(r.youtube_deleted ? "Deleted here and on YouTube" : "Deleted");
       loadOutputs(true); loadStatus();
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { toast(e.message, true); loadOutputs(true); }
   }));
   $$("button[data-copy]").forEach((b) => b.addEventListener("click", () => {
     const o = state.outputs[b.dataset.dir]; const kind = b.dataset.copy;

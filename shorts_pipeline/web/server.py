@@ -764,9 +764,12 @@ def output_status_progress() -> dict[str, Any]:
 
 
 def _remove_tree(path: Path) -> None:
-    """rmtree that waits out Windows: a video the browser is still playing is locked for a moment."""
+    """All or nothing. The video goes first: Windows locks a file a browser is playing, and a delete that stopped
+    there used to have removed meta.json and script.json already (they sort before short.mp4), so the Short lost its
+    card but kept its video. Now a locked video stops the delete before anything else is touched."""
     import shutil
     import stat
+    _remove_video(path)
     for attempt in range(20):
         try:
             shutil.rmtree(path, onerror=lambda f, p, e: (os.chmod(p, stat.S_IWRITE), f(p)))
@@ -775,6 +778,20 @@ def _remove_tree(path: Path) -> None:
             if attempt == 19:
                 raise
             time.sleep(0.5)
+
+
+def _remove_video(path: Path) -> None:
+    for name in ("short.mp4", "thumbnail.jpg"):
+        f = path / name
+        for attempt in range(10):
+            try:
+                f.unlink(missing_ok=True)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise HTTPException(409, "the video file is in use (is it playing in a browser tab or open in a "
+                                             "player?). Close it and press Delete again; the card was kept")
+                time.sleep(0.5)
 
 
 @app.delete("/api/outputs/{name}")
@@ -789,17 +806,26 @@ def delete_output(name: str, youtube: bool = False) -> dict[str, Any]:
     if busy:
         raise HTTPException(409, "a job is working on this Short right now; try again when it is done")
     meta = load_json(folder / "meta.json") or {}
+    _remove_video(folder)                               # first: a video in use stops the delete before anything else
     deleted_on_youtube = False
     if youtube and meta.get("youtube_id") and meta.get("privacy") != "deleted":
         from ..upload import delete_video
         try:
             delete_video(meta["youtube_id"])
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(400, f"YouTube did not delete it ({str(exc)[:200]}); nothing was removed here") from exc
+            raise HTTPException(400, f"YouTube did not delete it ({str(exc)[:200]}); here only the video file was "
+                                     "removed, the card stays") from exc
         deleted_on_youtube = True
     _remove_tree(folder)
     _forget_shared()
     log.info("deleted Short %s (%s)%s", name, meta.get("title", ""), " and its YouTube video" if deleted_on_youtube else "")
+    try:                                                                  # a record even when no job log is open
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with open(_DATA_DIR / "deleted.log", "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{name}\t{meta.get('title', '')}"
+                     f"{chr(9) + 'also on YouTube ' + meta['youtube_id'] if deleted_on_youtube else ''}\n")
+    except OSError:
+        pass
     return {"deleted": name, "youtube_deleted": deleted_on_youtube}
 
 

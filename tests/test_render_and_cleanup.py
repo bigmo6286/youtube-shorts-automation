@@ -128,3 +128,24 @@ def test_delete_a_short_here_and_optionally_on_youtube(tmp_path, monkeypatch):
     for bad in ("..", "../x", "nope"):
         with pytest.raises(HTTPException):
             server.delete_output(bad)
+
+
+def test_a_video_in_use_stops_the_delete_before_anything_is_removed(tmp_path, monkeypatch):
+    from pathlib import Path
+    from fastapi import HTTPException
+    from shorts_pipeline.web import server
+    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(server, "_CURRENT", None)
+    monkeypatch.setattr(server.time, "sleep", lambda s: None)
+    d = _folder(tmp_path, "2026-10-16T13-42-34Z_long", title="Golden Gate")
+    real_unlink = Path.unlink
+
+    def locked(self, missing_ok=False):
+        if self.name == "short.mp4":
+            raise PermissionError("in use")
+        return real_unlink(self, missing_ok=missing_ok)
+    monkeypatch.setattr(Path, "unlink", locked)
+    with pytest.raises(HTTPException) as err:
+        server.delete_output(d.name)
+    assert err.value.status_code == 409
+    assert (d / "meta.json").exists() and (d / "script.json").exists()         # the card survives
