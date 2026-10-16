@@ -119,8 +119,11 @@ def _pollinations(prompt: str, dest: Path) -> Path:
         try:
             _pollinations_turn()
             w, h = _dims(1080, 1920)
-            r = requests.get(url, params={"width": w, "height": h, "nologo": "true", "seed": 11 + attempt,
-                                          "model": "flux", "enhance": "false"}, timeout=120)
+            try:
+                r = requests.get(url, params={"width": w, "height": h, "nologo": "true", "seed": 11 + attempt,
+                                              "model": "flux", "enhance": "false"}, timeout=120)
+            finally:
+                (AIIMG_DIR / ".pollinations_last").write_text(str(time.time()))   # the 45 s count from the answer
             if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
                 dest.write_bytes(r.content)
                 _crop_bottom(dest, 0.07)      # the free service stamps a small logo in the bottom-right corner
