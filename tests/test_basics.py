@@ -91,7 +91,7 @@ def test_cli_parser_knows_every_command():
     p = build_parser()
     for argv in (["produce", "--blueprint-key", "a|b"], ["upload", "output/x", "--force"], ["cleanup", "--dry-run"],
                  ["channels", "add", "second", "--label", "Two"], ["channel", "connect-analytics"], ["report", "--send"],
-                 ["queue"], ["web", "--port", "8790"]):
+                 ["queue"], ["web", "--port", "8790"], ["stop", "--now"], ["start"], ["shortcuts"], ["vision-check"]):
         assert p.parse_args(argv).func
 
 

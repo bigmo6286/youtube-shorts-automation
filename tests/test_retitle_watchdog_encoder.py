@@ -68,3 +68,25 @@ def test_encoder_setting_overrides_detection(monkeypatch):
     assert render.probe_encoder() == "libx264"
     monkeypatch.setattr("shorts_pipeline.config.load_config", lambda: {"production": {"encoder": "nonsense"}})
     assert render.probe_encoder() == "libx264"
+
+
+def test_stop_note_ends_the_watchdog_and_start_clears_it(tmp_path, monkeypatch):
+    from shorts_pipeline import watchdog
+    monkeypatch.setattr(watchdog, "STOP_FLAG", tmp_path / "console.stop")
+    monkeypatch.setattr(watchdog, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(watchdog, "running_job", lambda port: "produce")
+    assert "--now" in watchdog.stop(8799) and not watchdog.STOP_FLAG.exists()     # a running job is not lost
+    monkeypatch.setattr(watchdog, "running_job", lambda port: None)
+    killed = []
+    monkeypatch.setattr(watchdog, "_listening_pid", lambda port: 4242)
+    monkeypatch.setattr(watchdog.subprocess, "run", lambda cmd, **k: killed.append(cmd))
+    assert "stopped" in watchdog.stop(8799) and watchdog.STOP_FLAG.exists() and "4242" in killed[0]
+    monkeypatch.setattr(watchdog, "_alive", lambda port: pytest.fail("a stopped watchdog must not check or restart"))
+    monkeypatch.setattr(watchdog, "_single_instance", lambda: object())
+    monkeypatch.setattr(watchdog, "STOP_FLAG", watchdog.STOP_FLAG)
+    started = []
+    monkeypatch.setattr(watchdog, "_start_console", lambda port, command="web": started.append(command))
+    monkeypatch.setattr(watchdog, "_alive", lambda port: True)
+    watchdog.STOP_FLAG.write_text("x")
+    watchdog.start(8799)
+    assert not watchdog.STOP_FLAG.exists() and started == ["watchdog"]

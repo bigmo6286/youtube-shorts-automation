@@ -1078,6 +1078,16 @@ def build_parser() -> argparse.ArgumentParser:
     cm.add_argument("--text")
     cm.set_defaults(func=cmd_comments)
 
+    st = sub.add_parser("stop", help="stop the console and its watchdog until `start` or the next logon")
+    st.add_argument("--port", type=int, default=8787)
+    st.add_argument("--now", action="store_true", help="stop even while a job is running (that job is lost)")
+    st.set_defaults(func=cmd_stop)
+    sa = sub.add_parser("start", help="start the console and its watchdog again after `stop`")
+    sa.add_argument("--port", type=int, default=8787)
+    sa.set_defaults(func=cmd_start)
+    sc = sub.add_parser("shortcuts", help="put Stop / Start Shorts console shortcuts on the desktop")
+    sc.set_defaults(func=cmd_shortcuts)
+
     vc = sub.add_parser("vision-check", help="look at the footage of existing Shorts with TypeSafe images (compare with the text-only picks)")
     vc.add_argument("dirs", nargs="*", help="output folder names (default: the newest Shorts whose clips are on disk)")
     vc.add_argument("--limit", type=int, default=3)
@@ -1203,6 +1213,51 @@ def cmd_autostart(args) -> None:
     print("To start it right now without logging out, double-click that file")
     print("or run:  wscript \"" + str(script) + "\"")
     print("Keep the machine awake: Windows Settings -> System -> Power -> Sleep: Never (while plugged in).")
+    cmd_shortcuts(args)
+
+
+def _console_port(port: int) -> int:
+    from .config import CHANNEL, channels
+    if CHANNEL and port == 8787:                    # default port: use the one registered for this channel
+        port = next((c["port"] for c in channels() if c["name"] == CHANNEL), port)
+    return port
+
+
+def cmd_stop(args) -> None:
+    from . import watchdog
+    print(watchdog.stop(_console_port(args.port), now=args.now))
+
+
+def cmd_start(args) -> None:
+    from . import watchdog
+    print(watchdog.start(_console_port(args.port)))
+
+
+def _desktop() -> Path:
+    """The real Desktop folder (OneDrive often moves it)."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as k:
+            return Path(os.path.expandvars(winreg.QueryValueEx(k, "Desktop")[0]))
+    except OSError:
+        return Path.home() / "Desktop"
+
+
+def cmd_shortcuts(args) -> None:
+    """Double-click files on the desktop: stop the console (and its watchdog) or start them again."""
+    from .config import CHANNEL, channel_label
+    channel_arg = f" --channel {CHANNEL}" if CHANNEL else ""
+    name = "Shorts console" + (f" ({channel_label()})" if CHANNEL else "")
+    made = []
+    for action in ("stop", "start"):
+        path = _desktop() / f"{action.capitalize()} {name}.cmd"
+        path.write_text("@echo off\r\n"
+                        f'cd /d "{ROOT}"\r\n'
+                        f'"{sys.executable}" main.py{channel_arg} {action}\r\n'
+                        "echo.\r\npause\r\n", encoding="utf-8")
+        made.append(path)
+    print("On your desktop:\n" + "\n".join(f"  {p}" for p in made))
 
 
 def cmd_setup_ffmpeg(args) -> Path:
