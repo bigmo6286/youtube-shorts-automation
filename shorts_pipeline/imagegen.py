@@ -34,7 +34,10 @@ NEGATIVE = "text, watermark, logo, caption, blurry, deformed, cartoon, gore, ext
 def settings() -> dict[str, Any]:
     cfg = dict((load_config().get("production") or {}).get("ai_images") or {})
     cfg.setdefault("enabled", True)
-    cfg.setdefault("mode", "fallback")        # fallback | always | never
+    cfg.setdefault("mode", "fallback")        # fallback | compete | always | never
+    cfg.setdefault("compete_below", 0.85)     # compete: an AI image is tried when the best clip shows the line less than this
+    cfg.setdefault("compete_margin", 0.10)    # ...and used when it shows the line at least this much better
+    cfg.setdefault("max_per_video", 4)
     cfg.setdefault("provider", "pollinations")
     cfg.setdefault("style", DEFAULT_STYLE)
     return cfg
@@ -63,6 +66,19 @@ def build_prompt(line_text: str, keyword: str, subject: str, style: str) -> str:
     return f"A clear photograph of {scene}, illustrating: {context}. {style}"
 
 
+def _dims(w: int, h: int) -> tuple[int, int]:
+    """Provider image size: portrait for Shorts, the same size turned for a landscape long video."""
+    from .frame import landscape
+    return (h, w) if landscape() else (w, h)
+
+
+def _style_for_frame(style: str) -> str:
+    from .frame import landscape
+    if not landscape():
+        return style
+    return re.sub(r"vertical(?: 9:16)?", "horizontal 16:9", style)
+
+
 def _cache_path(prompt: str, provider: str) -> Path:
     AIIMG_DIR.mkdir(parents=True, exist_ok=True)
     return AIIMG_DIR / f"{provider}_{hashlib.sha1(prompt.encode()).hexdigest()[:16]}.jpg"
@@ -73,7 +89,8 @@ def _pollinations(prompt: str, dest: Path) -> Path:
     last: Exception | None = None
     for attempt in range(3):
         try:
-            r = requests.get(url, params={"width": 1080, "height": 1920, "nologo": "true", "seed": 11 + attempt,
+            w, h = _dims(1080, 1920)
+            r = requests.get(url, params={"width": w, "height": h, "nologo": "true", "seed": 11 + attempt,
                                           "model": "flux", "enhance": "false"}, timeout=120)
             if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
                 dest.write_bytes(r.content)
@@ -108,7 +125,7 @@ def _together(prompt: str, dest: Path) -> Path:
     model = settings().get("model") or "black-forest-labs/FLUX.1-schnell-Free"
     r = requests.post("https://api.together.xyz/v1/images/generations",
                       headers={"Authorization": f"Bearer {env('TOGETHER_API_KEY')}"},
-                      json={"model": model, "prompt": prompt, "negative_prompt": NEGATIVE, "width": 768, "height": 1344,
+                      json={"model": model, "prompt": prompt, "negative_prompt": NEGATIVE, "width": _dims(768, 1344)[0], "height": _dims(768, 1344)[1],
                             "steps": 4, "n": 1, "response_format": "b64_json"}, timeout=120)
     if r.status_code != 200:
         raise RuntimeError(f"together {r.status_code}: {r.text[:200]}")
@@ -124,7 +141,7 @@ def _openai(prompt: str, dest: Path) -> Path:
     model = settings().get("model") or "gpt-image-1"
     r = requests.post("https://api.openai.com/v1/images/generations",
                       headers={"Authorization": f"Bearer {env('OPENAI_API_KEY')}"},
-                      json={"model": model, "prompt": prompt, "size": "1024x1536", "n": 1, "quality": "medium"}, timeout=180)
+                      json={"model": model, "prompt": prompt, "size": "x".join(map(str, _dims(1024, 1536))), "n": 1, "quality": "medium"}, timeout=180)
     if r.status_code != 200:
         raise RuntimeError(f"openai {r.status_code}: {r.text[:200]}")
     data = r.json()["data"][0]
@@ -147,7 +164,8 @@ def _huggingface(prompt: str, dest: Path) -> Path:
     model = settings().get("model") or HF_DEFAULT_MODEL
     client = InferenceClient(api_key=env("HF_TOKEN"), provider="auto", timeout=180)
     try:
-        image = client.text_to_image(prompt, model=model, width=768, height=1344, num_inference_steps=4)
+        w, h = _dims(768, 1344)
+        image = client.text_to_image(prompt, model=model, width=w, height=h, num_inference_steps=4)
     except Exception as exc:  # noqa: BLE001 - normalise so the status code is visible in the message
         status = getattr(getattr(exc, "response", None), "status_code", None)
         raise RuntimeError(f"huggingface {status or ''} {str(exc)[:200]}".strip()) from exc
@@ -174,7 +192,7 @@ def generate(line_text: str, keyword: str, subject: str = "") -> Path | None:
     The configured provider is tried first; if it fails (limits, credit, outage) the free keyless
     generator takes over, and a provider that hit a limit is skipped for an hour."""
     cfg = settings()
-    prompt = build_prompt(line_text, keyword, subject, cfg.get("style") or DEFAULT_STYLE)
+    prompt = build_prompt(line_text, keyword, subject, _style_for_frame(cfg.get("style") or DEFAULT_STYLE))
     order = []
     if available(cfg["provider"]) and _PAUSED_UNTIL.get(cfg["provider"], 0) < time.time():
         order.append(cfg["provider"])

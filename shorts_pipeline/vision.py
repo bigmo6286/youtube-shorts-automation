@@ -35,6 +35,10 @@ MIN_SIDE, MAX_SIDE = 280, 1568                      # TypeSafe's limits; images 
 def config() -> dict[str, Any]:
     cfg = dict(DEFAULTS)
     cfg.update(((load_config().get("production") or {}).get("vision")) or {})
+    from .frame import long_video
+    if long_video():                                    # a long video has many lines: one check each
+        lv = ((load_config().get("production") or {}).get("long_video")) or {}
+        cfg["max_checks"] = min(int(cfg["max_checks"]), int(lv.get("max_image_checks", 1)))
     return cfg
 
 
@@ -84,7 +88,10 @@ def preview(candidate: dict[str, Any], clip: Path | None = None) -> bytes | None
     if cached.exists() and cached.stat().st_size > 0:
         return cached.read_bytes()
     raw = None
-    url = candidate.get("preview") or (candidate["link"] if candidate.get("kind") == "photo" else None)
+    url = candidate.get("preview") or (candidate.get("link") if candidate.get("kind") == "photo" else None)
+    if candidate.get("local"):                          # an AI image on disk: no link
+        raw = Path(candidate["local"]).read_bytes()
+        url = None
     if url:
         try:
             from .commons import USER_AGENT

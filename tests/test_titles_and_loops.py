@@ -120,3 +120,42 @@ def test_hook_overlay_is_added_on_top_from_frame_one(tmp_path):
     event = [l for l in text.splitlines() if ",HookTitle," in l][0]
     assert event.startswith("Dialogue: 1,0:00:00.00,0:00:02.50,HookTitle")
     assert "ONE HEART STOPS" in event and "\\N" in event                      # upper case, wrapped onto two lines
+
+
+# ------------------------------------------------------------------ long videos (not Shorts)
+def test_long_video_frame_is_landscape_and_resets():
+    from shorts_pipeline import frame
+    frame.use("landscape", long=True)
+    assert frame.size() == (1920, 1080) and frame.landscape() and frame.long_video()
+    frame.use()
+    assert frame.size() == (1080, 1920) and not frame.long_video()
+
+
+def test_long_script_is_never_cut_down(monkeypatch):
+    from shorts_pipeline import script_gen
+    original = " ".join(f"Sentence number {i} explains one more detail of the story." for i in range(60))   # 540 words
+    short = {"title": "T", "hook": "H.", "lines": [{"text": "Only a summary.", "visual_keyword": "x"}], "cta": "C.",
+             "description": "D #shorts", "hashtags": ["shorts", "history"], "visual_fallback": "x", "thumbnail_text": "X"}
+    full = dict(short, lines=[{"text": f"Sentence number {i} explains one more detail of the story.", "visual_keyword": "x"}
+                              for i in range(60)])
+    drafts = iter([short, full])
+    monkeypatch.setattr(script_gen, "pick_backend", lambda pref: "claude_code")
+    monkeypatch.setattr(script_gen, "_draft", lambda *a, **k: script_gen.ShortScript.model_validate(next(drafts)))
+    qa = {"hook_strength": {"score": 3}, "clarity": {"score": 2}, "policy_risk": {"noul": 0}, "matches_format": {"noul": 1},
+          "has_payoff": {"noul": 1}, "faithful": {"noul": 1}}
+    monkeypatch.setattr(script_gen, "judge_script", lambda *a, **k: qa)
+    s = script_gen.enhance_script(original, long=True, max_attempts=3)
+    assert s["word_count"] >= 500 and s["attempt"] == 2 and s["long_video"]
+    assert "shorts" not in s["hashtags"] and "#shorts" not in s["description"].lower()
+
+
+def test_as_written_script_gets_one_footage_term_per_sentence(monkeypatch):
+    from shorts_pipeline import script_gen
+    script = script_gen.custom_script("Owls turn their heads. They have extra neck bones. Blood still reaches the brain. "
+                                      "Try it and you would faint.")
+    monkeypatch.setattr(script_gen, "pick_backend", lambda pref: "claude_code")
+    monkeypatch.setattr(script_gen, "_draft", lambda *a, **k: script_gen._Visuals(items=[
+        script_gen._Visual(visual_keyword=k_) for k_ in ("owl turning head", "owl skeleton neck", "blood vessels")]))
+    script_gen.assign_visuals(script)
+    assert [ln["visual_keyword"] for ln in script["lines"]] == ["owl skeleton neck", "blood vessels"]
+    assert script["visual_fallback"] == "owl turning head"

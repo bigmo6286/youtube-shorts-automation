@@ -198,8 +198,14 @@ def cmd_produce(args) -> Path:
     except RuntimeError as exc:
         sys.exit(str(exc))
     cfg = load_config()["production"]
+    from . import frame
+    long_video = bool(getattr(args, "long", False))
+    lv_cfg = cfg.get("long_video") or {}
+    frame.use(lv_cfg.get("orientation", "landscape") if long_video else "vertical", long=long_video)
 
     script_text = _read_custom_script(args)
+    if long_video and not script_text:
+        sys.exit("A long video needs your own script (--script-file, or paste it in the console).")
     if script_text:
         # User-written script: no blueprint or run needed. Enhanced (hook, flow, payoff; facts kept) unless --as-written.
         kwargs = dict(title=getattr(args, "title", "") or "", description=getattr(args, "description", "") or "",
@@ -212,9 +218,11 @@ def cmd_produce(args) -> Path:
                 except RuntimeError as exc:
                     sys.exit(str(exc))
                 log.info("enhancing your script (%d words): adding a hook, tightening flow, keeping every fact", len(script_text.split()))
+                if long_video:
+                    log.info("long video: keeping the full script; only the opening, transitions and grammar are edited")
                 script = script_gen.enhance_script(script_text, max_attempts=cfg["script_max_attempts"],
                                                    min_hook_score=cfg["script_min_hook_score"],
-                                                   backend=cfg.get("script_backend", "auto"), **kwargs)
+                                                   backend=cfg.get("script_backend", "auto"), long=long_video, **kwargs)
                 qa = script.get("qa") or {}
                 if qa:
                     log.info("enhanced script: hook %.1f/3, clarity %.1f/2, payoff %.0f%%, faithful to original %.0f%%",
@@ -222,13 +230,17 @@ def cmd_produce(args) -> Path:
                              qa.get("faithful", {}).get("noul", 1.0) * 100)
             else:
                 script = script_gen.custom_script(script_text, **kwargs)
+                if not kwargs["keywords"]:
+                    script = script_gen.assign_visuals(script, cfg.get("script_backend", "auto"))
+                if long_video:
+                    script = script_gen.as_long_video(script)
         except (ValueError, RuntimeError) as exc:
             sys.exit(f"Script preparation failed: {exc}")
         blueprint = {"format": "custom", "topic": "custom", "hook_style": "enhanced" if enhance else "as written",
                      "why_it_works": "user-written script" + (" edited for hook, flow and payoff" if enhance else "")}
         run_name = "custom"
         log.info("custom script%s: %d words, title %r", " (enhanced)" if enhance else " (as written)", script["word_count"], script["title"])
-        out_dir = OUTPUT_DIR / f"{now_iso()}_custom"
+        out_dir = OUTPUT_DIR / f"{now_iso()}_{'long' if long_video else 'custom'}"
     elif getattr(args, "profile", None):
         # Clone a channel's style: blueprint comes from the analysed profile, not from the trend run.
         from . import profile as profiles
@@ -390,9 +402,13 @@ def cmd_produce(args) -> Path:
 
     # Captions are burned onto the body stream before the intro is concatenated in front of it, so their
     # clock is body-local: no offset here (the intro card carries its own subtitle file).
-    ass_path = captions.write_ass(words, out_dir / "captions.ass", style=_caption_style(cfg), full_text=script["full_text"])
+    cap_style = _caption_style(cfg)
+    if frame.landscape():                       # same look, sized for a 1080-high frame
+        cap_style = {**cap_style, "size": int(round(float(cap_style.get("size") or 84) * float(lv_cfg.get("caption_scale", 0.7))))}
+    ass_path = captions.write_ass(words, out_dir / "captions.ass", style=cap_style, full_text=script["full_text"],
+                                  width=frame.size()[0], height=frame.size()[1])
     hook_cfg = cfg.get("hook_overlay") or {}
-    if hook_cfg.get("enabled", True) and (script.get("thumbnail_text") or script.get("hook")):
+    if not long_video and hook_cfg.get("enabled", True) and (script.get("thumbnail_text") or script.get("hook")):
         n = len((script.get("hook") or "").split())
         hook_end = words[min(len(words), max(n, 1)) - 1]["end"] + 0.5 if words and n else 2.5
         seconds = max(1.5, min(float(hook_cfg.get("max_seconds", 3.5)), hook_end))
@@ -425,7 +441,7 @@ def cmd_produce(args) -> Path:
     video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
                           music_path=Path(track["path"]) if track else None,
                           music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
-                          fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro
+                          fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro and not long_video
                                         else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
                           intro=intro, outro=outro)
     for flag in ("explore",):
@@ -438,7 +454,8 @@ def cmd_produce(args) -> Path:
             "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None, "voice": voice,
             "segments": segments, "photo_credits": photo_credits,
             "thumbnail_text": script.get("thumbnail_text", ""),
-            "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint")}
+            "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint"),
+            "long_video": long_video, "orientation": "landscape" if frame.landscape() else "vertical"}
     save_json(out_dir / "meta.json", meta)
     if getattr(args, "dub_of", None):
         from . import dub
@@ -801,6 +818,8 @@ def cmd_thumbnail(args) -> None:
     script = load_json(out_dir / "script.json") or {}
     if not meta:
         sys.exit(f"No meta.json in {out_dir}")
+    from . import frame
+    frame.use(meta.get("orientation", "vertical"), long=bool(meta.get("long_video")))   # a long video's is landscape
     cfg = load_config()["production"]
     thumb_cfg = cfg.get("thumbnail") or {}
     if getattr(args, "regenerate", True) or not (out_dir / "thumbnail.jpg").exists():
@@ -1022,6 +1041,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--blueprint-key", dest="blueprint_key", help="one of your channel's winners, e.g. storytime|psychology_mind (see `channel report`)")
     pr.add_argument("--seconds", type=int, help="target length for --profile (default: the channel's typical length)")
     pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")
+    pr.add_argument("--long", action="store_true",
+                    help="with your own script: a long landscape video (not a Short); the script keeps its full length")
     pr.add_argument("--as-written", dest="enhance", action="store_false", default=True,
                     help="with --script-file: voice the text exactly as written instead of enhancing hook and flow")
     pr.add_argument("--title"); pr.add_argument("--description")

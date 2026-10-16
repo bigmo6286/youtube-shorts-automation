@@ -78,6 +78,10 @@ production:
     enabled: true             # 48 h after publishing, a Short in the bottom third gets its best alternative title once
     after_hours: 48
     max_per_sync: 2
+  long_video:                 # produce --long / "Long video" in the console: your own script at full length
+    orientation: landscape    # landscape (normal YouTube video, 1920x1080) | vertical
+    caption_scale: 0.7        # caption size relative to the Shorts style (a landscape frame is shorter)
+    max_image_checks: 1       # image checks per line (a long video has many lines)
   vision:                     # look at the footage the text check picked (TypeSafe images, experimental)
     mode: "off"               # off | log (judge and log, never reject) | on (a clip that does not show the line's
                               # subject or contradicts its setting is replaced by the next candidate)
@@ -111,7 +115,12 @@ production:
   background_source: auto     # auto | pexels | generated
   ai_images:
     enabled: true
-    mode: fallback            # fallback = only when Pexels has nothing that fits | always = AI image for every line | never
+    mode: fallback            # fallback = only when nothing on Pexels/Pixabay fits | compete = also when the best clip is a
+                              # weak match: the image check judges both and the better one is used (needs vision on;
+                              # never for real named places or people) | always = AI image for every line | never
+    compete_below: 0.85       # compete: try an AI image when the best clip shows the line less than this
+    compete_margin: 0.10      # ...and use it when it shows the line at least this much better
+    max_per_video: 4          # AI images per video at most (each takes a few seconds and may use provider credits)
     provider: pollinations    # pollinations (free, no key) | together (TOGETHER_API_KEY) | huggingface (HF_TOKEN) | openai (OPENAI_API_KEY, paid)
     model: ""                 # optional model id for together / huggingface / openai, e.g. black-forest-labs/FLUX.1-schnell
     style: "cinematic photograph, natural light, realistic, sharp detail, vertical composition, no text, no watermark, no logo"
@@ -123,7 +132,6 @@ production:
     keep_unuploaded_days: 30  # never-uploaded Shorts keep their video this long; null = keep forever
                               # script, details and thumbnail always stay (history, analytics and the cards need them)
   min_free_gb: 3              # below this much free disk: uploaded videos, then old footage go; else the production stops
-  cache_max_gb: 4             # downloaded footage kept for reuse, least recently used deleted first
   script_backend: auto        # auto | api | claude_code | ollama  (api = ANTHROPIC_API_KEY; claude_code = your Claude subscription; ollama = free local model)
   ollama:
     fallback: true            # when Claude is unavailable (missing, signed out, usage limit, offline), write with the local model

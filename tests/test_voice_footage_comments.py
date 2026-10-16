@@ -258,3 +258,25 @@ def test_a_clip_the_image_check_rejects_makes_room_for_the_next(monkeypatch, tmp
     _vision_mode(monkeypatch, "log", judged)                        # log mode: judged, never rejected
     clip, note = footage.footage_for_line("Antarctica's volcano erupts through ice.", "antarctica volcano ice", 3.0, tmp_path, 0)
     assert clip.name == "1.mp4" and "would reject" in note
+
+
+def test_ai_image_competes_with_a_weak_clip_but_never_for_a_real_place(monkeypatch, tmp_path):
+    from shorts_pipeline import imagegen, vision
+    monkeypatch.setattr(imagegen, "settings", lambda: {"enabled": True, "mode": "compete", "provider": "pollinations",
+                                                       "compete_below": 0.85, "compete_margin": 0.1, "max_per_video": 4})
+    monkeypatch.setattr(imagegen, "available", lambda provider=None: True)
+    img = tmp_path / "ai.jpg"
+    img.write_bytes(b"x")
+    monkeypatch.setattr(imagegen, "generate", lambda *a, **k: img)
+    monkeypatch.setattr(vision, "enabled", lambda: True)
+    monkeypatch.setattr(vision, "config", lambda: dict(vision.DEFAULTS, mode="on"))
+    monkeypatch.setattr(vision, "judge", lambda *a, **k: {"shows": 0.9, "conflict": 0.05, "off_topic": 0.05})
+    monkeypatch.setattr(footage, "image_clip", lambda im, sec, out, whole=False: out)
+    footage._AI_BUDGET["left"] = 2
+    won = footage._ai_challenger("A bird pulls a leech.", "bird pulling leech", "", "bird pulling leech", "", 0.4,
+                                 3.0, tmp_path, 0, "Lion and bird")
+    assert won and "beat the best clip" in won[1]
+    assert footage._ai_challenger("x", "k", "", "k", "", 0.95, 3.0, tmp_path, 1, "t") is None        # strong clip kept
+    assert footage._ai_challenger("x", "k", "", "k", "Mount Erebus", 0.2, 3.0, tmp_path, 2, "t") is None  # real place
+    monkeypatch.setattr(vision, "judge", lambda *a, **k: {"shows": 0.45, "conflict": 0.05, "off_topic": 0.05})
+    assert footage._ai_challenger("x", "k", "", "k", "", 0.4, 3.0, tmp_path, 3, "t") is None          # not better enough

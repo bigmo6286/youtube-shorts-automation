@@ -41,16 +41,26 @@ def _slug_text(url: str) -> str:
     return m.group(1).replace("-", " ") if m else ""
 
 
+def _orient_is_landscape() -> bool:
+    from .frame import landscape
+    return landscape()
+
+
+def _orient() -> str:
+    from .frame import landscape
+    return "landscape" if landscape() else "portrait"
+
+
 def search_videos(keyword: str) -> list[dict[str, Any]]:
     if not env("PEXELS_API_KEY"):
         return []
-    key = f"v:{keyword.lower()}"
+    key = f"v:{keyword.lower()}" if _orient() == "portrait" else f"vL:{keyword.lower()}"
     cached = _SEARCH_CACHE.get(key)
     if cached is not None:
         return cached
     try:
         r = requests.get("https://api.pexels.com/videos/search",
-                         params={"query": keyword, "orientation": "portrait", "size": "medium", "per_page": CANDIDATES},
+                         params={"query": keyword, "orientation": _orient(), "size": "medium", "per_page": CANDIDATES},
                          headers=_headers(), timeout=20)
         r.raise_for_status()
         videos = r.json().get("videos", [])
@@ -59,8 +69,12 @@ def search_videos(keyword: str) -> list[dict[str, Any]]:
         return []
     out = []
     for v in videos:
-        files = sorted((f for f in v.get("video_files", []) if f.get("height") and f.get("height") >= f.get("width", 0)),
-                       key=lambda f: abs((f.get("height") or 0) - 1920))
+        if _orient() == "portrait":
+            files = sorted((f for f in v.get("video_files", []) if f.get("height") and f.get("height") >= f.get("width", 0)),
+                           key=lambda f: abs((f.get("height") or 0) - 1920))
+        else:
+            files = sorted((f for f in v.get("video_files", []) if f.get("width") and f.get("width") >= f.get("height", 0)),
+                           key=lambda f: abs((f.get("width") or 0) - 1920))
         if not files:
             continue
         out.append({"id": str(v["id"]), "kind": "video", "description": _slug_text(v.get("url", "")) or keyword,
@@ -73,13 +87,13 @@ def search_videos(keyword: str) -> list[dict[str, Any]]:
 def search_photos(keyword: str) -> list[dict[str, Any]]:
     if not env("PEXELS_API_KEY"):
         return []
-    key = f"p:{keyword.lower()}"
+    key = f"p:{keyword.lower()}" if _orient() == "portrait" else f"pL:{keyword.lower()}"
     cached = _SEARCH_CACHE.get(key)
     if cached is not None:
         return cached
     try:
         r = requests.get("https://api.pexels.com/v1/search",
-                         params={"query": keyword, "orientation": "portrait", "per_page": CANDIDATES},
+                         params={"query": keyword, "orientation": _orient(), "per_page": CANDIDATES},
                          headers=_headers(), timeout=20)
         r.raise_for_status()
         photos = r.json().get("photos", [])
@@ -113,7 +127,7 @@ def _pixabay(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
 
 def search_pixabay_videos(keyword: str) -> list[dict[str, Any]]:
     """Free Pixabay videos (PIXABAY_API_KEY). Mostly landscape; portrait files are preferred when offered."""
-    key = f"pbv:{keyword.lower()}"
+    key = f"pbv:{keyword.lower()}" if _orient() == "portrait" else f"pbvL:{keyword.lower()}"
     cached = _SEARCH_CACHE.get(key)
     if cached is not None:
         return cached
@@ -123,9 +137,13 @@ def search_pixabay_videos(keyword: str) -> list[dict[str, Any]]:
         if not files:
             continue
         # portrait first, then the size closest to 1080 wide x 1920 high once cropped (height ~1080 is plenty)
-        files.sort(key=lambda f: (0 if (f.get("height") or 0) >= (f.get("width") or 0) else 1, abs((f.get("height") or 0) - 1080)))
+        tall = _orient() == "portrait"
+        files.sort(key=lambda f: (0 if ((f.get("height") or 0) >= (f.get("width") or 0)) == tall else 1,
+                                  abs((f.get("height") or 0) - 1080)))
         f = files[0]
-        shape = "vertical" if (f.get("height") or 0) >= (f.get("width") or 0) else "horizontal, cropped to vertical"
+        is_tall = (f.get("height") or 0) >= (f.get("width") or 0)
+        shape = ("vertical" if is_tall else "horizontal") + ("" if is_tall == tall else
+                                                              f", cropped to {'vertical' if tall else 'horizontal'}")
         out.append({"id": f"pb{h['id']}", "kind": "video", "source": "pixabay",
                     "description": f"{h.get('tags', keyword)} ({shape})", "duration": h.get("duration", 0),
                     "link": f["url"], "page": h.get("pageURL", ""), "preview": f.get("thumbnail") or ""})
@@ -134,7 +152,7 @@ def search_pixabay_videos(keyword: str) -> list[dict[str, Any]]:
 
 
 def search_pixabay_photos(keyword: str) -> list[dict[str, Any]]:
-    key = f"pbp:{keyword.lower()}"
+    key = f"pbp:{keyword.lower()}" if _orient() == "portrait" else f"pbpL:{keyword.lower()}"
     cached = _SEARCH_CACHE.get(key)
     if cached is not None:
         return cached
@@ -142,7 +160,8 @@ def search_pixabay_photos(keyword: str) -> list[dict[str, Any]]:
             "link": h.get("largeImageURL") or h.get("webformatURL"), "page": h.get("pageURL", ""),
             "preview": h.get("webformatURL") or ""}
            for h in _pixabay("", {"q": keyword, "per_page": PIXABAY_PER_SEARCH, "image_type": "photo",
-                                  "orientation": "vertical"}) if h.get("largeImageURL") or h.get("webformatURL")]
+                                  "orientation": "vertical" if _orient() == "portrait" else "horizontal"})
+           if h.get("largeImageURL") or h.get("webformatURL")]
     _SEARCH_CACHE.set(key, out)
     return out
 
@@ -298,14 +317,17 @@ def photo_clip(photo_url: str, photo_id: str, seconds: float, out_path: Path, wh
 def image_clip(img: Path, seconds: float, out_path: Path, whole: bool = False) -> Path | None:
     """Slow Ken Burns zoom over any local image (stock photo or AI-generated). whole=True keeps a landscape photo
     whole (over a blurred copy of itself) instead of cropping its middle third: a real landmark must stay visible."""
+    from .frame import size
+    W, H = size()
     frames = int((seconds + 0.5) * 30)
-    zoom = f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=30,format=yuv420p"
+    zoom = f"zoompan=z='min(zoom+0.0006,1.12)':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps=30,format=yuv420p"
     if whole:
-        graph = ("[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-                 "boxblur=28:4,eq=brightness=-0.12[bg];[b]scale=1080:-2[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2," + zoom)
+        graph = (f"[0:v]split=2[a][b];[a]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+                 f"boxblur=28:4,eq=brightness=-0.12[bg];[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
+                 "[bg][fg]overlay=(W-w)/2:(H-h)/2," + zoom)
         filt = ["-filter_complex", graph]
     else:
-        filt = ["-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920," + zoom]
+        filt = ["-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}," + zoom]
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(img), *filt,
            "-t", f"{seconds + 0.5:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", str(out_path)]
     try:
@@ -326,7 +348,8 @@ def generated_background(out_path: Path, seconds: float, seed: int = 7) -> Path:
         ("0x141e30", "0x243b55", "0x0f0c29"),
     ][seed % 4]
     # No film grain here on purpose: noise defeats x264 and turns a 10 s clip into hundreds of MB.
-    filt = (f"gradients=size=1080x1920:speed=0.015:nb_colors=3:c0={palette[0]}:c1={palette[1]}:c2={palette[2]}"
+    from .frame import size
+    filt = (f"gradients=size={size()[0]}x{size()[1]}:speed=0.015:nb_colors=3:c0={palette[0]}:c1={palette[1]}:c2={palette[2]}"
             f":duration={seconds:.2f}:rate=30,format=yuv420p")
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", filt,
            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-t", f"{seconds:.2f}", str(out_path)]
@@ -348,7 +371,7 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
             ok, seen = _looked_at(line_text, named_subject, pick, topic=topic)
             pick = pick if ok else None
         clip = pick and photo_clip(pick["link"], pick["id"], seconds, work_dir / f"bg_{index}.mp4",
-                                   whole=bool(pick.get("landscape")))
+                                   whole=bool(pick.get("landscape")) != _orient_is_landscape())
         if clip:
             used.add(pick["id"])
             if credits is not None:
@@ -399,6 +422,11 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
                     if not ok:
                         rejected.add(pick["id"])
                         continue
+                stock_shows = (_LAST_LOOK.get("result") or {}).get("shows") if seen else None
+                challenger = _ai_challenger(line_text, keyword, fallback_keyword, subject, named_subject, stock_shows,
+                                            seconds, work_dir, index, topic)
+                if challenger:
+                    return challenger
                 used.add(pick["id"])
                 src = " on Pixabay" if pick.get("source") == "pixabay" else ""
                 return clip, (f"{kind} '{pick['description'][:60]}'{src} ({fit:.0%} "
@@ -424,6 +452,7 @@ def _looked_at(line_text: str, subject: str, pick: dict[str, Any], clip: Path | 
     if not vision.enabled():
         return True, ""
     result = vision.judge(line_text, subject, pick, clip, topic=topic)
+    _LAST_LOOK["result"] = result
     if result is None:
         return True, " · image check unavailable"
     ok = vision.verdict(result)
@@ -435,6 +464,40 @@ def _looked_at(line_text: str, subject: str, pick: dict[str, Any], clip: Path | 
     if not ok:
         log.info("image check rejected %s '%s'%s", pick["id"], pick.get("description", "")[:60], note)
     return ok, note
+
+
+_LAST_LOOK: dict[str, Any] = {}
+_AI_BUDGET = {"left": 0}
+
+
+def _ai_challenger(line_text: str, keyword: str, fallback_keyword: str, subject: str, named_subject: str,
+                   stock_shows: float | None, seconds: float, work_dir: Path, index: int,
+                   topic: str) -> tuple[Path, str] | None:
+    """ai_images.mode = compete: when the best internet clip shows the line only weakly, generate an AI image, have
+    the image check judge it the same way, and return it when it shows the line clearly better. Never for a line
+    about a real named place or person (an invented picture of a real landmark would mislead viewers)."""
+    from . import imagegen, vision
+    ai = imagegen.settings()
+    if (ai.get("mode") != "compete" or not ai.get("enabled") or named_subject or not vision.enabled()
+            or _AI_BUDGET["left"] <= 0 or not imagegen.available()):
+        return None
+    stock = 0.6 if stock_shows is None else stock_shows      # no image check of the clip: assume a fair match
+    if stock >= float(ai["compete_below"]):
+        return None
+    _AI_BUDGET["left"] -= 1
+    img = imagegen.generate(line_text, keyword, fallback_keyword)
+    if not img:
+        return None
+    result = vision.judge(line_text, subject, {"id": "ai_" + img.stem, "kind": "photo", "local": str(img)}, topic=topic)
+    if not result or not vision.verdict(result) or result["shows"] < stock + float(ai["compete_margin"]):
+        log.info("AI image lost to the clip for %r (AI shows %s, clip %.0f%%)", keyword,
+                 f"{result['shows']:.0%}" if result else "?", stock * 100)
+        return None
+    clip = image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
+    if not clip:
+        return None
+    return clip, (f"AI image ({img.stem.split('_')[0]}) for '{keyword}': shows {result['shows']:.0%}, beat the best clip "
+                  f"({stock:.0%})")
 
 
 def _materialize(pick: dict[str, Any], kind: str, seconds: float, work_dir: Path, index: int) -> Path | None:
@@ -471,6 +534,7 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
     named = [(lines[0].get("named_subject") if lines else "") or main, *[ln.get("named_subject", "") for ln in lines], main]
     segments: list[dict[str, Any]] = []
     used: set[str] = set()
+    _AI_BUDGET["left"] = int(imagegen.settings().get("max_per_video", 4))
     idx, t = 0, 0.0
     for i, (chunk, kw, subject) in enumerate(zip(chunks, keywords, named)):
         n = len(chunk.split())

@@ -11,7 +11,7 @@ from .tools import run as _run, ensure_ffmpeg_on_path
 
 ensure_ffmpeg_on_path()
 
-W, H = 1080, 1920
+from . import frame
 
 # ---------------------------------------------------------------------------------------------------- video encoder
 # Hardware encoders, tried in this order; the first that really works on this machine is remembered. Filtering
@@ -73,6 +73,7 @@ def probe_channels(path: Path) -> int:
 
 
 def _vchain(idx: int, length: float, label: str) -> str:
+    W, H = frame.size()
     return (f"[{idx}:v]trim=duration={length:.3f},setpts=PTS-STARTPTS,"
             f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=30,format=yuv420p,setsar=1[{label}]")
 

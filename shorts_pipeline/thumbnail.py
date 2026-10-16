@@ -14,7 +14,7 @@ from .tools import run as _run, ensure_ffmpeg_on_path
 ensure_ffmpeg_on_path()
 log = logging.getLogger(__name__)
 
-W, H = 1080, 1920
+from . import frame
 
 
 def thumbnail_text(script: dict[str, Any], max_words: int = 6) -> str:
@@ -26,6 +26,7 @@ def thumbnail_text(script: dict[str, Any], max_words: int = 6) -> str:
 
 
 def _thumb_ass(text: str, handle: str, style: dict[str, Any], out_path: Path) -> Path:
+    W, H = frame.size()
     st = dict(style)
     st["size"] = int(int(style["size"]) * 1.45)           # thumbnail text reads at feed size
     header = _header(st, W, H)
@@ -59,7 +60,8 @@ def source_for_output(out_dir: Path, meta: dict[str, Any] | None) -> tuple[Path 
 def make_thumbnail(script: dict[str, Any], segments: list[dict[str, Any]], out_dir: Path, *,
                    style: dict[str, Any] | None = None, handle: str = "", band: bool = True,
                    source: Path | None = None, seek_at: float = -1.0, band_alpha: float = 0.7) -> Path | None:
-    """Write out_dir/thumbnail.jpg (1080x1920). Returns None if anything fails; a thumbnail is optional."""
+    """Write out_dir/thumbnail.jpg (1080x1920, or 1920x1080 for a long video). Returns None if anything fails."""
+    W, H = frame.size()
     if source is not None:
         src = source
     elif segments:

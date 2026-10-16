@@ -243,7 +243,7 @@ async function loadOutputs(afterStatusSync = false) {
   const outs = await api("/api/outputs");
   state.outputs = Object.fromEntries(outs.map((o) => [o.dir, o]));
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
-  const writer = (o) => o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API";
+  const writer = (o) => (o.long_video ? "long video · " : "") + (o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API");
   $("#outputs").innerHTML = outs.map((o) => `<div class="out">
       ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"${o.thumbnail_url ? ` poster="${o.thumbnail_url}"` : ""}></video>` : `<div class="novideo">${o.video_removed ? (o.youtube_id ? "video file removed to save disk space; it is on YouTube" : "video file removed after 30 days unuploaded") : "no video"}</div>`}
       <div class="outbody">
@@ -526,7 +526,7 @@ $("#cs-produce").addEventListener("click", () => {
   toast("Producing your script");
   startJob("produce", { script_text: text, title: $("#cs-title").value, description: $("#cs-desc").value,
     hashtags: $("#cs-tags").value, keywords: $("#cs-keywords").value, music: $("#cs-music").value,
-    enhance: !$("#cs-aswritten").checked, upload: $("#cs-upload").checked });
+    enhance: !$("#cs-aswritten").checked, upload: $("#cs-upload").checked, long: $("#cs-long").checked });
 });
 
 // ---------------------------------------------------------------- settings

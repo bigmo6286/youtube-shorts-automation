@@ -1,7 +1,7 @@
 yt-dlp>=2026.8
 typesafe-sdk>=0.7.5
 anthropic>=1.8
-edge-tts>=7.2
+edge-tts>=7.3.1
 python-dotenv>=1.0
 pyyaml>=6.0
 requests>=2.32

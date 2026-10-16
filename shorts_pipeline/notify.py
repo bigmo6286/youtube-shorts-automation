@@ -98,7 +98,7 @@ def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "") -> Non
         with open(video_path, "rb") as f:
             _check(requests.post(_api("sendVideo"),
                                  data={"chat_id": env("TELEGRAM_CHAT_ID"), "caption": caption[:CAPTION_LIMIT],
-                                       "supports_streaming": "true", "width": 1080, "height": 1920},
+                                       "supports_streaming": "true", "width": _frame_size()[0], "height": _frame_size()[1]},
                                  files={"video": (video_path.name, f, "video/mp4")}, timeout=300))
     send_message(title)
     send_message(desc or "(no description)")
@@ -108,3 +108,8 @@ def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "") -> Non
             _check(requests.post(_api("sendPhoto"), data={"chat_id": env("TELEGRAM_CHAT_ID"), "caption": "Thumbnail"},
                                  files={"photo": (Path(thumb).name, f, "image/jpeg")}, timeout=120))
     log.info("sent to Telegram chat %s", env("TELEGRAM_CHAT_ID"))
+
+
+def _frame_size() -> tuple[int, int]:
+    from .frame import size
+    return size()

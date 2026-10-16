@@ -240,20 +240,22 @@ def pick_backend(preference: str = "auto") -> str:
                        "CLAUDE_CODE_OAUTH_TOKEN (see README).")
 
 
-def _draft(client, system: str, user_prompt: str, backend: str = "") -> ShortScript:
+def _draft(client, system: str, user_prompt: str, backend: str = "", model_cls: Any = None,
+           max_tokens: int = 4000) -> Any:
+    model_cls = model_cls or ShortScript
     if backend == "ollama":
         from . import ollama_backend
-        return ShortScript.model_validate(ollama_backend.generate_json(system, user_prompt, ShortScript.model_json_schema()))
+        return model_cls.model_validate(ollama_backend.generate_json(system, user_prompt, model_cls.model_json_schema()))
     if client is not None:
-        response = client.messages.parse(model=MODEL, max_tokens=4000, system=system,
-                                         messages=[{"role": "user", "content": user_prompt}], output_format=ShortScript)
+        response = client.messages.parse(model=MODEL, max_tokens=max_tokens, system=system,
+                                         messages=[{"role": "user", "content": user_prompt}], output_format=model_cls)
         if response.stop_reason == "refusal":
             details = getattr(response, "stop_details", None)
             raise RuntimeError(f"Claude declined to write this script: {getattr(details, 'explanation', '')}")
         return response.parsed_output
     from . import claude_code_backend
-    data = claude_code_backend.generate_json(system, user_prompt, ShortScript.model_json_schema())
-    return ShortScript.model_validate(data)
+    data = claude_code_backend.generate_json(system, user_prompt, model_cls.model_json_schema())
+    return model_cls.model_validate(data)
 
 
 LOOP_MIN = 0.4                  # real loop endings score 0.45-0.6 here; 0.5 rejected half of them
@@ -263,10 +265,15 @@ LOCAL_MAX_POLICY_RISK = 0.3     # stricter than for Claude: small models state i
 
 def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], backend: str, max_attempts: int,
                    min_hook_score: float, original_text: str | None = None,
-                   repeat_check: Any = None, loop: bool = False) -> dict[str, Any]:
-    """Draft, have TypeSafe judge it, send the reviewer notes back, up to `max_attempts` times."""
+                   repeat_check: Any = None, loop: bool = False, min_words: int = 0) -> dict[str, Any]:
+    """Draft, have TypeSafe judge it, send the reviewer notes back, up to `max_attempts` times. min_words (long
+    videos): a draft shorter than that is rejected, so a long script is never cut down to a Short."""
     backend = pick_backend(backend)
     log.info("script backend: %s", backend)
+    if min_words and backend == "ollama":
+        raise RuntimeError("long videos need Claude (the free local model only writes Shorts); try again when Claude "
+                           "is available")
+    max_tokens = min(32000, 4000 + min_words * 4)       # used for long videos only
     if backend == "ollama":
         max_attempts = min(max_attempts, LOCAL_MAX_ATTEMPTS)
     client = anthropic.Anthropic() if backend == "api" else None
@@ -278,10 +285,10 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
               else None)
     for attempt in range(1, max_attempts + 1):
         try:
-            parsed = _draft(client, system, user_prompt + feedback, backend)
+            parsed = _draft(client, system, user_prompt + feedback, backend, **({"max_tokens": max_tokens} if min_words else {}))
         except Exception as exc:  # noqa: BLE001
             # Claude unreachable, signed out or over its usage limit: finish the job with the free local model.
-            if backend == "ollama" or not _ollama_fallback_ready():
+            if backend == "ollama" or not _ollama_fallback_ready() or min_words:
                 raise
             log.warning("Claude failed (%s); switching to the free local model (Ollama) for this script",
                         str(exc)[:160])
@@ -329,6 +336,9 @@ def _write_with_qa(*, system: str, user_prompt: str, blueprint: dict[str, Any], 
             problems.append("sentences are too long or jumpy for a fast voiceover")
         if original_text is not None and qa.get("faithful", {}).get("noul", 1.0) < 0.6:
             problems.append("it changed or invented facts, or lost the point of the original; keep every claim from the original")
+        if min_words and script["word_count"] < min_words:
+            problems.append(f"it is {script['word_count']} words but must keep the full length of the original (at least "
+                            f"{min_words} words): this is a long video, not a Short; restore every section you cut")
         if len(script["title"]) > TITLE_MAX:
             problems.append(f"the title is {len(script['title'])} characters; YouTube allows 100 and shows about 70, so make it shorter")
         script["qa_problems"] = problems
@@ -375,14 +385,29 @@ Never invent facts or examples that are not in the original. Add a scroll-stoppi
 with a short call to action. Keep the creator's voice."""
 
 
+ENHANCE_LONG_SYSTEM = """You edit voiceover scripts for long-form YouTube videos (several minutes, landscape, not
+Shorts): an AI voice reads the script over stock footage with captions. The creator wrote this script themselves.
+KEEP ITS FULL LENGTH: every section, fact, number, example and claim, in the creator's order and voice. Never
+summarise, never cut content, never invent facts. You may only: make the first sentence a strong opening built from
+the script's own most interesting idea, smooth the transitions, fix grammar, and split long sentences so every line
+is one spoken sentence of at most about 25 words. The title is a normal YouTube title (no #shorts). Hashtags: 3-6
+about the subject, never 'shorts'. cta is the script's own closing sentence (a question to the viewer only if the
+original ends with one). Write for speech: contractions, plain words, no emojis, no markdown."""
+
+
 def enhance_script(text: str, *, title: str = "", description: str = "", hashtags: list[str] | None = None,
                    keywords: list[str] | None = None, target_seconds: int | None = None, max_attempts: int = 3,
-                   min_hook_score: float = 2.0, backend: str = "auto") -> dict[str, Any]:
-    """Rewrite a user script into a stronger Short without changing its substance."""
+                   min_hook_score: float = 2.0, backend: str = "auto", long: bool = False) -> dict[str, Any]:
+    """Rewrite a user script into a stronger Short without changing its substance. long=True: a long video; the
+    script keeps its full length (only the opening, transitions and grammar are edited)."""
     text = re.sub(r"\s+", " ", text.replace("\r", "\n")).strip()
     if not text:
         raise ValueError("The script is empty.")
     words = len(text.split())
+    if long:
+        return _enhance_long(text, words, title=title, description=description, hashtags=hashtags,
+                             keywords=keywords, max_attempts=max_attempts, min_hook_score=min_hook_score,
+                             backend=backend)
     target = target_seconds or max(20, min(60, round(words / 2.6)))
     hints = []
     if title.strip():
@@ -401,3 +426,76 @@ def enhance_script(text: str, *, title: str = "", description: str = "", hashtag
                  "why_it_works": "the creator's own material, edited for a stronger open, flow and payoff"}
     return _write_with_qa(system=ENHANCE_SYSTEM, user_prompt=user_prompt, blueprint=blueprint, backend=backend,
                           max_attempts=max_attempts, min_hook_score=min_hook_score, original_text=text)
+
+
+def _enhance_long(text: str, words: int, *, title: str, description: str, hashtags: list[str] | None,
+                  keywords: list[str] | None, max_attempts: int, min_hook_score: float, backend: str) -> dict[str, Any]:
+    hints = []
+    if title.strip():
+        hints.append(f"Preferred title (keep or improve slightly): {title.strip()}")
+    if hashtags:
+        hints.append("Include these hashtags: " + ", ".join(h.strip().lstrip("#") for h in hashtags if h.strip()))
+    if keywords:
+        hints.append("Preferred stock-footage search terms to use for visual_keyword where they fit: " + ", ".join(keywords))
+    if description.strip():
+        hints.append(f"Base the description on this: {description.strip()}")
+    user_prompt = (f"Script written by the creator for a long video ({words} words, about {round(words / 2.6 / 60, 1)} "
+                   f"minutes spoken):\n\"\"\"\n{text}\n\"\"\"\n\n"
+                   f"Keep the full length: about {words} words, never fewer than {int(words * 0.9)}. Give every line its "
+                   "own visual_keyword so the footage follows what is being said, and named_subject where a line is "
+                   "about one specific real place, building, person or artwork.\n"
+                   + ("\n".join(hints) + "\n" if hints else "")
+                   + "Return the JSON script now.")
+    blueprint = {"format": "long video (creator script)", "topic": "creator's own subject",
+                 "hook_style": "strongest idea first", "why_it_works": "the creator's own material, kept whole"}
+    script = _write_with_qa(system=ENHANCE_LONG_SYSTEM, user_prompt=user_prompt, blueprint=blueprint, backend=backend,
+                            max_attempts=max_attempts, min_hook_score=min(min_hook_score, 1.5), original_text=text,
+                            min_words=int(words * 0.85))
+    return as_long_video(script)
+
+
+def as_long_video(script: dict[str, Any]) -> dict[str, Any]:
+    """Shorts-only metadata out: no #shorts tag."""
+    script["hashtags"] = [h for h in script.get("hashtags") or [] if h.lower().lstrip("#") != "shorts"]
+    script["description"] = re.sub(r"(?i)\s*#shorts\b", "", script.get("description") or "").strip()
+    script["long_video"] = True
+    return script
+
+
+class _Visual(BaseModel):
+    visual_keyword: str = Field(description=ScriptLine.model_fields["visual_keyword"].description)
+    named_subject: str = Field(default="", description=ScriptLine.model_fields["named_subject"].description)
+
+
+class _Visuals(BaseModel):
+    items: list[_Visual] = Field(description="One item per numbered sentence, in the same order")
+
+
+def assign_visuals(script: dict[str, Any], backend: str = "auto") -> dict[str, Any]:
+    """A script voiced as written gets one footage search term per sentence (the text is not touched), instead of
+    one term for the whole video. Leaves the script as it was when the writer is unavailable."""
+    sentences = [script.get("hook", ""), *[ln["text"] for ln in script["lines"]]]
+    if not script["lines"]:
+        return script
+    try:
+        chosen = pick_backend(backend)
+        if chosen == "ollama":
+            return script
+        client = anthropic.Anthropic() if chosen == "api" else None
+        prompt = ("Give a stock-footage search term (visual_keyword) and, only where it applies, a named_subject for "
+                  f"each of these {len(sentences)} sentences of a voiceover, in order:\n"
+                  + "\n".join(f"{i}. {s}" for i, s in enumerate(sentences, 1)))
+        out = _draft(client, "You pick literal, filmable stock-footage search terms for voiceover sentences.",
+                     prompt, chosen, model_cls=_Visuals, max_tokens=min(32000, 1000 + 60 * len(sentences)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not pick footage terms per sentence (%s); one term for the whole script", str(exc)[:160])
+        return script
+    items = out.items
+    if len(items) != len(sentences):
+        log.warning("footage terms: got %d for %d sentences; one term for the whole script", len(items), len(sentences))
+        return script
+    for ln, item in zip(script["lines"], items[1:]):
+        ln["visual_keyword"], ln["named_subject"] = item.visual_keyword, item.named_subject
+    script["visual_fallback"] = items[0].visual_keyword
+    return script
+
