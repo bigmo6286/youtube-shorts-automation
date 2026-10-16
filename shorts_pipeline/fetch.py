@@ -44,6 +44,7 @@ def configure(discovery_cfg: dict[str, Any]) -> None:
         else:
             opts.pop("cookiesfrombrowser", None)
     FULL_OPTS["sleep_interval_requests"] = float(discovery_cfg.get("request_spacing_seconds", 0.7))
+    _maybe_reset()
 
 
 def _flat_entries(url: str, limit: int) -> list[dict[str, Any]]:
@@ -136,6 +137,18 @@ RATE_LIMIT_TRIP = 8
 _rate_limit_lock = threading.Lock()
 _consecutive_failures = 0
 rate_limited = False
+_tripped_at = 0.0
+COOLDOWN_SECONDS = 3600       # YouTube's block on this machine usually lifts within the hour: try again after that
+
+
+def _maybe_reset() -> None:
+    """The console runs for days: a block from a refresh two days ago must not stop today's fetches."""
+    global _consecutive_failures, rate_limited
+    with _rate_limit_lock:
+        if rate_limited and time.time() - _tripped_at > COOLDOWN_SECONDS:
+            rate_limited = False
+            _consecutive_failures = 0
+            log.info("YouTube metadata fetches: trying again (the pause after a block is over)")
 
 
 def _note_result(ok: bool, message: str = "") -> None:
@@ -146,7 +159,9 @@ def _note_result(ok: bool, message: str = "") -> None:
             return
         _consecutive_failures += 1
         if _consecutive_failures >= RATE_LIMIT_TRIP and not rate_limited:
+            global _tripped_at
             rate_limited = True
+            _tripped_at = time.time()
             log.error("YouTube is rate limiting this machine (%d fetches failed in a row: %s). Stopping metadata "
                       "fetches early; wait an hour, lower discovery.workers, or set cookies_from_browser.",
                       _consecutive_failures, message[:80])
@@ -156,6 +171,7 @@ def fetch_full(video_id: str, want_transcript: bool, transcript_chars: int, *, f
     cached = _META_CACHE.get(video_id)
     if cached and not force and (cached.get("transcript") is not None or not want_transcript):
         return cached
+    _maybe_reset()
     if rate_limited:
         return cached
     url = f"https://www.youtube.com/shorts/{video_id}"

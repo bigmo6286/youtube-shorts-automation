@@ -104,9 +104,26 @@ def add_profile(url_or_handle: str, *, max_videos: int = 24, min_views: int = 10
              "YouTube allows roughly 300 fetches an hour)", len(flat), len(picked), 2)
     shorts = fetch.enrich(picked, max_candidates=max_videos, workers=min(3, cfg.get("workers", 3)),
                           want_transcript=True, transcript_chars=1200)
+    missing = [e["id"] for e in picked if e["id"] not in {s["id"] for s in shorts}]
+    if missing:
+        # yt-dlp blocked ("confirm you're not a bot") or partly failed: the official API has the same metadata
+        from . import api_discovery
+        if api_discovery.available():
+            try:
+                extra = api_discovery.videos_meta(missing, "profile")
+                for m in extra:
+                    cached = fetch._META_CACHE.get(m["id"])
+                    m["transcript"] = (cached or {}).get("transcript") or ""
+                shorts += extra
+                log.info("profile: %d Shorts read through the YouTube API (yt-dlp was blocked for them; transcripts "
+                         "only where cached)", len(extra))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("profile: YouTube API fallback failed: %s", str(exc)[:160])
     shorts = [s for s in shorts if fetch.is_short(s, cfg["max_duration_seconds"])]
     if not shorts:
-        raise RuntimeError("could not fetch metadata for that channel's Shorts (rate limit?)")
+        raise RuntimeError("could not read that channel's Shorts: YouTube is blocking this machine's metadata fetches "
+                           "and the YouTube API fallback is not connected or failed. Try again in an hour, or set "
+                           "discovery.cookies_from_browser (firefox) in config.yaml.")
     channel_name = shorts[0].get("channel") or handle
     for s in shorts:
         if judge.has_typesafe():
@@ -115,6 +132,10 @@ def add_profile(url_or_handle: str, *, max_videos: int = 24, min_views: int = 10
             except Exception as exc:  # noqa: BLE001
                 log.warning("judgment failed for %s: %s", s["id"], exc)
     judged = [s for s in shorts if s.get("judgment")]
+    if judge.has_typesafe() and len(judged) < max(1, len(shorts) // 2):
+        # an empty profile (no formats, no topics) would replace a good one and produce nothing useful
+        raise RuntimeError(f"only {len(judged)} of {len(shorts)} Shorts could be judged (TypeSafe unreachable: is "
+                           "the internet down?). Nothing was saved; run the analysis again.")
     views = lambda s: float(s.get("view_count") or 0)  # noqa: E731
     fmt_w: dict[str, float] = defaultdict(float)
     top_w: dict[str, float] = defaultdict(float)

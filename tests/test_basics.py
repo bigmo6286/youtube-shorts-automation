@@ -123,3 +123,16 @@ def test_save_json_retries_while_windows_holds_the_file(tmp_path, monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)
     storage.save_json(tmp_path / "m.json", {"ok": 1})
     assert storage.load_json(tmp_path / "m.json") == {"ok": 1} and calls["n"] == 3
+
+
+# ------------------------------------------------------------------ a YouTube block pauses fetches for an hour, not forever
+def test_rate_limit_pause_lifts_after_the_cooldown(monkeypatch):
+    import time
+    for _ in range(fetch.RATE_LIMIT_TRIP):
+        fetch._note_result(False, "Sign in to confirm you're not a bot")
+    assert fetch.rate_limited
+    fetch._maybe_reset()
+    assert fetch.rate_limited                                        # still within the pause
+    monkeypatch.setattr(fetch, "_tripped_at", time.time() - fetch.COOLDOWN_SECONDS - 1)
+    fetch._maybe_reset()
+    assert not fetch.rate_limited and fetch._consecutive_failures == 0
