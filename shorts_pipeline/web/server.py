@@ -38,6 +38,7 @@ KEY_FIELDS = {
     "TELEGRAM_BOT_TOKEN": "Telegram bot token from @BotFather (delivery of finished Shorts)",
     "TOGETHER_API_KEY": "Together AI key (optional: FLUX images instead of the free generator)",
     "HF_TOKEN": "Hugging Face token (optional: FLUX / Stable Diffusion images via the Inference API)",
+    "POLLINATIONS_TOKEN": "Pollinations pollen key (free at enter.pollinations.ai: AI images without the 1-per-45 s limit)",
     "OPENAI_API_KEY": "OpenAI key (optional: gpt-image-1 images instead of the free generator)",
 }
 PATH_FIELDS = {

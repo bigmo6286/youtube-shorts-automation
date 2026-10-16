@@ -98,7 +98,10 @@ POLLINATIONS_GAP = 65.0       # free tier: "1 image every 45 seconds per IP"; at
 
 
 def _pollinations_turn() -> None:
-    """Wait until 46 s after this machine's last request (shared by every channel's console through a file)."""
+    """Without a pollen key: wait until 65 s after this machine's last request (shared by every channel's console
+    through a file). With POLLINATIONS_TOKEN there is no such limit."""
+    if env("POLLINATIONS_TOKEN"):
+        return
     stamp = AIIMG_DIR / ".pollinations_last"
     try:
         last = float(stamp.read_text())
@@ -119,9 +122,11 @@ def _pollinations(prompt: str, dest: Path) -> Path:
         try:
             _pollinations_turn()
             w, h = _dims(1080, 1920)
+            token = env("POLLINATIONS_TOKEN")
             try:
                 r = requests.get(url, params={"width": w, "height": h, "nologo": "true", "seed": 11 + attempt,
-                                              "model": "flux", "enhance": "false"}, timeout=120)
+                                              "model": "flux", "enhance": "false"}, timeout=120,
+                                 headers={"Authorization": f"Bearer {token}"} if token else None)
             finally:
                 (AIIMG_DIR / ".pollinations_last").write_text(str(time.time()))   # the 45 s count from the answer
             if r.status_code == 200 and r.headers.get("content-type", "").startswith("image/"):
