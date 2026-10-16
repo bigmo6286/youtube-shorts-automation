@@ -209,7 +209,7 @@ def _args(job: Job) -> SimpleNamespace:
         angle=p.get("angle") or None, upload=bool(p.get("upload")), path=p.get("path"), verbose=False,
         exemplar=p.get("exemplar") or None, auto=bool(p.get("auto")), text=p.get("text") or None,
         sequel_of=p.get("sequel_of") or None, idea=p.get("idea") or None, explore=bool(p.get("explore")),
-        dub_of=p.get("dub_of") or None, long=bool(p.get("long")),
+        dub_of=p.get("dub_of") or None, long=bool(p.get("long")), ai_images_only=bool(p.get("ai_images_only")),
         script_text=p.get("script_text") or None, script_file=None, title=p.get("title") or "",
         description=p.get("description") or "", hashtags=p.get("hashtags") or "", keywords=p.get("keywords") or "",
         music=p.get("music") or None, action=p.get("action") or "list", query=p.get("query") or "lofi chill",

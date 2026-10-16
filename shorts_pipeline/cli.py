@@ -202,6 +202,8 @@ def cmd_produce(args) -> Path:
     long_video = bool(getattr(args, "long", False))
     lv_cfg = cfg.get("long_video") or {}
     frame.use(lv_cfg.get("orientation", "landscape") if long_video else "vertical", long=long_video)
+    from . import imagegen
+    imagegen.override("only" if getattr(args, "ai_images_only", False) else None)
 
     script_text = _read_custom_script(args)
     if long_video and not script_text:
@@ -1041,6 +1043,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--blueprint-key", dest="blueprint_key", help="one of your channel's winners, e.g. storytime|psychology_mind (see `channel report`)")
     pr.add_argument("--seconds", type=int, help="target length for --profile (default: the channel's typical length)")
     pr.add_argument("--script-file", help="use your own script (.txt) instead of generating one")
+    pr.add_argument("--ai-images-only", dest="ai_images_only", action="store_true",
+                    help="every shot is an AI-generated image (no internet footage)")
     pr.add_argument("--long", action="store_true",
                     help="with your own script: a long landscape video (not a Short); the script keeps its full length")
     pr.add_argument("--as-written", dest="enhance", action="store_false", default=True,

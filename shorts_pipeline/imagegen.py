@@ -31,10 +31,20 @@ DEFAULT_STYLE = ("documentary photograph, well lit, natural colors, realistic, s
 NEGATIVE = "text, watermark, logo, caption, blurry, deformed, cartoon, gore, extreme close-up"
 
 
+_OVERRIDE: dict[str, str | None] = {"mode": None}
+
+
+def override(mode: str | None) -> None:
+    """One production's mode (produce --ai-images-only sets "only"); None = the configured mode."""
+    _OVERRIDE["mode"] = mode
+
+
 def settings() -> dict[str, Any]:
     cfg = dict((load_config().get("production") or {}).get("ai_images") or {})
+    if _OVERRIDE["mode"]:
+        cfg["mode"], cfg["enabled"] = _OVERRIDE["mode"], True
     cfg.setdefault("enabled", True)
-    cfg.setdefault("mode", "fallback")        # fallback | compete | always | never
+    cfg.setdefault("mode", "fallback")        # fallback | compete | always | only (no internet footage) | never
     cfg.setdefault("compete_below", 0.85)     # compete: an AI image is tried when the best clip shows the line less than this
     cfg.setdefault("compete_margin", 0.10)    # ...and used when it shows the line at least this much better
     cfg.setdefault("max_per_video", 4)
@@ -84,11 +94,30 @@ def _cache_path(prompt: str, provider: str) -> Path:
     return AIIMG_DIR / f"{provider}_{hashlib.sha1(prompt.encode()).hexdigest()[:16]}.jpg"
 
 
+POLLINATIONS_GAP = 46.0       # free tier: "1 image every 45 seconds per IP"; faster requests get HTTP 402 FREE_LIMIT
+
+
+def _pollinations_turn() -> None:
+    """Wait until 46 s after this machine's last request (shared by every channel's console through a file)."""
+    stamp = AIIMG_DIR / ".pollinations_last"
+    try:
+        last = float(stamp.read_text())
+    except (OSError, ValueError):
+        last = 0.0
+    wait = last + POLLINATIONS_GAP - time.time()
+    if wait > 0:
+        log.info("free AI image generator: waiting %.0f s for its turn (1 image per 45 s)", wait)
+        time.sleep(wait)
+    AIIMG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(str(time.time()))
+
+
 def _pollinations(prompt: str, dest: Path) -> Path:
     url = f"https://image.pollinations.ai/prompt/{quote(prompt)}"
     last: Exception | None = None
     for attempt in range(3):
         try:
+            _pollinations_turn()
             w, h = _dims(1080, 1920)
             r = requests.get(url, params={"width": w, "height": h, "nologo": "true", "seed": 11 + attempt,
                                           "model": "flux", "enhance": "false"}, timeout=120)
@@ -96,7 +125,9 @@ def _pollinations(prompt: str, dest: Path) -> Path:
                 dest.write_bytes(r.content)
                 _crop_bottom(dest, 0.07)      # the free service stamps a small logo in the bottom-right corner
                 return dest
-            last = RuntimeError(f"HTTP {r.status_code} {r.headers.get('content-type', '')}")
+            last = RuntimeError(f"HTTP {r.status_code} {r.text[:160] if r.status_code != 200 else ''}")
+            if r.status_code == 402 and "FREE_LIMIT" in r.text:      # another request got in first: wait a turn
+                continue
         except Exception as exc:  # noqa: BLE001
             last = exc
         time.sleep(3 * (attempt + 1))

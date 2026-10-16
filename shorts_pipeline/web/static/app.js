@@ -526,7 +526,8 @@ $("#cs-produce").addEventListener("click", () => {
   toast("Producing your script");
   startJob("produce", { script_text: text, title: $("#cs-title").value, description: $("#cs-desc").value,
     hashtags: $("#cs-tags").value, keywords: $("#cs-keywords").value, music: $("#cs-music").value,
-    enhance: !$("#cs-aswritten").checked, upload: $("#cs-upload").checked, long: $("#cs-long").checked });
+    enhance: !$("#cs-aswritten").checked, upload: $("#cs-upload").checked, long: $("#cs-long").checked,
+    ai_images_only: $("#cs-aionly").checked });
 });
 
 // ---------------------------------------------------------------- settings

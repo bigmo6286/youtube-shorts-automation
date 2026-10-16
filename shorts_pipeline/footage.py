@@ -364,7 +364,8 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
     # Pass 0: a real photo of the specific named thing the line is about. Pass 1: the line's own term, literal
     # match. Pass 2: the video's subject term, same-subject match.
     used = used if used is not None else set()
-    if named_subject:
+    from . import imagegen as _ig
+    if named_subject and _ig.settings().get("mode") != "only":
         from . import commons
         pick, fit = commons.choose(line_text, named_subject, commons.search(named_subject), used=used)
         if pick:
@@ -382,11 +383,18 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
 
     ai = imagegen.settings()
     ai_on = bool(ai.get("enabled")) and ai.get("mode") != "never" and imagegen.available()
-    if ai_on and ai.get("mode") == "always":
+    if ai_on and ai.get("mode") in ("always", "only"):
         img = imagegen.generate(line_text, keyword, fallback_keyword)
         clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
         if clip:
-            return clip, f"AI image ({ai['provider']}) for '{keyword}'"
+            return clip, f"AI image ({img.stem.split('_')[0]}) for '{keyword}'"
+        if ai.get("mode") == "only":          # no internet footage at all: a second try, then the generated background
+            img = imagegen.generate(line_text, f"{keyword}, wide shot", fallback_keyword)
+            clip = img and image_clip(img, seconds, work_dir / f"bg_{index}.mp4")
+            if clip:
+                return clip, f"AI image ({img.stem.split('_')[0]}) for '{keyword}' (second try)"
+            clip = generated_background(work_dir / f"bg_{index}.mp4", seconds + 0.5, seed=index)
+            return clip, f"generated background (no AI image for '{keyword}')"
     attempts = [(keyword, True)]
     if fallback_keyword:
         attempts.append((fallback_keyword, False))

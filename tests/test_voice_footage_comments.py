@@ -280,3 +280,26 @@ def test_ai_image_competes_with_a_weak_clip_but_never_for_a_real_place(monkeypat
     assert footage._ai_challenger("x", "k", "", "k", "Mount Erebus", 0.2, 3.0, tmp_path, 2, "t") is None  # real place
     monkeypatch.setattr(vision, "judge", lambda *a, **k: {"shows": 0.45, "conflict": 0.05, "off_topic": 0.05})
     assert footage._ai_challenger("x", "k", "", "k", "", 0.4, 3.0, tmp_path, 3, "t") is None          # not better enough
+
+
+def test_ai_images_only_never_uses_internet_footage(monkeypatch, tmp_path):
+    from shorts_pipeline import imagegen
+    imagegen.override("only")
+    try:
+        monkeypatch.setattr(imagegen, "available", lambda provider=None: True)
+        monkeypatch.setattr(footage, "video_candidates", lambda kw: pytest.fail("no internet footage in AI-only mode"))
+        monkeypatch.setattr("shorts_pipeline.commons.search", lambda s: pytest.fail("no Commons photos either"))
+        made = []
+        monkeypatch.setattr(footage, "image_clip", lambda im, sec, out, whole=False: made.append(im) or out)
+        img = tmp_path / "pollinations_abc.jpg"
+        img.write_bytes(b"x")
+        monkeypatch.setattr(imagegen, "generate", lambda *a, **k: img)
+        clip, note = footage.footage_for_line("Lalibela's church was carved from rock.", "rock church", 3.0, tmp_path, 0,
+                                              named_subject="Church of Saint George, Lalibela")
+        assert "AI image (pollinations)" in note and made == [img]
+        monkeypatch.setattr(imagegen, "generate", lambda *a, **k: None)
+        monkeypatch.setattr(footage, "generated_background", lambda out, sec, seed=0: out)
+        clip, note = footage.footage_for_line("x", "k", 3.0, tmp_path, 1)
+        assert note.startswith("generated background")
+    finally:
+        imagegen.override(None)

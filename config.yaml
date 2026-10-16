@@ -115,7 +115,8 @@ production:
   background_source: auto     # auto | pexels | generated
   ai_images:
     enabled: true
-    mode: fallback            # fallback = only when nothing on Pexels/Pixabay fits | compete = also when the best clip is a
+    mode: fallback            # only = every shot an AI image (produce --ai-images-only does this for one video) |
+                              # fallback = only when nothing on Pexels/Pixabay fits | compete = also when the best clip is a
                               # weak match: the image check judges both and the better one is used (needs vision on;
                               # never for real named places or people) | always = AI image for every line | never
     compete_below: 0.85       # compete: try an AI image when the best clip shows the line less than this
