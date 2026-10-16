@@ -125,12 +125,21 @@ def add_profile(url_or_handle: str, *, max_videos: int = 24, min_views: int = 10
                            "and the YouTube API fallback is not connected or failed. Try again in an hour, or set "
                            "discovery.cookies_from_browser (firefox) in config.yaml.")
     channel_name = shorts[0].get("channel") or handle
-    for s in shorts:
-        if judge.has_typesafe():
+    if judge.has_typesafe():
+        # 4 at a time with progress in the log: 150 Shorts one by one took minutes with nothing to show
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def one(s: dict[str, Any]) -> None:
             try:
                 s["judgment"] = judge.judge_short(s)
             except Exception as exc:  # noqa: BLE001
                 log.warning("judgment failed for %s: %s", s["id"], exc)
+
+        log.info("profile: judging %d Shorts with TypeSafe (format, topic, hook)", len(shorts))
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for n, _ in enumerate(as_completed([pool.submit(one, s) for s in shorts]), 1):
+                if n % 25 == 0 and n < len(shorts):
+                    log.info("profile: judged %d of %d", n, len(shorts))
     judged = [s for s in shorts if s.get("judgment")]
     if judge.has_typesafe() and len(judged) < max(1, len(shorts) // 2):
         # an empty profile (no formats, no topics) would replace a good one and produce nothing useful
