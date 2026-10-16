@@ -223,3 +223,38 @@ def test_hook_and_closing_line_show_the_main_named_subject(monkeypatch, tmp_path
     footage.plan_backgrounds(script, words, words[-1]["end"] + 0.5, "pexels", tmp_path)
     lalibela = "Church of Saint George, Lalibela"
     assert seen == [lalibela, lalibela, "", lalibela]     # hook, line 1, a generic line, closing line
+
+
+# ------------------------------------------------------------------ image check of the picked footage (vision.py)
+def test_images_are_prepared_within_typesafe_limits():
+    import io
+    from PIL import Image as PILImage
+    from shorts_pipeline import vision
+    for size in ((3000, 2000), (1080, 1920), (200, 150), (4000, 300)):
+        buf = io.BytesIO()
+        PILImage.new("RGB", size, "red").save(buf, "PNG")
+        w, h = PILImage.open(io.BytesIO(vision.prepare(buf.getvalue()))).size
+        assert 280 <= w <= 1568 and 280 <= h <= 1568, (size, (w, h))
+
+
+def _vision_mode(monkeypatch, mode, judged):
+    from shorts_pipeline import vision
+    monkeypatch.setattr(vision, "config", lambda: dict(vision.DEFAULTS, mode=mode))
+    monkeypatch.setattr(vision, "enabled", lambda: mode != "off")
+    monkeypatch.setattr(vision, "judge", lambda line, subject, pick, clip=None: judged[pick["id"]])
+
+
+def test_a_clip_the_image_check_rejects_makes_room_for_the_next(monkeypatch, tmp_path):
+    forest = {"id": "1", "kind": "video", "description": "volcano", "link": "x", "preview": "p1"}
+    ice = {"id": "2", "kind": "video", "description": "volcano", "link": "y", "preview": "p2"}
+    monkeypatch.setattr(footage, "video_candidates", lambda kw: [forest, ice])
+    monkeypatch.setattr(footage, "photo_candidates", lambda kw: [])
+    monkeypatch.setattr(footage, "choose", lambda line, kw, cands, strict=True, used=None: (cands[0], 0.9) if cands else (None, 0.0))
+    monkeypatch.setattr(footage, "_materialize", lambda pick, kind, sec, wd, i: tmp_path / f"{pick['id']}.mp4")
+    judged = {"1": {"shows": 0.9, "conflict": 0.8}, "2": {"shows": 0.8, "conflict": 0.1}}
+    _vision_mode(monkeypatch, "on", judged)
+    clip, note = footage.footage_for_line("Antarctica's volcano erupts through ice.", "antarctica volcano ice", 3.0, tmp_path, 0)
+    assert clip.name == "2.mp4" and "image check" in note
+    _vision_mode(monkeypatch, "log", judged)                        # log mode: judged, never rejected
+    clip, note = footage.footage_for_line("Antarctica's volcano erupts through ice.", "antarctica volcano ice", 3.0, tmp_path, 0)
+    assert clip.name == "1.mp4" and "would reject" in note

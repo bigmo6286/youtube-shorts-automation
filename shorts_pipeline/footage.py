@@ -64,7 +64,8 @@ def search_videos(keyword: str) -> list[dict[str, Any]]:
         if not files:
             continue
         out.append({"id": str(v["id"]), "kind": "video", "description": _slug_text(v.get("url", "")) or keyword,
-                    "duration": v.get("duration", 0), "link": files[0]["link"], "page": v.get("url", "")})
+                    "duration": v.get("duration", 0), "link": files[0]["link"], "page": v.get("url", ""),
+                    "preview": v.get("image") or ""})
     _SEARCH_CACHE.set(key, out)
     return out
 
@@ -86,7 +87,8 @@ def search_photos(keyword: str) -> list[dict[str, Any]]:
         log.warning("pexels photo search failed for %r: %s", keyword, exc)
         return []
     out = [{"id": str(p["id"]), "kind": "photo", "description": (p.get("alt") or _slug_text(p.get("url", "")) or keyword).strip(),
-            "link": (p.get("src") or {}).get("large2x") or (p.get("src") or {}).get("large"), "page": p.get("url", "")}
+            "link": (p.get("src") or {}).get("large2x") or (p.get("src") or {}).get("large"), "page": p.get("url", ""),
+            "preview": (p.get("src") or {}).get("large") or ""}
            for p in photos if (p.get("src") or {}).get("large2x") or (p.get("src") or {}).get("large")]
     _SEARCH_CACHE.set(key, out)
     return out
@@ -126,7 +128,7 @@ def search_pixabay_videos(keyword: str) -> list[dict[str, Any]]:
         shape = "vertical" if (f.get("height") or 0) >= (f.get("width") or 0) else "horizontal, cropped to vertical"
         out.append({"id": f"pb{h['id']}", "kind": "video", "source": "pixabay",
                     "description": f"{h.get('tags', keyword)} ({shape})", "duration": h.get("duration", 0),
-                    "link": f["url"], "page": h.get("pageURL", "")})
+                    "link": f["url"], "page": h.get("pageURL", ""), "preview": f.get("thumbnail") or ""})
     _SEARCH_CACHE.set(key, out)
     return out
 
@@ -137,7 +139,8 @@ def search_pixabay_photos(keyword: str) -> list[dict[str, Any]]:
     if cached is not None:
         return cached
     out = [{"id": f"pbp{h['id']}", "kind": "photo", "source": "pixabay", "description": h.get("tags", keyword),
-            "link": h.get("largeImageURL") or h.get("webformatURL"), "page": h.get("pageURL", "")}
+            "link": h.get("largeImageURL") or h.get("webformatURL"), "page": h.get("pageURL", ""),
+            "preview": h.get("webformatURL") or ""}
            for h in _pixabay("", {"q": keyword, "per_page": PIXABAY_PER_SEARCH, "image_type": "photo",
                                   "orientation": "vertical"}) if h.get("largeImageURL") or h.get("webformatURL")]
     _SEARCH_CACHE.set(key, out)
@@ -341,13 +344,17 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
     if named_subject:
         from . import commons
         pick, fit = commons.choose(line_text, named_subject, commons.search(named_subject), used=used)
+        if pick:
+            ok, seen = _looked_at(line_text, named_subject, pick)
+            pick = pick if ok else None
         clip = pick and photo_clip(pick["link"], pick["id"], seconds, work_dir / f"bg_{index}.mp4",
                                    whole=bool(pick.get("landscape")))
         if clip:
             used.add(pick["id"])
             if credits is not None:
                 credits.append(pick["credit"])
-            return clip, f"photo of {named_subject} '{pick['credit']['title'][:50]}' from Wikimedia Commons ({fit:.0%} match)"
+            return clip, (f"photo of {named_subject} '{pick['credit']['title'][:50]}' from Wikimedia Commons "
+                          f"({fit:.0%} match){seen}")
     from . import imagegen
 
     ai = imagegen.settings()
@@ -362,20 +369,40 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
         attempts.append((fallback_keyword, False))
     attempts.append((keyword, False))
     reuse: tuple[dict[str, Any], float, str, bool] | None = None    # a clip already in this Short: last resort only
+    from . import vision
+    checks_left = int(vision.config()["max_checks"]) if vision.enabled() else 0
+    subject = named_subject or keyword
     for kw, strict in attempts:
         for kind, cands in (("video", video_candidates(kw)), ("photo", photo_candidates(kw))):
-            pick, fit = choose(line_text, kw, cands, strict=strict, used=used)
-            if not pick or fit < MIN_FIT:
-                continue
-            if pick["id"] in used:
-                reuse = reuse or (pick, fit, kw, strict)
-                continue
-            clip = _materialize(pick, kind, seconds, work_dir, index)
-            if clip:
+            rejected: set[str] = set()
+            while True:
+                pool = [c for c in cands if c["id"] not in rejected]
+                pick, fit = choose(line_text, kw, pool, strict=strict, used=used)
+                if not pick or fit < MIN_FIT:
+                    break
+                if pick["id"] in used:
+                    reuse = reuse or (pick, fit, kw, strict)
+                    break
+                seen = ""
+                if checks_left and (pick.get("preview") or kind == "photo"):     # look before downloading
+                    checks_left -= 1
+                    ok, seen = _looked_at(line_text, subject, pick)
+                    if not ok:
+                        rejected.add(pick["id"])
+                        continue
+                clip = _materialize(pick, kind, seconds, work_dir, index)
+                if not clip:
+                    break
+                if checks_left and not seen:                                    # no preview: a frame of the clip
+                    checks_left -= 1
+                    ok, seen = _looked_at(line_text, subject, pick, clip)
+                    if not ok:
+                        rejected.add(pick["id"])
+                        continue
                 used.add(pick["id"])
                 src = " on Pixabay" if pick.get("source") == "pixabay" else ""
                 return clip, (f"{kind} '{pick['description'][:60]}'{src} ({fit:.0%} "
-                              f"{'literal' if strict else 'same-subject'} fit, '{kw}')")
+                              f"{'literal' if strict else 'same-subject'} fit, '{kw}'){seen}")
     if reuse and not ai_on:
         pick, fit, kw, strict = reuse
         clip = _materialize(pick, pick.get("kind", "video"), seconds, work_dir, index)
@@ -388,6 +415,24 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
             return clip, f"AI image ({ai['provider']}) for '{keyword}' (nothing on Pexels matched)"
     clip = generated_background(work_dir / f"bg_{index}.mp4", seconds + 0.5, seed=index)
     return clip, f"generated background (nothing on Pexels matched '{keyword}' or '{fallback_keyword}')"
+
+
+def _looked_at(line_text: str, subject: str, pick: dict[str, Any], clip: Path | None = None) -> tuple[bool, str]:
+    """The image check (vision.py): (use it?, note for the log). In log mode it never rejects."""
+    from . import vision
+    if not vision.enabled():
+        return True, ""
+    result = vision.judge(line_text, subject, pick, clip)
+    if result is None:
+        return True, " · image check unavailable"
+    ok = vision.verdict(result)
+    note = f" · image check: shows {result['shows']:.0%}, contradicts {result['conflict']:.0%}"
+    if not ok and vision.config()["mode"] == "log":
+        log.info("image check would reject %s '%s'%s", pick["id"], pick.get("description", "")[:60], note)
+        return True, note + " (would reject)"
+    if not ok:
+        log.info("image check rejected %s '%s'%s", pick["id"], pick.get("description", "")[:60], note)
+    return ok, note
 
 
 def _materialize(pick: dict[str, Any], kind: str, seconds: float, work_dir: Path, index: int) -> Path | None:

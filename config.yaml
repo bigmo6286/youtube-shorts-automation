@@ -78,6 +78,13 @@ production:
     enabled: true             # 48 h after publishing, a Short in the bottom third gets its best alternative title once
     after_hours: 48
     max_per_sync: 2
+  vision:                     # look at the footage the text check picked (TypeSafe images, experimental)
+    mode: "off"               # off | log (judge and log, never reject) | on (a clip that does not show the line's
+                              # subject or contradicts its setting is replaced by the next candidate)
+    model: jev-1.14.0
+    min_shows: 0.5            # P(the frame shows what the line is about) needed to keep a clip
+    max_conflict: 0.5         # P(it shows a contradicting setting, place or animal) that rejects a clip
+    max_checks: 3             # image checks per line, about 4,000 input tokens each
   reference_images:           # real photos of the specific landmark, person, ship or artwork a line is about,
     enabled: true             # from Wikimedia Commons (free licences); each photo used is credited in the description
     min_match: 0.7            # how sure TypeSafe must be that the photo shows that very thing

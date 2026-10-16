@@ -605,6 +605,32 @@ def cmd_comments(args) -> None:
         comments.dismiss(args.target or "")
 
 
+def cmd_vision_check(args) -> None:
+    """Compare the text-only footage picks of existing Shorts with what TypeSafe sees in them."""
+    from . import vision
+    from .config import has_typesafe
+    if not has_typesafe():
+        sys.exit("Needs TYPESAFE_API_KEY.")
+    dirs = ([OUTPUT_DIR / d for d in args.dirs] if args.dirs else
+            sorted((d for d in OUTPUT_DIR.iterdir() if d.is_dir() and (d / "meta.json").exists()), reverse=True))
+    checked = 0
+    for d in dirs:
+        rows = vision.audit(d)
+        if not rows:
+            continue
+        checked += 1
+        print(f"\n{(load_json(d / 'meta.json') or {}).get('title', d.name)}  ({d.name})")
+        for r in rows:
+            res = r["result"]
+            mark = "?" if res is None else ("ok " if r["passes"] else "BAD")
+            detail = "no frame" if res is None else f"shows {res['shows']:.0%}, contradicts {res['conflict']:.0%}"
+            print(f"  {mark} shot {r['shot']}: {detail}  [{r['subject'][:40]}]  {r['line'][:70]}")
+        if checked >= args.limit:
+            break
+    if not checked:
+        print("No Short with its clips still on disk (uploaded Shorts lose them; check new ones before upload).")
+
+
 def cmd_backup(args) -> None:
     from . import backup
     action = getattr(args, "action", "now") or "now"
@@ -1051,6 +1077,11 @@ def build_parser() -> argparse.ArgumentParser:
     cm.add_argument("target", nargs="?")
     cm.add_argument("--text")
     cm.set_defaults(func=cmd_comments)
+
+    vc = sub.add_parser("vision-check", help="look at the footage of existing Shorts with TypeSafe images (compare with the text-only picks)")
+    vc.add_argument("dirs", nargs="*", help="output folder names (default: the newest Shorts whose clips are on disk)")
+    vc.add_argument("--limit", type=int, default=3)
+    vc.set_defaults(func=cmd_vision_check)
 
     bk = sub.add_parser("backup", help="back up what the engine learned (nightly by itself): now | list | restore <zip>")
     bk.add_argument("action", nargs="?", default="now", choices=["now", "list", "restore"])
