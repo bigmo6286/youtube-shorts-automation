@@ -237,9 +237,9 @@ class Scheduler:
 
     def _update_history_statuses(self) -> None:
         for h in self.state.get("history", []):
-            if h.get("status") in ("queued", "running") and h.get("job"):
+            if h.get("status") in ("queued", "running", "stopping") and h.get("job"):
                 status = self._job_status(h["job"])
-                if status and status not in ("queued", "running"):
+                if status and status not in ("queued", "running", "stopping"):
                     h["status"] = status
 
     def tick(self, now: datetime | None = None) -> None:

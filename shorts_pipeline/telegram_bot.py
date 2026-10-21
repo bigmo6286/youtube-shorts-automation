@@ -9,6 +9,7 @@ Commands:
   /drafts            comment reply drafts, numbered    /reply N [text]   post draft N (optionally edited)
   /dismiss N         drop draft N                      /report      the daily report now
   /pause, /resume    stop or restart scheduled production
+  /stop              stop the job running right now
 If two machines share one bot token, each sees only some messages: give each machine its own bot.
 """
 from __future__ import annotations
@@ -128,6 +129,13 @@ def handle(text: str) -> str:
     if cmd == "/report":
         from .alerts import daily_report
         return daily_report()
+    if cmd == "/stop":
+        from .web import server
+        if server._CURRENT is None:
+            return "Nothing is running."
+        kind = server._CURRENT.kind
+        server.stop_job()
+        return f"Stopping the {kind} job."
     if cmd in ("/pause", "/resume"):
         from .config import save_local_config
         save_local_config({"schedule": {"enabled": cmd == "/resume"}})

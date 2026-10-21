@@ -90,3 +90,37 @@ def test_stop_note_ends_the_watchdog_and_start_clears_it(tmp_path, monkeypatch):
     watchdog.STOP_FLAG.write_text("x")
     watchdog.start(8799)
     assert not watchdog.STOP_FLAG.exists() and started == ["watchdog"]
+
+
+def test_stop_button_ends_a_running_job_and_frees_the_console(monkeypatch, tmp_path):
+    import time
+    from shorts_pipeline.web import server
+    monkeypatch.setattr(server, "_persist_job", lambda job: None)
+    monkeypatch.setattr(server, "OUTPUT_DIR", tmp_path)
+    reached_end = []
+
+    def forever(args):
+        for _ in range(600):              # plain Python work: the Stop lands between two steps
+            time.sleep(0.05)
+        reached_end.append(True)
+    monkeypatch.setitem(server.COMMANDS, "test_forever", forever)
+    monkeypatch.setitem(server.COMMANDS, "test_quick", lambda args: "ok")
+    job = server.submit_job("test_forever", {"scheduled": True})
+    for _ in range(100):
+        if server._CURRENT is not None and server._CURRENT.status == "running":
+            break
+        time.sleep(0.02)
+    server.stop_job(job["id"])
+    j = server.JOBS[job["id"]]
+    for _ in range(200):
+        if j.finished:
+            break
+        time.sleep(0.05)
+    assert j.status == "stopped" and not reached_end and server._CURRENT is None
+    nxt = server.submit_job("test_quick", {})                       # the console takes the next job
+    assert nxt is not None
+    for _ in range(100):
+        if server.JOBS[nxt["id"]].finished:
+            break
+        time.sleep(0.02)
+    assert server.JOBS[nxt["id"]].status == "done"

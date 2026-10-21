@@ -157,9 +157,13 @@ async function pollJob() {
   $("#jobstatus").textContent = `${j.kind}: ${j.status}`;
   const pill = $("#jobpill");
   pill.classList.remove("hidden"); pill.textContent = `${j.kind} · ${j.status}`; pill.className = `pill ${j.status}`;
-  if (j.status === "running" || j.status === "queued") { setTimeout(pollJob, 1500); return; }
+  const stopBtn = $("#jobstop");
+  stopBtn.dataset.job = j.id; stopBtn.dataset.kind = j.kind;
+  stopBtn.classList.toggle("hidden", j.status !== "running");
+  if (j.status === "running" || j.status === "queued" || j.status === "stopping") { setTimeout(pollJob, 1500); return; }
   if (j.log_file) $("#logfile").textContent = `saved: ${j.log_file.split(/[\\/]/).slice(-2).join("/")}`;
-  if (j.error) toast(`${j.kind} failed: ${j.error.split("\n")[0]}`, true); else toast(`${j.kind} finished`);
+  if (j.status === "stopped") toast(`${j.kind} stopped`);
+  else if (j.error) toast(`${j.kind} failed: ${j.error.split("\n")[0]}`, true); else toast(`${j.kind} finished`);
   state.job = null;
   setTimeout(() => pill.classList.add("hidden"), 6000);
   loadStatus(); loadRuns(); loadJobPicker();
@@ -168,6 +172,12 @@ async function pollJob() {
   if (j.kind === "channel") { loadSchedule(); loadOutputs(); }
   if (j.kind === "profile") loadProfiles();
 }
+$("#jobstop").addEventListener("click", async () => {
+  const b = $("#jobstop");
+  if (!confirm(`Stop this ${b.dataset.kind} job now?\n\nWhatever it has half made is discarded. A scheduled run that you stop is not retried.`)) return;
+  try { await api(`/api/jobs/${b.dataset.job}/stop`, { method: "POST" }); toast("Stopping..."); b.classList.add("hidden"); }
+  catch (e) { toast(e.message, true); }
+});
 async function loadJobPicker() {
   const jobs = await api("/api/jobs");
   const logs = await api("/api/logs");

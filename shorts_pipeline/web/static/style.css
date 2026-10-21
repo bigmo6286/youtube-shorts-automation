@@ -14,6 +14,7 @@ h2 { margin: 0 0 10px; font-size: 16px; } h3 { margin: 16px 0 6px; font-size: 13
 nav button { background: none; border: 0; color: var(--muted); padding: 8px 12px; cursor: pointer; border-radius: 6px; font-size: 14px; }
 nav button.active, nav button:hover { color: var(--text); background: var(--panel2); }
 .pill { margin-left: auto; padding: 4px 10px; border-radius: 999px; font-size: 12px; background: var(--panel2); }
+.pill.running, .pill.stopping { background: #2b2a12; color: var(--accent); } .pill.stopped { background: #2a2a2a; color: var(--muted, #aaa); }
 .pill.running { background: #2b2a12; color: var(--accent); } .pill.done { background: #12301f; color: var(--ok); } .pill.error { background: #3a1a1a; color: var(--danger); }
 
 main { padding: 20px; max-width: 1400px; margin: 0 auto; }

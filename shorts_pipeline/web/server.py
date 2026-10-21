@@ -99,8 +99,14 @@ def _mask(value: str) -> str:
 
 # ------------------------------------------------------------------------------------ jobs
 
+class JobStopped(BaseException):
+    """Raised inside a job's thread by Stop. BaseException, so the pipeline's many `except Exception` blocks (which
+    keep a render going past a failed download) cannot swallow it."""
+
+
 class Job:
     def __init__(self, kind: str, params: dict[str, Any]):
+        self.thread_id: int | None = None
         self.id = uuid.uuid4().hex[:10]
         self.kind = kind
         self.params = params
@@ -240,12 +246,16 @@ def _run_job(job: Job) -> None:
     if root.level > logging.INFO:
         root.setLevel(logging.INFO)
     job.status = "running"
+    job.thread_id = threading.get_ident()
     _CURRENT = job
     try:
         with contextlib.redirect_stdout(_JobStdout(job)):
             result = COMMANDS[job.kind](_args(job))
         job.result = str(result) if result is not None else None
         job.status = "done"
+    except JobStopped:
+        job.status = "stopped"
+        job.log.append("STOPPED: you stopped this job; anything it had half made was discarded")
     except SystemExit as exc:            # cli functions use sys.exit for user-facing failures
         job.error = str(exc)
         job.status = "error"
@@ -256,14 +266,100 @@ def _run_job(job: Job) -> None:
         job.log.append(f"ERROR: {job.error}")
         job.log.extend(traceback.format_exc().rstrip().splitlines())
     finally:
+        _cancel_async_stop(job)          # a Stop that arrives as the job ends must not hit this cleanup
         job.finished = time.time()
         root.removeHandler(handler)
         _CURRENT = None
         _MACHINE.release()
         _JOB_LOCK.release()
+        if job.status == "stopped":
+            _discard_half_made(job)
         _persist_job(job)
         if job.status == "error":
             threading.Thread(target=_alert_failure, args=(job,), daemon=True).start()
+
+
+def _async_raise(thread_id: int, exc: type[BaseException] | None) -> None:
+    import ctypes
+    ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_id), ctypes.py_object(exc) if exc else None)
+
+
+def _cancel_async_stop(job: Job) -> None:
+    if job.thread_id and getattr(job, "stop_requested", False):
+        _async_raise(job.thread_id, None)
+
+
+def _kill_job_children(job: Job) -> int:
+    """End the programs this job started (ffmpeg renders, the Claude writer...). A thread blocked waiting for one of
+    them only sees the Stop once it has ended."""
+    try:
+        import psutil
+    except ImportError:
+        return 0
+    killed = []
+    for child in psutil.Process().children(recursive=True):
+        try:
+            if child.create_time() >= job.started - 1:
+                child.kill()
+                killed.append(child)
+        except psutil.Error:
+            pass
+    return len(killed)
+
+
+def _discard_half_made(job: Job) -> None:
+    """A stopped production leaves a folder with clips and a voice but no meta.json: nothing to show, only disk."""
+    if job.kind != "produce" or not OUTPUT_DIR.exists():
+        return
+    for d in OUTPUT_DIR.iterdir():
+        try:
+            if d.is_dir() and d.stat().st_ctime >= job.started - 1 and not (d / "meta.json").exists():
+                import shutil
+                shutil.rmtree(d, ignore_errors=True)
+                job.log.append(f"removed the half-made folder {d.name}")
+        except OSError:
+            pass
+
+
+def stop_job(job_id: str | None = None) -> dict[str, Any]:
+    """Stop the running job (by id, or whatever runs when None)."""
+    job = _CURRENT
+    if job is None or (job_id and job.id != job_id):
+        raise HTTPException(409, "that job is not running any more")
+    if job.status != "running" or not job.thread_id:
+        return {"stopping": job.id, "status": job.status}
+    job.stop_requested = True
+    job.status = "stopping"
+    job.log.append("stopping: ending the job and the programs it started...")
+    _async_raise(job.thread_id, JobStopped)
+    killed = _kill_job_children(job)
+
+    def guard() -> None:                 # the job thread died without its cleanup: free the console anyway
+        global _CURRENT
+        for _ in range(240):
+            time.sleep(1)
+            if job.finished:
+                return
+            if not any(t.ident == job.thread_id for t in threading.enumerate()):
+                break
+        else:
+            return
+        if _CURRENT is job:
+            job.status, job.finished = "stopped", time.time()
+            _CURRENT = None
+            for release in (_MACHINE.release, _JOB_LOCK.release):
+                try:
+                    release()
+                except Exception:  # noqa: BLE001
+                    pass
+    threading.Thread(target=guard, name="stop-guard", daemon=True).start()
+    log.info("job %s (%s) stopped by the owner; %d helper programs ended", job.id, job.kind, killed)
+    return {"stopping": job.id, "helpers_ended": killed}
+
+
+@app.post("/api/jobs/{job_id}/stop")
+def stop_job_endpoint(job_id: str) -> dict[str, Any]:
+    return stop_job(job_id)
 
 
 # Problems that need the owner even when they started the job themselves (it will keep failing until fixed).
