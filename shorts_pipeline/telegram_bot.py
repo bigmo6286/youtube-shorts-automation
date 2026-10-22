@@ -4,6 +4,7 @@ The console polls the bot for messages and obeys only the configured TELEGRAM_CH
 Commands:
   /status            schedule, queue and what was learned
   /queue             Shorts waiting to upload, best first
+  /videos            Shorts made but not on YouTube yet, numbered     /upload N   upload video N now
   /uploads           the latest uploads, numbered, with their privacy or publish time
   /publish N         make upload N public now          /private N   keep upload N private (cancels its publish time)
   /drafts            comment reply drafts, numbered    /reply N [text]   post draft N (optionally edited)
@@ -57,6 +58,52 @@ def _uploads(n: int = 8) -> list[tuple[Any, dict[str, Any]]]:
     return rows
 
 
+def _not_uploaded(n: int = 10) -> list[tuple[Any, dict[str, Any]]]:
+    """Newest first: Shorts with a video file that are not on YouTube (queued, waiting for review, expired...)."""
+    rows = []
+    if OUTPUT_DIR.exists():
+        for d in sorted(OUTPUT_DIR.iterdir(), reverse=True):
+            meta = load_json(d / "meta.json") if d.is_dir() else None
+            if meta and not meta.get("youtube_id") and (d / "short.mp4").exists():
+                rows.append((d, meta))
+            if len(rows) >= n:
+                break
+    return rows
+
+
+STATE_LABELS = {"queued": "in the upload queue", "review": "waiting for your review", "expired": "not uploaded (waited too long)",
+                "failed": "upload failed earlier"}
+
+
+def _report_upload(job_id: str, title: str, folder: Any) -> None:
+    """Tell the owner how an upload started from Telegram ended."""
+    from .web import server
+    job = server.JOBS.get(job_id)
+    for _ in range(3600):                       # an upload of a long video can take a while
+        if job is None or job.finished:
+            break
+        time.sleep(2)
+    if job is None:
+        return
+    if job.status == "done":
+        meta = load_json(folder / "meta.json") or {}
+        vid = meta.get("youtube_id")
+        when = ""
+        if meta.get("publish_at") and meta.get("privacy") == "private":
+            from datetime import datetime
+            when = ", goes public " + datetime.fromisoformat(meta["publish_at"].replace("Z", "+00:00")).astimezone().strftime("%a %H:%M")
+        text = (f"✅ Uploaded: {title[:80]}\nhttps://youtube.com/shorts/{vid} ({meta.get('privacy', 'private')}{when})"
+                if vid else f"Upload of {title[:80]} finished, but no YouTube id was recorded; check the console.")
+    elif job.status == "stopped":
+        text = f"Upload of {title[:80]} was stopped."
+    else:
+        text = f"❌ Upload of {title[:80]} failed: {(job.error or 'unknown error')[:300]}"
+    try:
+        _say(text)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("telegram reply failed: %s", exc)
+
+
 def _status() -> str:
     from . import upload_queue
     from .scheduler import schedule_config, _tuning_summary
@@ -98,6 +145,31 @@ def handle(text: str) -> str:
                 return "goes public " + datetime.fromisoformat(m["publish_at"].replace("Z", "+00:00")).astimezone().strftime("%a %H:%M")
             return m.get("privacy", "?")
         return "\n".join(f"{i}. {m['title'][:60]} [{when(m)}]" for i, (_, m) in enumerate(rows, 1)) or "No uploads yet."
+    if cmd == "/videos":
+        rows = _not_uploaded()
+        state["ready"] = [d.name for d, _ in rows]
+        save_json(STATE_PATH, state)
+        return ("\n".join(f"{i}. {m['title'][:60]} [{STATE_LABELS.get(m.get('upload_state'), 'not uploaded')}"
+                           + (f", priority {m['upload_priority']}" if m.get("upload_priority") is not None else "") + "]"
+                           for i, (_, m) in enumerate(rows, 1))
+                + "\n\nSend /upload N to upload one now.") if rows else "Every video made is already on YouTube."
+    if cmd == "/upload":
+        names = state.get("ready") or []
+        if not arg.isdigit() or not 1 <= int(arg) <= len(names):
+            return "Send /videos first, then /upload N."
+        d = OUTPUT_DIR / names[int(arg) - 1]
+        meta = load_json(d / "meta.json") or {}
+        if meta.get("youtube_id"):
+            return f"{meta.get('title', '')[:70]} is already on YouTube: https://youtube.com/shorts/{meta['youtube_id']}"
+        if not (d / "short.mp4").exists():
+            return "That video's file is gone (deleted or cleaned up); it cannot be uploaded."
+        from .web import server
+        job = server.submit_job("upload", {"path": f"output/{d.name}"})
+        if job is None:
+            running = server._CURRENT.kind if server._CURRENT else "another"
+            return f"Busy: a {running} job is running. Try again when it is done, or send /stop."
+        threading.Thread(target=_report_upload, args=(job["id"], meta.get("title", d.name), d), daemon=True).start()
+        return f"Uploading {meta.get('title', d.name)[:70]}... I'll message you when it is on YouTube."
     if cmd in ("/publish", "/private"):
         names = state.get("uploads") or []
         if not arg.isdigit() or not 1 <= int(arg) <= len(names):

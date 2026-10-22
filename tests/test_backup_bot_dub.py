@@ -73,3 +73,25 @@ def test_english_fallback_voice_is_never_used_for_a_dub(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError):
         tts.synthesize("Hola.", tmp_path / "v.mp3", voice="es-MX-JorgeNeural")
     assert tts.synthesize("Hi.", tmp_path / "v.mp3", voice="en-US-AndrewNeural")[0]["text"] == "x"
+
+
+def test_bot_lists_videos_not_on_youtube_and_uploads_one(tmp_path, monkeypatch):
+    from shorts_pipeline.web import server
+    monkeypatch.setattr(telegram_bot, "STATE_PATH", tmp_path / "bot.json")
+    out = tmp_path / "out"
+    for name, meta in (("2026-10-22T09-00-00Z_a", {"title": "Deep Sea Glow", "upload_state": "queued", "upload_priority": 72}),
+                       ("2026-10-22T08-00-00Z_b", {"title": "Already Up", "youtube_id": "YT9"})):
+        (out / name).mkdir(parents=True)
+        (out / name / "short.mp4").write_bytes(b"x")
+        save_json(out / name / "meta.json", meta)
+    monkeypatch.setattr(telegram_bot, "OUTPUT_DIR", out)
+    listing = telegram_bot.handle("/videos")
+    assert "1. Deep Sea Glow [in the upload queue, priority 72]" in listing and "Already Up" not in listing
+    started = []
+    monkeypatch.setattr(server, "submit_job", lambda kind, params: started.append((kind, params)) or {"id": "j1"})
+    monkeypatch.setattr(telegram_bot, "_report_upload", lambda *a: None)
+    assert "Uploading Deep Sea Glow" in telegram_bot.handle("/upload 1")
+    assert started == [("upload", {"path": "output/2026-10-22T09-00-00Z_a"})]
+    monkeypatch.setattr(server, "submit_job", lambda kind, params: None)
+    assert "Busy" in telegram_bot.handle("/upload 1")
+    assert "/videos first" in telegram_bot.handle("/upload 9")
