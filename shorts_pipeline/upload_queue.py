@@ -262,6 +262,8 @@ def enqueue(out_dir: Path) -> dict[str, Any]:
     meta = load_json(out_dir / "meta.json") or meta          # re-read: scoring took a moment
     meta.update({"upload_state": "queued", "queued_at": time.time(), "upload_priority": pr["priority"],
                  "priority_parts": pr["parts"]})
+    if approval_config()["enabled"]:
+        meta["approval"], meta["approval_asked_at"] = "pending", time.time()
     save_json(out_dir / "meta.json", meta)
     rank, total = position(out_dir.name)
     log.info("upload queue: priority %d/100 (%s), #%d of %d waiting", pr["priority"],
@@ -281,7 +283,8 @@ def queued() -> list[dict[str, Any]]:
         meta = load_json(d / "meta.json")
         if meta and meta.get("upload_state") == "queued" and not meta.get("youtube_id") and (d / "short.mp4").exists():
             items.append({"dir": d.name, "path": d, "priority": int(meta.get("upload_priority") or 0),
-                          "queued_at": float(meta.get("queued_at") or d.stat().st_mtime), "title": meta.get("title", "")})
+                          "queued_at": float(meta.get("queued_at") or d.stat().st_mtime), "title": meta.get("title", ""),
+                          "approval": meta.get("approval"), "approval_asked_at": float(meta.get("approval_asked_at") or 0)})
     items.sort(key=lambda x: (-x["priority"], -x["queued_at"]))
     return items
 
@@ -328,10 +331,36 @@ def next_upload(now: float | None = None) -> tuple[dict[str, Any] | None, str]:
     from .upload import TOKEN_PATH
     if not TOKEN_PATH.exists():
         return None, "YouTube is not signed in (upload once from a card to sign in)"
+    pending = 0
     for it in queued():
-        if it["priority"] >= int(cfg["min_priority"]):
-            return it, ""
-    return None, "nothing waiting above the minimum priority"
+        if it["priority"] < int(cfg["min_priority"]):
+            continue
+        if it.get("approval") == "pending":
+            acfg = approval_config()
+            if acfg["auto_approve_on_timeout"] and now - it["approval_asked_at"] >= float(acfg["timeout_hours"]) * 3600:
+                set_approval(it["path"], "approved", "no answer within the time limit")
+            else:
+                pending += 1
+                continue
+        return it, ""
+    return None, (f"{pending} waiting for your approval (Telegram)" if pending else "nothing waiting above the minimum priority")
+
+
+def approval_config() -> dict[str, Any]:
+    cfg = {"enabled": False, "timeout_hours": 12, "auto_approve_on_timeout": True}
+    cfg.update(((load_config().get("upload") or {}).get("approval")) or {})
+    return cfg
+
+
+def set_approval(out_dir: Path, decision: str, note: str = "") -> dict[str, Any]:
+    """approved: the Short uploads in its turn; rejected: it stays on this computer, never auto-uploaded."""
+    meta = load_json(out_dir / "meta.json") or {}
+    meta["approval"] = decision
+    meta["approval_note"] = note
+    if decision == "rejected":
+        meta["upload_state"] = "rejected"
+    save_json(out_dir / "meta.json", meta)
+    return meta
 
 
 def mark_started() -> None:

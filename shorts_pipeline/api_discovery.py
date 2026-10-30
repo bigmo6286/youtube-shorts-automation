@@ -65,6 +65,11 @@ def _get(path: str, **params) -> dict[str, Any]:
     global _SERVICE
     key = env("YOUTUBE_API_KEY")
     from .upload import with_retries
+    try:
+        from .usage import record
+        record(youtube_units=100 if path == "search" else 1)
+    except Exception:  # noqa: BLE001
+        pass
     if key:
         def call():
             r = requests.get(f"{API}/{path}", params={**params, "key": key}, timeout=30)

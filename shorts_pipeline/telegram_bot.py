@@ -9,6 +9,7 @@ Commands:
   /publish N         make upload N public now          /private N   keep upload N private (cancels its publish time)
   /drafts            comment reply drafts, numbered    /reply N [text]   post draft N (optionally edited)
   /dismiss N         drop draft N                      /report      the daily report now
+  /approve N, /reject N   decide a Short waiting for approval (numbers from /videos); the buttons under a video do the same
   /pause, /resume    stop or restart scheduled production
   /stop              stop the job running right now
 If two machines share one bot token, each sees only some messages: give each machine its own bot.
@@ -102,6 +103,26 @@ def _report_upload(job_id: str, title: str, folder: Any) -> None:
         _say(text)
     except Exception as exc:  # noqa: BLE001
         log.warning("telegram reply failed: %s", exc)
+
+
+def _decide(d: Any, decision: str) -> str:
+    from . import upload_queue
+    meta = load_json(d / "meta.json") or {}
+    if not meta:
+        return "That Short is gone."
+    if meta.get("youtube_id"):
+        return f"{meta.get('title', '')[:60]} is already on YouTube."
+    upload_queue.set_approval(d, decision, "decided on Telegram")
+    if decision == "approved":
+        return f"✅ Approved: {meta.get('title', '')[:70]} uploads in its turn."
+    return f"❌ Rejected: {meta.get('title', '')[:70]} stays on this computer and is not uploaded (delete it from its card if you want)."
+
+
+def _decide_from_button(data: str) -> str:
+    action, _, name = data.partition(":")
+    if action not in ("approve", "reject") or not name or "/" in name or "\\" in name:
+        return "Unknown button."
+    return _decide(OUTPUT_DIR / name, "approved" if action == "approve" else "rejected")
 
 
 def _status() -> str:
@@ -208,6 +229,11 @@ def handle(text: str) -> str:
         kind = server._CURRENT.kind
         server.stop_job()
         return f"Stopping the {kind} job."
+    if cmd in ("/approve", "/reject"):
+        names = state.get("ready") or []
+        if not arg.isdigit() or not 1 <= int(arg) <= len(names):
+            return "Send /videos first, then /approve N or /reject N."
+        return _decide(OUTPUT_DIR / names[int(arg) - 1], "approved" if cmd == "/approve" else "rejected")
     if cmd in ("/pause", "/resume"):
         from .config import save_local_config
         save_local_config({"schedule": {"enabled": cmd == "/resume"}})
@@ -225,7 +251,7 @@ def _loop() -> None:
         state = load_json(STATE_PATH) or {}
         try:
             r = requests.get(_api("getUpdates"), params={"offset": state.get("offset", 0), "timeout": 50,
-                                                          "allowed_updates": '["message"]'}, timeout=70)
+                                                          "allowed_updates": '["message","callback_query"]'}, timeout=70)
             updates = r.json().get("result", []) if r.ok else []
         except Exception as exc:  # noqa: BLE001
             log.debug("telegram poll failed: %s", exc)
@@ -235,6 +261,20 @@ def _loop() -> None:
             state = load_json(STATE_PATH) or {}
             state["offset"] = u["update_id"] + 1
             save_json(STATE_PATH, state)
+            cq = u.get("callback_query")
+            if cq:
+                chat = str(((cq.get("message") or {}).get("chat") or {}).get("id"))
+                if chat == str(env("TELEGRAM_CHAT_ID")):
+                    try:
+                        reply = _decide_from_button(cq.get("data") or "")
+                    except Exception as exc:  # noqa: BLE001
+                        reply = f"That failed: {str(exc)[:200]}"
+                    try:
+                        requests.post(_api("answerCallbackQuery"), json={"callback_query_id": cq["id"], "text": reply[:180]}, timeout=20)
+                        _say(reply)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("telegram reply failed: %s", exc)
+                continue
             msg = u.get("message") or {}
             if str((msg.get("chat") or {}).get("id")) != str(env("TELEGRAM_CHAT_ID")):
                 continue                                   # only the owner's chat may give commands

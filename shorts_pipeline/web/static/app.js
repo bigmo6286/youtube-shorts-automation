@@ -65,6 +65,7 @@ async function loadStatus() {
     card("Produced", s.outputs > 0, `${s.outputs} Shorts`),
     card("Scheduler", s.schedule && s.schedule.enabled, s.schedule && s.schedule.enabled
       ? `${s.schedule.done_today} made today${s.schedule.skipped_today ? `, ${s.schedule.skipped_today} skipped` : ""}${s.schedule.next && s.schedule.next[0] ? `, next ${s.schedule.next[0].kind} ${s.schedule.next[0].time}` : ""}` : "off (Settings)"),
+    card("Today's usage", true, s.usage_text || "nothing yet"),
   ].join("");
   const inst = $("#installffmpeg");
   if (inst) inst.addEventListener("click", () => startJob("setup_ffmpeg"));
@@ -261,6 +262,9 @@ async function loadOutputs(afterStatusSync = false) {
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
         ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}${o.fact_check ? ` · facts: ${esc(o.fact_check.summary)}` : ""}</div>` : ""}
         ${o.upload_state === "review" && o.review_reason ? `<span class="tag warn" title="${esc(o.review_reason)}">held for review: ${esc(o.review_reason.slice(0, 80))}</span>` : ""}
+        ${o.render_check && o.render_check.issues && o.render_check.issues.length ? `<span class="tag warn" title="final-render check">render: ${esc(o.render_check.issues.join("; "))}</span>` : ""}
+        ${o.approval === "pending" && !o.youtube_id ? `<span class="tag warn">waiting for your approval (Telegram)</span>` : ""}
+        ${o.upload_state === "rejected" ? `<span class="tag warn">rejected: not uploaded</span>` : ""}
         <details><summary>Script</summary><p>${esc(o.script_text)}</p></details>
         ${o.original_text ? `<details><summary>Your original</summary><p class="muted">${esc(o.original_text)}</p></details>` : ""}
         <details><summary>Description &amp; hashtags</summary><p class="pre">${esc(o.description)}</p><p>${esc(tagLine(o))}</p></details>

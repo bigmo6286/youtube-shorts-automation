@@ -473,7 +473,8 @@ def cmd_produce(args) -> Path:
     music_cfg = dict(cfg.get("music") or {})
     if "music_volume_db" in cfg and "volume_db" not in music_cfg:      # older config.yaml
         music_cfg["volume_db"] = cfg["music_volume_db"]
-    track = music.pick_track(getattr(args, "music", None) or music_cfg.get("default", "random"))
+    track = (music.pick_for_script(script, getattr(args, "music", None) or music_cfg.get("default", "random"))
+             if music_cfg.get("pick", "mood") == "mood" else music.pick_track(getattr(args, "music", None) or music_cfg.get("default", "random")))
     description = script["description"]
     if track:
         log.info("music: %s (%s%s)", track["file"], track["license"], f", by {track['creator']}" if track.get("creator") else "")
@@ -486,6 +487,22 @@ def cmd_produce(args) -> Path:
         block = fc.sources_block(script["fact_check"])
         if block:
             description = description.rstrip() + "\n\n" + block
+    if long_video and lv_cfg.get("chapters", True) and words:
+        chapters = script_gen.chapters_for(script, cfg.get("script_backend", "auto"))
+        if len(chapters) >= 3:
+            counts = [len((script.get("hook") or "").split()), *[len(ln["text"].split()) for ln in script.get("lines") or []]]
+            starts = [sum(counts[:i]) for i in range(len(counts))]
+            stamps = []
+            for title_c, line in chapters:
+                wi = starts[line] if line < len(starts) else None
+                t = 0.0 if line == 0 or wi is None or wi >= len(words) else float(words[wi]["start"])
+                stamps.append((t, title_c))
+            stamps = [(t, c) for i, (t, c) in enumerate(stamps) if i == 0 or t - stamps[i - 1][0] >= 10]   # YouTube: >= 10 s each
+            if len(stamps) >= 3:
+                stamps[0] = (0.0, stamps[0][1])
+                description = description.rstrip() + "\n\nChapters:\n" + "\n".join(
+                    f"{int(t // 60)}:{int(t % 60):02d} {c}" for t, c in stamps)
+                log.info("chapters: %d", len(stamps))
     if photo_credits:
         from .commons import credit_line
         description = description.rstrip() + "\n\n" + credit_line(photo_credits)     # what CC BY / BY-SA ask for
@@ -502,6 +519,17 @@ def cmd_produce(args) -> Path:
                           fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro and not long_video
                                         else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
                           intro=intro, outro=outro)
+    render_result = None
+    from . import render_check
+    if render_check.config()["enabled"]:
+        try:
+            render_result = render_check.check(video, total, script.get("title", ""))
+            if render_result["issues"]:
+                log.warning("render check (%s): %s", render_result["severity"], "; ".join(render_result["issues"]))
+            else:
+                log.info("render check: no problems in %d frames, %.1f s black", len(render_result["frames"]), render_result["black_seconds"])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("render check skipped: %s", str(exc)[:120])
     for flag in ("explore",):
         if getattr(args, flag, False):
             blueprint = {**blueprint, flag: True}
@@ -512,6 +540,7 @@ def cmd_produce(args) -> Path:
             "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None, "voice": voice,
             "segments": segments, "photo_credits": photo_credits, "timeline": timeline,
             "fact_check": script.get("fact_check", {}).get("summary") if script.get("fact_check") else None,
+            "render_check": {k: render_result[k] for k in ("severity", "issues", "black_seconds")} if render_result else None,
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint"),
             "long_video": long_video, "orientation": "landscape" if frame.landscape() else "vertical"}
@@ -546,6 +575,12 @@ def cmd_produce(args) -> Path:
             # lose the Telegram delivery or mark the whole production as failed. Upload it from the card later.
             upload_error = f"{type(exc).__name__}: {str(exc)[:300]}"
             log.error("upload failed, the video is saved in %s and can be uploaded from its Studio card: %s", out_dir.name, upload_error)
+    elif render_result and render_result["severity"] == "severe":
+        meta["upload_state"] = "review"
+        meta["review_reason"] = "render check: " + "; ".join(render_result["issues"])
+        save_json(out_dir / "meta.json", meta)
+        queue_note = "Held for your review: the render check found " + "; ".join(render_result["issues"]) + ". Watch it before uploading."
+        print(queue_note)
     elif fact_result and (fc.needs_review(fact_result) or fact_result.get("rewrite_failed")):
         meta["upload_state"] = "review"
         meta["review_reason"] = "fact-check: " + fc.summary(fact_result)
@@ -644,7 +679,12 @@ def _notify_telegram(out_dir: Path, meta: dict, *, force: bool = False, extra: s
         note = f"New Short ready ({meta.get('duration', 0):.0f}s)" + (f" · https://youtube.com/shorts/{meta['youtube_id']}" if meta.get("youtube_id") else "")
         if extra:
             note += "\n" + extra
-        notify.send_short(Path(meta["video"]), meta, note=note)
+        buttons = None
+        if meta.get("approval") == "pending":
+            note += "\nWaiting for your approval before upload."
+            buttons = [[{"text": "✅ Approve upload", "callback_data": f"approve:{out_dir.name}"},
+                        {"text": "❌ Reject", "callback_data": f"reject:{out_dir.name}"}]]
+        notify.send_short(Path(meta["video"]), meta, note=note, buttons=buttons)
         print("Sent to Telegram.")
     except Exception as exc:  # noqa: BLE001 - delivery must never fail the render
         log.error("Telegram delivery failed: %s", exc)

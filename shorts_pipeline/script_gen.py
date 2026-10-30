@@ -100,6 +100,18 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
     if lessons:
         angle_line += ("\nWhat YOUR viewers' retention curves show (YouTube Analytics): where they leave and what holds them. "
                        "Write accordingly:\n" + "\n".join(f"- {line}" for line in lessons[:4]) + "\n")
+    try:
+        from .postmortem import lessons as pm_lessons
+        pm = pm_lessons()
+    except Exception:  # noqa: BLE001
+        pm = []
+    if pm:
+        angle_line += "\nLessons from reviews of this channel's recent winners and losers:\n" + "\n".join(f"- {x}" for x in pm[:2]) + "\n"
+    try:
+        from .seasonal import prompt_note
+        angle_line += prompt_note()
+    except Exception:  # noqa: BLE001
+        pass
     style = blueprint.get("style_guide")
     if style:
         angle_line += (
@@ -581,4 +593,36 @@ def revise_facts(script: dict[str, Any], corrections: list[dict[str, Any]], back
     out["full_text"] = " ".join([out["hook"], *[ln["text"] for ln in out["lines"]], out["cta"]])
     out["word_count"] = len(out["full_text"].split())
     return finalize_metadata(out)
+
+
+class _Chapter(BaseModel):
+    title: str = Field(description="2-5 words, the section's subject")
+    first_line: int = Field(description="Number of the first line of this section, from the numbered list (1 = the hook)")
+
+
+class _Chapters(BaseModel):
+    items: list[_Chapter]
+
+
+def chapters_for(script: dict[str, Any], backend: str = "auto") -> list[tuple[str, int]]:
+    """Section titles with the line each one starts on, for a long video's chapter list (Claude, one call)."""
+    sentences = [script.get("hook", ""), *[ln["text"] for ln in script.get("lines") or []]]
+    if len(sentences) < 6:
+        return []
+    try:
+        chosen = pick_backend(backend)
+        if chosen == "ollama":
+            return []
+        client = anthropic.Anthropic() if chosen == "api" else None
+        prompt = ("Split this long video's voiceover into 3-8 chapters for YouTube's chapter list. Each chapter is a real "
+                  "change of subject; the first starts at line 1. Return each chapter's title (2-5 words) and the number "
+                  "of its first line.\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(sentences, 1)))
+        out = _draft(client, "You write concise YouTube chapter titles.", prompt, chosen, model_cls=_Chapters)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("chapters not written (%s)", str(exc)[:120])
+        return []
+    items = sorted({max(1, min(len(sentences), c.first_line)): c.title.strip() for c in out.items}.items())
+    if not items or items[0][0] != 1:
+        items = [(1, items[0][1] if items else "Intro")] + [i for i in items if i[0] != 1]
+    return [(title, line - 1) for line, title in items]           # 0-based: 0 = hook
 

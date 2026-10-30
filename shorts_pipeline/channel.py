@@ -567,6 +567,13 @@ def sync() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.warning("retention learning skipped: %s", exc)
     try:
+        from . import postmortem
+        n = postmortem.run()                              # why recent winners won and losers lost
+        if n:
+            log.info("post-mortems: %d reviewed; lessons: %s", n, " | ".join(postmortem.lessons()) or "none yet")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("post-mortems skipped: %s", exc)
+    try:
         from . import retitle
         r = retitle.run()                                 # second-chance titles for the weakest recent Shorts
         if r["retitled"] or r["judged"]:

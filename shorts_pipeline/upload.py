@@ -247,6 +247,11 @@ def upload_video(video_path: Path, *, title: str, description: str, tags: list[s
     if publish_at:                        # YouTube makes it public by itself at this time (must start private)
         body["status"].update(privacyStatus="private", publishAt=publish_at)
     media = MediaFileUpload(str(video_path), chunksize=8 * 1024 * 1024, resumable=True, mimetype="video/mp4")
+    try:
+        from .usage import record
+        record(youtube_units=1600)
+    except Exception:  # noqa: BLE001
+        pass
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = None
     failures = 0

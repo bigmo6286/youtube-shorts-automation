@@ -248,6 +248,8 @@ def _run_job(job: Job) -> None:
     job.status = "running"
     job.thread_id = threading.get_ident()
     _CURRENT = job
+    from .. import usage as _usage
+    _usage.CURRENT_JOB = job.id
     try:
         with contextlib.redirect_stdout(_JobStdout(job)):
             result = COMMANDS[job.kind](_args(job))
@@ -267,6 +269,7 @@ def _run_job(job: Job) -> None:
         job.log.extend(traceback.format_exc().rstrip().splitlines())
     finally:
         _cancel_async_stop(job)          # a Stop that arrives as the job ends must not hit this cleanup
+        _usage.CURRENT_JOB = None
         job.finished = time.time()
         root.removeHandler(handler)
         _CURRENT = None
@@ -628,6 +631,8 @@ SCHEDULER = Scheduler(submit_job, lambda job_id: JOBS[job_id].status if job_id i
 
 @app.on_event("startup")
 def _start_scheduler() -> None:
+    from .. import usage as _usage
+    _usage.install()
     SCHEDULER.start()
     threading.Thread(target=lambda: (status(), channel_report()), name="warm-overview", daemon=True).start()
     try:
@@ -977,6 +982,7 @@ def list_outputs() -> list[dict[str, Any]]:
                    "policy_risk": qa.get("policy_risk", {}).get("noul"),
                    "faithful": qa.get("faithful", {}).get("noul")} if qa else None,
             "fact_check": (script or {}).get("fact_check"), "review_reason": meta.get("review_reason"),
+            "render_check": meta.get("render_check"), "approval": meta.get("approval"),
         })
     return out
 
@@ -1001,7 +1007,9 @@ def _latest_run_summary() -> dict[str, Any] | None:
 
 @app.get("/api/status")
 def status() -> dict[str, Any]:
-    return _shared("status", 5, _status) | {"job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None}
+    from .. import usage as _usage
+    return _shared("status", 5, _status) | {"job_running": _CURRENT.to_dict(tail=1) if _CURRENT else None,
+                                            "usage": _usage.today(), "usage_text": _usage.summary_text()}
 
 
 def _status() -> dict[str, Any]:

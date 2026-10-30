@@ -82,7 +82,7 @@ def description_text(meta: dict[str, Any]) -> str:
     return desc + ("\n\n" + " ".join(missing) if missing else "")
 
 
-def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "") -> None:
+def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "", buttons: list[list[dict[str, str]]] | None = None) -> None:
     """Three messages, each copyable on its own: the video with a short note, the TITLE alone (fits
     YouTube's 100-character box), then the description with hashtags for the description box."""
     if not telegram_configured():
@@ -96,9 +96,11 @@ def send_short(video_path: Path, meta: dict[str, Any], *, note: str = "") -> Non
         send_message(f"(video too large for Telegram: {video_path})")
     else:
         with open(video_path, "rb") as f:
+            import json as _json
             _check(requests.post(_api("sendVideo"),
                                  data={"chat_id": env("TELEGRAM_CHAT_ID"), "caption": caption[:CAPTION_LIMIT],
-                                       "supports_streaming": "true", "width": _frame_size()[0], "height": _frame_size()[1]},
+                                       "supports_streaming": "true", "width": _frame_size()[0], "height": _frame_size()[1],
+                                       **({"reply_markup": _json.dumps({"inline_keyboard": buttons})} if buttons else {})},
                                  files={"video": (video_path.name, f, "video/mp4")}, timeout=300))
     send_message(title)
     send_message(desc or "(no description)")

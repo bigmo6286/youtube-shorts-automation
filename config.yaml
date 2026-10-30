@@ -82,6 +82,7 @@ production:
     orientation: landscape    # landscape (normal YouTube video, 1920x1080) | vertical
     caption_scale: 0.7        # caption size relative to the Shorts style (a landscape frame is shorter)
     max_image_checks: 1       # image checks per line (a long video has many lines)
+    chapters: true            # YouTube chapters (timestamps) in the description, from Claude's section titles
   vision:                     # look at the footage the text check picked (TypeSafe images, experimental)
     mode: "off"               # off | log (judge and log, never reject) | on (a clip that does not show the line's
                               # subject or contradicts its setting is replaced by the next candidate)
@@ -96,6 +97,8 @@ production:
     min_width: 800
   loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views);
                               # the voice's lead-in silence is cut and the video ends 0.15 s after the last word
+  render_check:               # look at the finished video: black stretches (ffmpeg), captions over faces, cut-off text,
+    enabled: true             # blank frames (TypeSafe images); a severe problem holds the Short for review
   fact_check:                 # every claim searched on the web (Claude Code with web search) and judged by TypeSafe before voicing
     enabled: true
     mode: fix                 # fix = wrong claims are corrected in the script | review = wrong claims only hold the Short | off
@@ -115,6 +118,8 @@ production:
     handle: ""                # shown small at the bottom; empty = use outro.handle
   music:
     default: random           # none | random | part of a file name or title in assets/music
+    pick: mood                # mood = with "random", TypeSafe picks the track whose title fits the script's mood (never the
+                              # previous Short's track) | random = any track
     volume_db: -18            # music level relative to the voice; -14 louder, -22 quieter
     duck: true                # lower the music automatically while the voice speaks
     fade_seconds: 1.5
@@ -152,6 +157,9 @@ production:
   script_min_hook_score: 2    # 0-3, see judge.SCRIPT_QA_QUESTIONS
 
 notifications:
+  budgets:                    # daily usage alerts on Telegram (0 = off); YouTube API quota alerts at 80% always
+    typesafe_tokens_per_day: 0
+    pollen_per_day: 0
   telegram:
     on_produce: true          # send every finished Short (video + title + description + hashtags) to TELEGRAM_CHAT_ID
     alerts: true              # message you when a scheduled/automatic job fails, with the fix (same problem at most every 3 h)
@@ -175,6 +183,11 @@ schedule:
   skip_when_queue_full: true
   source: trends              # trends | profile (a cloned channel style) | topic (series of your own) | dub (second-language channel)
   topics: []                  # when source = topic: series rotated through, e.g. ["bible stories", "space facts"]
+  seasonal:                   # the writer is told what is coming up (holidays, "on this day" anniversaries) and may use it
+    enabled: true
+    lead_days: 6
+    on_this_day: true
+    regions: [US, NG]
   specials:
     explore_share: 0.2        # share of productions that try a format x topic never made on this channel
     sequels: true             # make a "Part 2" of uploads that beat the channel's typical views per hour by sequel_factor
@@ -205,6 +218,10 @@ backup:
   hour: 3
 
 upload:
+  approval:                   # every finished Short waits for your 👍 on Telegram (buttons under the video, or /approve N)
+    enabled: false
+    timeout_hours: 12         # no answer in this long: uploaded anyway when auto_approve_on_timeout is true, else keeps waiting
+    auto_approve_on_timeout: true
   privacy: private            # private | unlisted | public
   auto: true                  # scheduled Shorts join the upload queue; the best ones upload automatically
   daily_limit: 20             # uploads per rolling 24 h; lowered automatically if YouTube refuses an upload

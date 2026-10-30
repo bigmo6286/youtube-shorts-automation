@@ -196,6 +196,24 @@ def daily_report(now: datetime | None = None) -> str:
                          f"{rt['pending']} still measuring")
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from .postmortem import summary as pm_summary
+        pm = pm_summary()
+        if pm["reviewed"]:
+            lines.append(f"Post-mortems: {pm['reviewed']} reviewed ({pm['winners']} winners, {pm['losers']} losers)")
+            lines += [f"  Lesson: {x}" for x in pm["lessons"][:2]]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .seasonal import report_lines
+        lines += report_lines()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .usage import summary_text
+        lines.append("Usage today: " + summary_text())
+    except Exception:  # noqa: BLE001
+        pass
     lines.append(f"Disk: {housekeeping.free_gb():.1f} GB free · footage cache {housekeeping.cache_size_gb():.1f} GB")
     return "\n".join(lines)
 

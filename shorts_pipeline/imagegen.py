@@ -309,5 +309,11 @@ def generate(line_text: str, keyword: str, subject: str = "", prompt: str = "", 
                 log.warning("AI image (%s) failed for %r: %s", provider, keyword, str(exc)[:160])
             continue
         log.info("AI image (%s) for %r in %.1fs", provider, keyword, time.time() - t)
+        try:
+            from .usage import POLLEN_PRICES, record
+            model = cfg.get("pollinations_model") or POLLEN_MODEL
+            record(images=1, pollen=POLLEN_PRICES.get(model, 0.005) if (provider == "pollinations" and env("POLLINATIONS_TOKEN")) else 0)
+        except Exception:  # noqa: BLE001
+            pass
         return dest
     return None

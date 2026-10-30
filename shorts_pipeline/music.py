@@ -80,6 +80,43 @@ def pick_track(choice: str | None) -> dict[str, Any] | None:
     return random.choice(tracks)
 
 
+LAST_PATH = None
+
+
+def pick_for_script(script: dict[str, Any], choice: str | None) -> dict[str, Any] | None:
+    """'random' with TypeSafe available: the track whose title fits the script's mood best (a Choice over the
+    library), avoiding the track used for the previous Short. Otherwise the same as pick_track."""
+    from .config import DATA_DIR, has_typesafe
+    from .storage import load_json, save_json
+    choice = (choice or "random").strip()
+    tracks = list_tracks()
+    if choice.lower() != "random" or not has_typesafe() or len(tracks) < 2:
+        return pick_track(choice)
+    last_path = DATA_DIR / "music_last.json"
+    last = (load_json(last_path) or {}).get("file")
+    try:
+        from typesafe_sdk import Choice, TypeSafeClient
+        state = {"script": {"title": script.get("title"), "text": (script.get("full_text") or "")[:900]},
+                 "tracks": {t["file"]: t["title"] for t in tracks}}
+        q = Choice(instructions={"question": "Which background track fits the mood and pace of this script best, judging by "
+                                             "the track titles (tense, calm, upbeat, epic, mysterious, warm)?",
+                                 "note": "Music sits under a voiceover: it should match the tone, not fight it."},
+                   criteria={t["file"]: t["title"] for t in tracks})
+        with TypeSafeClient(timeout=30.0) as client:
+            resp = client.system_one(state=state, questions={"track": q})
+        probs = dict(resp.answers["track"].probabilities)
+        ranked = sorted(probs, key=probs.get, reverse=True)
+        pick = next((f for f in ranked if f != last), ranked[0])
+        track = next(t for t in tracks if t["file"] == pick)
+        log.info("music by mood: %s (%.0f%%)%s", track["title"], probs[pick] * 100, " (previous track skipped)" if ranked[0] == last and pick != last else "")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("music by mood failed (%s); random track", str(exc)[:100])
+        track = pick_track("random")
+    if track:
+        save_json(last_path, {"file": track["file"]})
+    return track
+
+
 def attribution_line(track: dict[str, Any] | None) -> str:
     """Credit line required by CC BY / BY-SA. CC0 and your own files need none."""
     if not track or track.get("license", "own") in ("own", "cc0", "pdm"):

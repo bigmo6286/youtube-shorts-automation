@@ -155,6 +155,11 @@ def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: 
             msg += ("\n  The model kept trying to use tools instead of answering. If this repeats, check ~/.claude/settings.json "
                     "on this machine for hooks or permission rules that interfere with headless runs.")
         raise RuntimeError(f"Claude Code failed: {msg}")
+    try:
+        from .usage import note_claude
+        note_claude(result)
+    except Exception:  # noqa: BLE001
+        pass
     structured = result.get("structured_output")
     if isinstance(structured, str):
         structured = _extract_json_object(structured)
