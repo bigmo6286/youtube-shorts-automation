@@ -65,7 +65,11 @@ def summary_text(day: dict[str, Any] | None = None) -> str:
     d = day or today()
     parts = [f"TypeSafe {int(d['typesafe_calls'])} calls / {int(d['typesafe_in'] + d['typesafe_out']) / 1000:.0f}k tokens"]
     if d["claude_calls"]:
-        parts.append(f"Claude {int(d['claude_calls'])} calls" + (f" (${d['claude_cost_usd']:.2f} API)" if d["claude_cost_usd"] else " (subscription)"))
+        from .config import env
+        on_api = bool(env("ANTHROPIC_API_KEY"))
+        cost = f"${d['claude_cost_usd']:.2f}"
+        parts.append(f"Claude {int(d['claude_calls'])} calls" + (f" ({cost} API)" if on_api else
+                                                                f" (subscription; {cost} at API prices)" if d["claude_cost_usd"] else " (subscription)"))
     if d["images"]:
         parts.append(f"{int(d['images'])} AI images" + (f" ({d['pollen']:.3f} pollen)" if d["pollen"] else ""))
     parts.append(f"YouTube API {int(d['youtube_units']):,}/{YOUTUBE_QUOTA:,} units")

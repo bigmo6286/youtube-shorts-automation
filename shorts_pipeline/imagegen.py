@@ -100,8 +100,6 @@ POLLINATIONS_GAP = 65.0       # free tier: "1 image every 45 seconds per IP"; at
 def _pollinations_turn() -> None:
     """Without a pollen key: wait until 65 s after this machine's last request (shared by every channel's console
     through a file). With POLLINATIONS_TOKEN there is no such limit."""
-    if env("POLLINATIONS_TOKEN"):
-        return
     stamp = AIIMG_DIR / ".pollinations_last"
     try:
         last = float(stamp.read_text())
@@ -141,10 +139,16 @@ def _pollen(prompt: str, dest: Path) -> Path:
     raise RuntimeError(f"pollinations (key) failed: {last}")
 
 
+_LAST = {"keyed": False}          # whether the last Pollinations image came through the paid key (for the usage count)
+
+
 def _pollinations(prompt: str, dest: Path) -> Path:
+    _LAST["keyed"] = False
     if env("POLLINATIONS_TOKEN"):
         try:
-            return _pollen(prompt, dest)
+            out = _pollen(prompt, dest)
+            _LAST["keyed"] = True
+            return out
         except RuntimeError as exc:
             log.warning("%s; using the free tier", str(exc)[:200])
     url = f"https://image.pollinations.ai/prompt/{quote(prompt)}"
@@ -312,7 +316,7 @@ def generate(line_text: str, keyword: str, subject: str = "", prompt: str = "", 
         try:
             from .usage import POLLEN_PRICES, record
             model = cfg.get("pollinations_model") or POLLEN_MODEL
-            record(images=1, pollen=POLLEN_PRICES.get(model, 0.005) if (provider == "pollinations" and env("POLLINATIONS_TOKEN")) else 0)
+            record(images=1, pollen=POLLEN_PRICES.get(model, 0.005) if (provider == "pollinations" and _LAST.get("keyed")) else 0)
         except Exception:  # noqa: BLE001
             pass
         return dest
