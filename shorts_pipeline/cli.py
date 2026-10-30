@@ -321,6 +321,24 @@ def cmd_produce(args) -> Path:
             if "part 2" not in script["title"].lower():
                 script["title"] = script_gen._shorten(script["title"], script_gen.TITLE_MAX - 9) + " (Part 2)"
             script["description"] = (f"Part 1: https://youtube.com/shorts/{args.sequel_of}\n\n" + script["description"]).strip()
+    elif getattr(args, "topic", None):
+        # One Short of a topic series ("bible stories"): see topics.py.
+        from . import topics
+        try:
+            script_gen.pick_backend(cfg.get("script_backend", "auto"))
+        except RuntimeError as exc:
+            sys.exit(str(exc))
+        blueprint = topics.plan(args.topic)
+        run_name = f"topic:{topics.slug(args.topic)}"
+        log.info("topic series %r: %s x %s (%s hook)%s", args.topic, blueprint["format"], blueprint["topic"],
+                 blueprint["hook_style"], ", told as its source tells it" if blueprint.get("attribute_source") else "")
+        out_dir = OUTPUT_DIR / f"{now_iso()}_{blueprint['format']}_{topics.slug(args.topic)}"
+        try:
+            script = script_gen.generate_script(blueprint, target_seconds=_learned_seconds(blueprint, cfg), angle=args.angle,
+                                                max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=None)
+        except RuntimeError as exc:
+            sys.exit(f"Script writing failed: {exc}")
     elif getattr(args, "blueprint_key", None):
         # One of your channel's own winners (format x topic that beats your channel median), independent of the trend run.
         from .channel import CHANNEL_BLUEPRINTS_PATH, channel_blueprints
@@ -470,8 +488,12 @@ def cmd_produce(args) -> Path:
         housekeeping.tidy()
     except Exception as exc:  # noqa: BLE001
         log.warning("footage cache cleanup failed: %s", exc)
-    history.record(script["title"], hook=script.get("hook", ""), key=f"{blueprint.get('format')}|{blueprint.get('topic')}",
+    history.record(script["title"], hook=script.get("hook", ""),
+                   key=blueprint.get("key") if str(blueprint.get("key", "")).startswith("series:") else f"{blueprint.get('format')}|{blueprint.get('topic')}",
                    out_dir=out_dir, source=str(run_name))
+    if getattr(args, "topic", None):
+        from . import topics
+        topics.record(args.topic, blueprint["format"], out_dir.name)
     print(f"\nRendered {video}  ({total:.1f}s)")
     upload_error = None
     queue_note = ""
@@ -485,14 +507,18 @@ def cmd_produce(args) -> Path:
             # lose the Telegram delivery or mark the whole production as failed. Upload it from the card later.
             upload_error = f"{type(exc).__name__}: {str(exc)[:300]}"
             log.error("upload failed, the video is saved in %s and can be uploaded from its Studio card: %s", out_dir.name, upload_error)
-    elif getattr(args, "scheduled", False) and script.get("backend") == "ollama":
+    elif script.get("backend") == "ollama":
         meta["upload_state"] = "review"
         meta["written_by"] = "local model"
         save_json(out_dir / "meta.json", meta)
         queue_note = ("Written by the free local model because Claude was unavailable. Check the facts, then use "
                       "Upload on its card; it is not uploaded automatically.")
         print(queue_note)
-    elif getattr(args, "scheduled", False):
+    elif long_video:
+        queue_note = "Long videos are not queued with the Shorts: upload it from its card or with /upload on Telegram."
+        print(queue_note)
+    else:
+        # Every Short joins the upload queue, made by the schedule or by hand (the queue picks the time and order).
         from . import upload_queue
         if upload_queue.config()["auto"]:
             try:
@@ -1035,6 +1061,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("produce", help="write, voice, caption and render a Short from a blueprint")
     pr.add_argument("--run"); pr.add_argument("--blueprint", type=int, default=1, help="1-based index from analyze")
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
+    pr.add_argument("--topic", help='one Short of a topic series, e.g. --topic "bible stories" (a fresh subject inside it each time)')
     pr.add_argument("--profile", help="produce in the style of an analysed channel (see `profile add`)")
     pr.add_argument("--exemplar", help="with --profile: remake one of that channel's Shorts by video id (see `profile show`)")
     pr.add_argument("--dub-of", dest="dub_of", help="dub one of the main channel's Shorts (its output folder name) for this channel")

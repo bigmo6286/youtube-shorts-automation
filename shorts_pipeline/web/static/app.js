@@ -485,6 +485,10 @@ $("#pf-add").addEventListener("click", () => {
   const t = $("#pf-target").value.trim(); if (!t) return toast("Paste a channel URL or @handle", true);
   startJob("profile", { action: "add", target: t, videos: Number($("#pf-videos").value || 24) });
 });
+$("#tp-produce").addEventListener("click", () => {
+  const topic = $("#tp-topic").value.trim(); if (!topic) return toast("Type a topic first", true);
+  startJob("produce", { topic, angle: $("#tp-angle").value, music: $("#tp-music").value, upload: $("#tp-upload").checked });
+});
 $("#pf-produce").addEventListener("click", () => {
   const h = $("#pf-select").value; if (!h) return toast("Analyse a channel first", true);
   toast(`Producing in the style of ${h}`);
@@ -586,6 +590,7 @@ async function loadSettings() {
   set("schedule.start_hour", sc.start_hour ?? 6); set("schedule.end_hour", sc.end_hour ?? 24); set("schedule.blueprints_to_rotate", sc.blueprints_to_rotate ?? 5);
   set("schedule.selection", sc.selection || "weighted"); set("schedule.min_share_pct", Math.round((sc.min_share ?? 0.25) * 100));
   set("schedule.source", sc.source || "trends"); loadProfiles().then(() => set("schedule.profile", sc.profile || ""));
+  set("schedule.topics", (sc.topics || []).join(", "));
   $(`[name="schedule.skip_stretch"]`).checked = sc.skip_stretch !== false;
   const th = c.production.thumbnail || {};
   $(`[name="production.thumbnail.enabled"]`).checked = th.enabled !== false;
@@ -652,7 +657,8 @@ $("#cfgform").addEventListener("submit", async (ev) => {
       refresh_per_day: num("schedule.refresh_per_day"), start_hour: num("schedule.start_hour"), end_hour: num("schedule.end_hour") || 24,
       blueprints_to_rotate: num("schedule.blueprints_to_rotate") || 5, selection: g("schedule.selection"),
       min_share: Math.min(1, Math.max(0, num("schedule.min_share_pct") / 100)), skip_stretch: $(`[name="schedule.skip_stretch"]`).checked,
-      source: g("schedule.source"), profile: g("schedule.profile"), retry_failed: $(`[name="schedule.retry_failed"]`).checked },
+      source: g("schedule.source"), profile: g("schedule.profile"), retry_failed: $(`[name="schedule.retry_failed"]`).checked,
+      topics: g("schedule.topics").split(",").map((t) => t.trim()).filter(Boolean) },
   };
   try { await api("/api/settings", { method: "POST", body: JSON.stringify({ config }) }); $("#cfgsaved").textContent = "saved"; toast("Settings saved"); loadStatus(); }
   catch (e) { toast(e.message, true); }

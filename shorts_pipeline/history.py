@@ -121,6 +121,8 @@ def avoid_titles(blueprint: dict[str, Any] | None = None, limit: int = 45) -> li
     if blueprint:
         if blueprint.get("source") == "channel":
             take([e.get("title", "") for e in blueprint.get("exemplars") or [] if e.get("title")])
+        if blueprint.get("key", "").startswith("series:"):
+            take([k["title"] for k in known if k.get("key") == blueprint["key"]])      # the whole series, any format
         key = f"{blueprint.get('format')}|{blueprint.get('topic')}"
         take([k["title"] for k in known if k.get("key") == key])
     take([k["title"] for k in known])

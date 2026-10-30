@@ -166,6 +166,8 @@ schedule:
   catch_up: true              # after the console was off, run the latest missed slot once (never all of them)
   retry_failed: true          # a production that failed for a temporary reason (network, render, voice) runs once more 30 min later
   skip_when_queue_full: true
+  source: trends              # trends | profile (a cloned channel style) | topic (series of your own) | dub (second-language channel)
+  topics: []                  # when source = topic: series rotated through, e.g. ["bible stories", "space facts"]
   specials:
     explore_share: 0.2        # share of productions that try a format x topic never made on this channel
     sequels: true             # make a "Part 2" of uploads that beat the channel's typical views per hour by sequel_factor

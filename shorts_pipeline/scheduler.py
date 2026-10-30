@@ -38,6 +38,7 @@ DEFAULTS = {
     "channel_feedback": True,    # scale blueprint weights by how each format x topic performs on your channel
     "source": "trends",          # trends = blueprints from the trend ranking | profile = clone a channel's style
     "profile": "",               # handle of an analysed channel profile (see `profile add`) when source = profile
+    "topics": [],                # topic series to rotate through when source = topic, e.g. ["bible stories"]
     "catch_up": True,            # after downtime, run the most recent missed slot once (never all of them)
     "retry_failed": True,        # re-run a production that failed for a temporary reason once, later the same day
     "skip_when_queue_full": True,  # skip a production slot while the upload queue already holds a day's uploads
@@ -416,6 +417,17 @@ class Scheduler:
             job = self._submit("produce", params)
         elif cfg.get("source") == "profile" and cfg.get("profile"):
             params = {"profile": cfg["profile"], "music": "random", "scheduled": True}
+            job = self._submit("produce", params)
+        elif cfg.get("source") == "topic":
+            from .topics import next_topic
+            topic = next_topic(cfg.get("topics") or [])
+            if not topic:
+                log.warning("produce slot %s skipped: source is 'topic' but no topics are set (Settings -> Schedule)", slot.strftime("%H:%M"))
+                self.state["history"].append({"kind": "produce (skipped: no topics set)", "slot": slot.strftime("%Y-%m-%d %H:%M"),
+                                              "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
+                self.state.setdefault("skipped", []).append(f"{kind}:{index}")
+                return True
+            params = {"topic": topic, "music": "random", "scheduled": True}
             job = self._submit("produce", params)
         else:
             run_dir = latest_run_dir()

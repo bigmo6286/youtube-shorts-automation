@@ -85,3 +85,34 @@ def test_experiments_get_a_fair_upload_priority(tmp_path, monkeypatch):
     plain = upload_queue.score_short(tmp_path, {"blueprint": {"format": "x", "topic": "y"}}, weak_qa)["priority"]
     explore = upload_queue.score_short(tmp_path, {"blueprint": {"format": "x", "topic": "y", "explore": True}}, weak_qa)["priority"]
     assert plain < upload_queue.config()["min_priority"] <= explore
+
+
+# ------------------------------------------------------------------ topic series
+def test_topic_series_rotates_suited_formats_and_names_the_source(monkeypatch, tmp_path):
+    from shorts_pipeline import topics, script_gen
+    monkeypatch.setattr(topics, "STATE_PATH", tmp_path / "topics.json")
+    monkeypatch.setattr(topics, "has_typesafe", lambda: True)
+    monkeypatch.setattr(topics, "_judge_topic", lambda t: {"formats": {"storytime": 0.6, "history_story": 0.3},
+                                                           "label": "religion_spirituality", "attribute_source": True})
+    monkeypatch.setattr("shorts_pipeline.channel.blueprint_performance", lambda: {"formats": {}})
+    bp = topics.plan("bible stories")
+    assert bp["format"] in ("storytime", "history_story") and bp["topic"] == "religion_spirituality"
+    assert bp["key"] == "series:bible_stories" and bp["attribute_source"]
+    topics.record("bible stories", bp["format"], "dir1")
+    nxt = topics.plan("bible stories")
+    assert nxt["format"] != bp["format"]                                 # never the same format twice in a row
+    assert nxt["hook_style"] != bp["hook_style"]
+    prompt = script_gen._prompt(bp, 30, None, avoid=["Noah Builds the Ark"])
+    assert "SERIES on: bible stories" in prompt and "In Genesis" in prompt and "Noah Builds the Ark" in prompt
+    assert topics.describe("bible stories")["judged"]                     # judged once, then remembered
+    assert topics.next_topic(["bible stories", "space facts"]) == "space facts"
+
+
+def test_series_avoid_list_covers_every_format_in_the_series(monkeypatch):
+    from shorts_pipeline import history
+    known = [{"title": "Noah Builds the Ark", "key": "series:bible_stories"},
+             {"title": "David and Goliath", "key": "series:bible_stories"},
+             {"title": "Why Owls Turn Their Heads", "key": "explainer|animals_wildlife"}]
+    monkeypatch.setattr(history, "known_videos", lambda: known)
+    avoid = history.avoid_titles({"format": "listicle_facts", "topic": "religion_spirituality", "key": "series:bible_stories"}, limit=2)
+    assert avoid == ["Noah Builds the Ark", "David and Goliath"]

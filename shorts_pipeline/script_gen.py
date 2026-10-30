@@ -70,6 +70,14 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
                       "structure, never the story, fact, person or experiment" if own else
                       "Trending exemplars (for pacing only, do not copy)")
     angle_line = f"Specific angle or subject to use: {angle}\n" if angle else "Pick a fresh, specific subject inside the topic.\n"
+    if blueprint.get("series"):
+        angle_line = (f"This Short is one of a SERIES on: {blueprint['series']}. " + (f"Specific subject: {angle}\n" if angle else
+                      "Pick one specific story, person, event or fact inside that topic that the series has not covered "
+                      "(see the taken list), and make the whole Short about it.\n"))
+        if blueprint.get("attribute_source"):
+            angle_line += ("The claims in this topic come from a text or tradition, not verified history: tell the story as "
+                           "that source tells it and name the source naturally (e.g. 'In Genesis,' 'the legend says'), "
+                           "never present it as proven fact and never mock or preach.\n")
     if avoid:
         angle_line += ("Videos already made. Every subject below is TAKEN: do not reuse any of these stories, facts, "
                        "experiments, people, animals or places, even reworded or from a new angle:\n"

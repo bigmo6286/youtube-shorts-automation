@@ -93,6 +93,17 @@
       <p class="muted">Uses the Anthropic key if set, otherwise your Claude subscription token. TypeSafe QA rejects weak hooks and asks for a rewrite, up to the attempt limit in config.</p>
     </div>
     <div class="panel">
+      <h2>Or produce from a topic</h2>
+      <p class="muted">Give a topic like <i>bible stories</i> or <i>space facts</i>. The engine picks a format that suits it (rotating, weighted by what performs on your channel), and the writer picks a fresh subject inside the topic that the series has not covered yet. To run a whole channel on topics, set Settings → Schedule → Source to "topic series of my own".</p>
+      <div class="row">
+        <input id="tp-topic" placeholder="topic, e.g. bible stories" size="36">
+        <input id="tp-angle" placeholder="optional: a specific subject inside it" size="36">
+        <select id="tp-music" class="musicpick"></select>
+        <label class="inline"><input type="checkbox" id="tp-upload"> upload when done</label>
+        <button class="primary" id="tp-produce">Produce one of the series</button>
+      </div>
+    </div>
+    <div class="panel">
       <h2>Or clone a channel's style</h2>
       <p class="muted">Paste a channel URL or @handle. The tool reads its most-viewed Shorts, classifies them, and has Claude distil a style guide (voice, hooks, structure, pacing). Videos produced from a profile use that style with new subjects.</p>
       <div class="row">
@@ -212,8 +223,9 @@
             <label>Consider top N blueprints<input type="number" min="1" max="8" name="schedule.blueprints_to_rotate"></label>
           </div>
           <div class="row">
-            <label>Source<select name="schedule.source"><option value="trends">trend blueprints (+ your channel feedback)</option><option value="profile">a cloned channel style</option><option value="dub">dubbed versions of the main channel's best Shorts</option></select></label>
+            <label>Source<select name="schedule.source"><option value="trends">trend blueprints (+ your channel feedback)</option><option value="profile">a cloned channel style</option><option value="topic">topic series of my own</option><option value="dub">dubbed versions of the main channel's best Shorts</option></select></label>
             <label>Profile (when source = cloned style)<select name="schedule.profile"></select></label>
+            <label>Topics (when source = topic series; comma separated, rotated)<input name="schedule.topics" placeholder="bible stories, space facts" size="40"></label>
             <label>Pick blueprints<select name="schedule.selection"><option value="weighted">by opportunity score (best gets most videos)</option><option value="rotate">round robin</option></select></label>
             <label>Minimum share of the best score (%)<input type="number" min="0" max="100" name="schedule.min_share_pct"></label>
             <label class="inline"><input type="checkbox" name="schedule.skip_stretch"> skip stretch formats</label>

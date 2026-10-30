@@ -224,7 +224,7 @@ def _args(job: Job) -> SimpleNamespace:
         scheduled=bool(p.get("scheduled")), enhance=p.get("enhance", True) is not False,
         telegram=p.get("telegram", True) is not False, privacy=p.get("privacy") or None,
         regenerate=p.get("regenerate", True) is not False, set=p.get("set", True) is not False,
-        profile=p.get("profile") or None, seconds=p.get("seconds") or None, target=p.get("target") or None,
+        profile=p.get("profile") or None, topic=p.get("topic") or None, seconds=p.get("seconds") or None, target=p.get("target") or None,
         videos=int(p.get("videos") or 24),
     )
 
