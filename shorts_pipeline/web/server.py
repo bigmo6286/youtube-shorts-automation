@@ -841,6 +841,22 @@ def dismiss_comment(thread_id: str) -> dict[str, Any]:
     return {"dismissed": thread_id}
 
 
+@app.get("/api/library")
+def get_library() -> dict[str, Any]:
+    from .. import library
+    return {"folders": [str(f) for f in library.folders()], "items": library.items()}
+
+
+class LibraryUpdate(BaseModel):
+    descriptions: dict[str, str] = {}
+
+
+@app.post("/api/library")
+def save_library(req: LibraryUpdate) -> dict[str, Any]:
+    from .. import library
+    return {"saved": library.set_descriptions(req.descriptions)}
+
+
 @app.get("/api/publish-times")
 def publish_times_info() -> dict[str, Any]:
     from ..publish_times import describe
@@ -960,6 +976,7 @@ def list_outputs() -> list[dict[str, Any]]:
                    "matches_format": qa.get("matches_format", {}).get("noul"), "has_payoff": qa.get("has_payoff", {}).get("noul"),
                    "policy_risk": qa.get("policy_risk", {}).get("noul"),
                    "faithful": qa.get("faithful", {}).get("noul")} if qa else None,
+            "fact_check": (script or {}).get("fact_check"), "review_reason": meta.get("review_reason"),
         })
     return out
 

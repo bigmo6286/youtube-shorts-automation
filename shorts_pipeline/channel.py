@@ -562,6 +562,11 @@ def sync() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.warning("tuning skipped: %s", exc)
     try:
+        from . import retention
+        log.info("%s", retention.sync())                   # where viewers leave, and what the writer should do about it
+    except Exception as exc:  # noqa: BLE001
+        log.warning("retention learning skipped: %s", exc)
+    try:
         from . import retitle
         r = retitle.run()                                 # second-chance titles for the weakest recent Shorts
         if r["retitled"] or r["judged"]:

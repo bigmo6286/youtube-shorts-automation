@@ -330,3 +330,26 @@ def test_director_prompts_must_cover_every_line(monkeypatch):
     assert script_gen.image_prompts(script) == ["p1", "p2", "p3", "p4"]
     monkeypatch.setattr(script_gen, "_draft", lambda *a, **k: script_gen._ImagePrompts(items=["p1"]))
     assert script_gen.image_prompts(script) == []                   # misaligned: fall back to the footage terms
+
+
+# ------------------------------------------------------------------ your own footage library
+def test_library_files_are_described_and_offered_before_stock(monkeypatch, tmp_path):
+    from shorts_pipeline import library
+    lib = tmp_path / "footage"
+    lib.mkdir()
+    (lib / "lion_drinking_at_waterhole.mp4").write_bytes(b"v")
+    (lib / "IMG_20240305.jpg").write_bytes(b"i")
+    (lib / "IMG_20240305.txt").write_text("my grandmother's village church at sunset", encoding="utf-8")
+    monkeypatch.setattr(library, "folders", lambda: [lib])
+    items = library.items()
+    assert {i["description"] for i in items} == {"lion drinking at waterhole", "my grandmother's village church at sunset"}
+    assert library.set_descriptions({"lion_drinking_at_waterhole.mp4": "a lion drinking, dusk"}) == 1
+    assert next(i for i in library.items() if i["kind"] == "video")["description"] == "a lion drinking, dusk"
+    cands = library.candidates("lion drinking", "A lion drinks at dusk.", limit=1)
+    assert len(cands) == 1 and cands[0]["kind"] == "video"
+    # the footage picker uses it before any stock site and never downloads anything
+    monkeypatch.setattr(footage, "video_candidates", lambda kw: pytest.fail("stock must not be searched"))
+    monkeypatch.setattr(footage, "choose", lambda line, kw, c, strict=True, used=None: (next(x for x in c if x["kind"] == "video"), 0.8))
+    monkeypatch.setattr("shorts_pipeline.vision.enabled", lambda: False)
+    clip, note = footage.footage_for_line("A lion drinks at dusk.", "lion drinking", 3.0, tmp_path, 0)
+    assert clip == lib / "lion_drinking_at_waterhole.mp4" and note.startswith("your own footage")

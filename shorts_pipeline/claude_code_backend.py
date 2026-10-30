@@ -87,8 +87,10 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: int = 600) -> dict[str, Any]:
-    """Run one headless turn and return the structured output as a dict."""
+def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: int = 600,
+                  tools: list[str] | None = None, max_turns: int | None = None) -> dict[str, Any]:
+    """Run one headless turn and return the structured output as a dict. `tools` (e.g. ["WebSearch", "WebFetch"])
+    lets that turn search the web (the fact-check); by default there are no tools at all."""
     binary = find_claude_binary()
     if not binary:
         raise RuntimeError("Claude Code binary not found; set CLAUDE_CODE_BIN in .env or install Claude Code.")
@@ -109,9 +111,11 @@ def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: 
         cmd = [binary, "-p", full_prompt,
                "--output-format", "json",
                "--json-schema", schema_text,
-               "--system-prompt", system + no_tools,
-               "--max-turns", "6" if attempt == 1 else "10",   # the structured answer itself costs a tool_use turn
-               "--tools", ""]                                  # pure text generation, no file or shell tools
+               "--system-prompt", system + ("" if tools else no_tools),
+               "--max-turns", str(max_turns) if max_turns else ("6" if attempt == 1 else "10"),
+               "--tools", ",".join(tools) if tools else ""]     # no tools: pure text generation
+        if tools:
+            cmd += ["--allowedTools", ",".join(tools)]          # headless: nobody can answer a permission prompt
         try:
             proc = _run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                         timeout=timeout, env=child_env, retries=0)

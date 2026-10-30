@@ -39,7 +39,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 $$("nav button").forEach((b) => b.addEventListener("click", () => {
   $$("nav button").forEach((x) => x.classList.toggle("active", x === b));
   $$(".tab").forEach((t) => t.classList.toggle("active", t.id === `tab-${b.dataset.tab}`));
-  if (b.dataset.tab === "settings") { loadSettings(); loadMusic(); }
+  if (b.dataset.tab === "settings") { loadSettings(); loadMusic(); loadLibrary(); }
   if (b.dataset.tab === "studio") { loadOutputs(); loadMusic(); }
 }));
 
@@ -259,7 +259,8 @@ async function loadOutputs(afterStatusSync = false) {
       <div class="outbody">
         <h3>${esc(o.title)} <span class="tag ${o.title.length <= 100 ? "ok" : "warn"}" title="YouTube title limit is 100 characters; Shorts show about 70">${o.title.length}/100</span></h3>
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
-        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}</div>` : ""}
+        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}${o.fact_check ? ` · facts: ${esc(o.fact_check.summary)}` : ""}</div>` : ""}
+        ${o.upload_state === "review" && o.review_reason ? `<span class="tag warn" title="${esc(o.review_reason)}">held for review: ${esc(o.review_reason.slice(0, 80))}</span>` : ""}
         <details><summary>Script</summary><p>${esc(o.script_text)}</p></details>
         ${o.original_text ? `<details><summary>Your original</summary><p class="muted">${esc(o.original_text)}</p></details>` : ""}
         <details><summary>Description &amp; hashtags</summary><p class="pre">${esc(o.description)}</p><p>${esc(tagLine(o))}</p></details>
@@ -375,6 +376,7 @@ async function loadSchedule() {
       + (q.paused_until ? ` · <span class="warn">paused until ${esc(q.paused_until)} (${esc(q.paused_reason || "")})</span>` : "")
       + (q.next ? ` · next: <span class="tag ok">${q.next.priority} ${esc(q.next.title.slice(0, 50))}</span>` : (q.waiting_reason ? ` · ${esc(q.waiting_reason)}` : ""))
       + (p.tuning && p.tuning.uploads_per_day ? `<br>Learned from your channel: <b>${p.tuning.uploads_per_day}</b> uploads a day, Shorts of about <b>${p.tuning.seconds}s</b>${Object.keys(p.tuning.formats || {}).length ? " (" + Object.entries(p.tuning.formats).map(([f, s]) => `${esc(f)} ${s}s`).join(", ") + ")" : ""} · repetitiveness ${Math.round((p.tuning.sameness || 0) * 100)}%${(p.tuning.overused || []).length ? ` <span class="warn">(overused: ${p.tuning.overused.map(esc).join(", ")})</span>` : ""}${p.tuning.retitles && p.tuning.retitles.tried ? ` · second-chance titles: ${p.tuning.retitles.tried} tried, ${p.tuning.retitles.improved} improved, ${p.tuning.retitles.pending} measuring` : ""}<br>` : "")
+      + (p.tuning && p.tuning.retention && p.tuning.retention.hook_hold != null ? `<br>Retention (${p.tuning.retention.videos} curves): <b>${Math.round(p.tuning.retention.hook_hold * 100)}%</b> still watching after the hook, <b>${Math.round(p.tuning.retention.end_hold * 100)}%</b> reach the ending, replay strength ${(p.tuning.retention.replay || 0).toFixed(2)}${(p.tuning.retention.guidance || []).length ? `<br><span class="muted">${p.tuning.retention.guidance.map(esc).join(" · ")}</span>` : ""}` : "")
       + (p.publish && p.publish.enabled ? ` · goes public at good hours (next free ${esc(p.publish.next_publish)})` : "")
       + ((p.retries || []).length ? ` · retries pending: ${p.retries.map((r) => `${esc(r.due.slice(11, 16))} (${esc(r.reason)})`).join(", ")}` : "");
   const detail = (h) => h.params ? (h.params.blueprint || h.params.blueprint_key || (h.params.title ? `${h.params.priority ?? ""} ${h.params.title}` : "-")) : (h.retry_at ? `retry at ${h.retry_at}` : "-");
@@ -673,6 +675,19 @@ $("#secretsbtn").addEventListener("click", async () => {
 
 // ---------------------------------------------------------------- boot
 loadStatus(); loadRuns(); loadOutputs(); loadJobPicker(); loadMusic(); loadProfiles(); loadChannels();
+async function loadLibrary() {
+  let lib;
+  try { lib = await api("/api/library"); } catch (_) { return; }
+  $("#libfolders").textContent = lib.folders.join("  and  ");
+  $("#liblist").innerHTML = lib.items.length ? lib.items.map((it) => `<div class="row tight"><span class="tag ${it.described ? "ok" : "warn"}" title="${esc(it.local)}">${it.kind === "video" ? "🎞" : "🖼"} ${esc(it.name)}</span><input data-lib="${esc(it.name)}" value="${esc(it.description)}" placeholder="what this shows, e.g. lion drinking at a waterhole, dusk" size="60"></div>`).join("")
+    : `<p class="muted">No files yet. Drop .mp4 / .mov / .jpg / .png files into the folder above, then press Rescan.</p>`;
+}
+$("#libsave").addEventListener("click", async () => {
+  const descriptions = Object.fromEntries($$("input[data-lib]").map((i) => [i.dataset.lib, i.value]));
+  try { const r = await api("/api/library", { method: "POST", body: JSON.stringify({ descriptions }) }); toast(`${r.saved} descriptions saved`); loadLibrary(); }
+  catch (e) { toast(e.message, true); }
+});
+$("#librescan").addEventListener("click", loadLibrary);
 async function loadChannels() {
   try {
     const c = await api("/api/channels");

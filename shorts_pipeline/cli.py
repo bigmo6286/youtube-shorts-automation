@@ -392,6 +392,30 @@ def cmd_produce(args) -> Path:
         titles.improve(script)                         # search-driven title, picked by TypeSafe
         if getattr(args, "sequel_of", None) and "part 2" not in script["title"].lower():
             script["title"] = script_gen._shorten(script["title"], script_gen.TITLE_MAX - 9) + " (Part 2)"
+    fact_result = None
+    fc = __import__("shorts_pipeline.factcheck", fromlist=["config"])
+    fcfg = fc.config()
+    if (fcfg["enabled"] and fcfg.get("mode", "fix") != "off" and script.get("backend") not in ("custom", "dub")
+            and fc.available()):
+        log.info("fact-check: searching the web for every claim (Claude + TypeSafe)")
+        fact_result = fc.check(script)
+        if fact_result:
+            log.info("fact-check: %s", fc.summary(fact_result))
+            for c in fact_result["contradicted"]:
+                log.warning("fact-check: WRONG %r -> %s", c["claim"][:90], (c.get("correction") or "?")[:120])
+            for c in fact_result["unverifiable"]:
+                log.info("fact-check: unverified %r", c["claim"][:90])
+            if fact_result["contradicted"] and fcfg.get("mode", "fix") == "fix":
+                try:
+                    script = script_gen.revise_facts(script, fact_result["contradicted"], cfg.get("script_backend", "auto"))
+                    log.info("fact-check: %d claim(s) corrected in the script", len(fact_result["contradicted"]))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("fact-check: could not rewrite the wrong claims (%s); the Short is held for review", str(exc)[:160])
+                    fact_result["rewrite_failed"] = True
+            script["fact_check"] = {k: fact_result[k] for k in ("supported", "contradicted", "unverifiable", "sources")} | {
+                "claims": len(fact_result["claims"]), "summary": fc.summary(fact_result)}
+        else:
+            log.info("fact-check: could not run this time; the script is used as written")
     save_json(out_dir / "script.json", script)
     print(f"\nTITLE: {script['title']}\n\n{script['full_text']}\n")
     if script.get("qa_problems"):
@@ -410,8 +434,18 @@ def cmd_produce(args) -> Path:
         from . import dub
         voice = dub.config()["voice"]
     words = tts.synthesize(script["full_text"], voice_path, voice=voice, rate=cfg["voice_rate"])
-    body_seconds = max(render.probe_duration(voice_path), words[-1]["end"] if words else 1.0) + 0.4
+    outro_cfg = cfg.get("outro") or {}
+    outro_on = outro_cfg.get("enabled", True) if getattr(args, "outro", None) is None else bool(args.outro)
+    if script_gen.loop_endings() and not outro_on and not long_video and words:
+        # a looping Short: almost no silence between the last word and the replayed first word
+        words, body_seconds = tts.tighten_loop(voice_path, words)
+        log.info("loop: voice trimmed, body ends %.2fs after the last word", tts.LOOP_TAIL)
+    else:
+        body_seconds = max(render.probe_duration(voice_path), words[-1]["end"] if words else 1.0) + 0.4
     save_json(out_dir / "words.json", words)
+    n_hook, n_cta = len((script.get("hook") or "").split()), len((script.get("cta") or "").split())
+    timeline = {"hook_end": words[min(len(words), n_hook) - 1]["end"] if words and n_hook else None,
+                "cta_start": words[max(0, len(words) - n_cta)]["start"] if words and n_cta else None}
 
     intro = _card(cfg.get("intro") or {}, "intro", script, out_dir, cfg, enabled=getattr(args, "intro", None))
     outro = _card(cfg.get("outro") or {}, "outro", script, out_dir, cfg, enabled=getattr(args, "outro", None))
@@ -448,6 +482,10 @@ def cmd_produce(args) -> Path:
             description = description.rstrip() + "\n\n" + credit
     else:
         log.info("music: none%s", "" if music.list_tracks() else " (assets/music is empty: fetch or upload tracks in Settings)")
+    if script.get("fact_check") and fcfg.get("sources_in_description", True):
+        block = fc.sources_block(script["fact_check"])
+        if block:
+            description = description.rstrip() + "\n\n" + block
     if photo_credits:
         from .commons import credit_line
         description = description.rstrip() + "\n\n" + credit_line(photo_credits)     # what CC BY / BY-SA ask for
@@ -472,7 +510,8 @@ def cmd_produce(args) -> Path:
             "hashtags": script["hashtags"], "duration": total,
             "music": {k: track[k] for k in ("file", "title", "creator", "license")} if track else None,
             "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None, "voice": voice,
-            "segments": segments, "photo_credits": photo_credits,
+            "segments": segments, "photo_credits": photo_credits, "timeline": timeline,
+            "fact_check": script.get("fact_check", {}).get("summary") if script.get("fact_check") else None,
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint"),
             "long_video": long_video, "orientation": "landscape" if frame.landscape() else "vertical"}
@@ -507,6 +546,13 @@ def cmd_produce(args) -> Path:
             # lose the Telegram delivery or mark the whole production as failed. Upload it from the card later.
             upload_error = f"{type(exc).__name__}: {str(exc)[:300]}"
             log.error("upload failed, the video is saved in %s and can be uploaded from its Studio card: %s", out_dir.name, upload_error)
+    elif fact_result and (fc.needs_review(fact_result) or fact_result.get("rewrite_failed")):
+        meta["upload_state"] = "review"
+        meta["review_reason"] = "fact-check: " + fc.summary(fact_result)
+        save_json(out_dir / "meta.json", meta)
+        queue_note = ("Held for your review: the fact-check could not verify some of its main claims ("
+                      + fc.summary(fact_result) + "). Check them, then use Upload on its card.")
+        print(queue_note)
     elif script.get("backend") == "ollama":
         meta["upload_state"] = "review"
         meta["written_by"] = "local model"

@@ -331,9 +331,9 @@ def image_clip(img: Path, seconds: float, out_path: Path, whole: bool = False) -
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-i", str(img), *filt,
            "-t", f"{seconds + 0.5:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", str(out_path)]
     try:
-        _run(cmd, check=True, text=True)
-    except RuntimeError as exc:
-        log.warning("photo clip failed: %s", exc)
+        _run(cmd, check=True, text=True, timeout=180)       # a broken image file must not freeze the production
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        log.warning("photo clip failed: %s", str(exc)[:200])
         return None
     return out_path
 
@@ -393,14 +393,28 @@ def footage_for_line(line_text: str, keyword: str, seconds: float, work_dir: Pat
         if ai.get("mode") == "only":          # no internet footage at all: the generated background
             clip = generated_background(work_dir / f"bg_{index}.mp4", seconds + 0.5, seed=index)
             return clip, f"generated background (no AI image for '{keyword}')"
+    from . import vision
+    checks_left = int(vision.config()["max_checks"]) if vision.enabled() else 0
+    subject = named_subject or keyword
+    # Your own footage first (assets/footage): judged like any candidate, looked at like any candidate.
+    from . import library
+    lib = library.candidates(keyword, line_text) if not named_subject else []
+    if lib:
+        pick, fit = choose(line_text, keyword, lib, strict=True, used=used)
+        if pick and fit >= MIN_FIT and pick["id"] not in used:
+            ok, seen = True, ""
+            if checks_left:
+                checks_left -= 1
+                ok, seen = _looked_at(line_text, subject, pick, Path(pick["local"]) if pick["kind"] == "video" else None, topic=topic)
+            clip = _materialize(pick, pick["kind"], seconds, work_dir, index) if ok else None
+            if clip:
+                used.add(pick["id"])
+                return clip, f"your own footage '{pick['description'][:60]}' ({fit:.0%} fit){seen}"
     attempts = [(keyword, True)]
     if fallback_keyword:
         attempts.append((fallback_keyword, False))
     attempts.append((keyword, False))
     reuse: tuple[dict[str, Any], float, str, bool] | None = None    # a clip already in this Short: last resort only
-    from . import vision
-    checks_left = int(vision.config()["max_checks"]) if vision.enabled() else 0
-    subject = named_subject or keyword
     for kw, strict in attempts:
         for kind, cands in (("video", video_candidates(kw)), ("photo", photo_candidates(kw))):
             rejected: set[str] = set()
@@ -534,6 +548,11 @@ def _ai_challenger(line_text: str, keyword: str, fallback_keyword: str, subject:
 
 
 def _materialize(pick: dict[str, Any], kind: str, seconds: float, work_dir: Path, index: int) -> Path | None:
+    if pick.get("local"):                                   # your own file: used in place
+        local = Path(pick["local"])
+        if not local.exists():
+            return None
+        return image_clip(local, seconds, work_dir / f"bg_{index}.mp4") if kind == "photo" else local
     if kind == "photo":
         return photo_clip(pick["link"], pick["id"], seconds, work_dir / f"bg_{index}.mp4")
     return _download(pick["link"], PEXELS_CACHE / f"{pick['id']}.mp4")

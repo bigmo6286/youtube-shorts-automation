@@ -89,8 +89,9 @@ def preview(candidate: dict[str, Any], clip: Path | None = None) -> bytes | None
         return cached.read_bytes()
     raw = None
     url = candidate.get("preview") or (candidate.get("link") if candidate.get("kind") == "photo" else None)
-    if candidate.get("local"):                          # an AI image on disk: no link
-        raw = Path(candidate["local"]).read_bytes()
+    if candidate.get("local"):                          # a file on disk (AI image, your own footage): no link
+        local = Path(candidate["local"])
+        raw = _frame_from_video(local) if local.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm", ".m4v") else local.read_bytes()
         url = None
     if url:
         try:

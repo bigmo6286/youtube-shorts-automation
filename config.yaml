@@ -94,7 +94,14 @@ production:
     enabled: true             # from Wikimedia Commons (free licences); each photo used is credited in the description
     min_match: 0.7            # how sure TypeSafe must be that the photo shows that very thing
     min_width: 800
-  loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views)
+  loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views);
+                              # the voice's lead-in silence is cut and the video ends 0.15 s after the last word
+  fact_check:                 # every claim searched on the web (Claude Code with web search) and judged by TypeSafe before voicing
+    enabled: true
+    mode: fix                 # fix = wrong claims are corrected in the script | review = wrong claims only hold the Short | off
+    max_unverified: 2         # more unverifiable main claims than this: the Short waits for your review instead of auto-upload
+    sources_in_description: true
+    max_sources: 3
   hook_overlay:
     enabled: true             # the video's punchiest words as big text at the top from the first frame
     max_seconds: 3.5

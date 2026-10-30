@@ -514,6 +514,7 @@ def _tuning_summary() -> dict[str, Any] | None:
         return {"uploads_per_day": (t.get("volume") or {}).get("recommended"), "reason": (t.get("volume") or {}).get("reason"),
                 "seconds": (t.get("length") or {}).get("channel"), "formats": (t.get("length") or {}).get("formats"),
                 "sameness": round(originality.sameness(), 2), "overused": [n for n, _ in originality.overused_formulas()],
-                "retitles": __import__("shorts_pipeline.retitle", fromlist=["tally"]).tally()}
+                "retitles": __import__("shorts_pipeline.retitle", fromlist=["tally"]).tally(),
+                "retention": {k: v for k, v in (t.get("retention") or {}).items() if k in ("videos", "hook_hold", "end_hold", "replay", "guidance")}}
     except Exception:  # noqa: BLE001
         return None

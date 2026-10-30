@@ -181,6 +181,32 @@ def synthesize_kokoro(text: str, out_path: Path, *, voice: str | None = None, ra
 
 
 # ---------------------------------------------------------------------------------------------------- entry point
+LOOP_LEAD = 0.05               # silence kept before the first word of a looping Short
+LOOP_TAIL = 0.15               # silence kept after its last word (the replay then starts almost at once)
+
+
+def tighten_loop(voice_path: Path, words: list[dict[str, Any]], lead: float = LOOP_LEAD,
+                 tail: float = LOOP_TAIL) -> tuple[list[dict[str, Any]], float]:
+    """For a looping Short: cut the voice file's lead-in silence to `lead` seconds (word timings shift with it) and
+    return the body length as last word + `tail`, so the gap between the ending and the replayed hook is small."""
+    if not words:
+        return words, 1.0
+    from .tools import run
+    cut = float(words[0]["start"]) - lead
+    if cut > 0.03:
+        tmp = voice_path.with_suffix(".trim.mp3")
+        try:
+            run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{cut:.3f}", "-i", str(voice_path), "-c:a", "libmp3lame",
+                 "-b:a", "128k", str(tmp)], check=True, text=True)
+            tmp.replace(voice_path)
+            words = [{**w, "start": round(max(0.0, float(w["start"]) - cut), 3), "end": round(max(0.0, float(w["end"]) - cut), 3)}
+                     for w in words]
+        except Exception as exc:  # noqa: BLE001 - keep the untrimmed voice
+            log.warning("could not trim the voice lead-in: %s", str(exc)[:120])
+            tmp.unlink(missing_ok=True)
+    return words, float(words[-1]["end"]) + tail
+
+
 def synthesize(text: str, out_path: Path, *, voice: str, rate: str = "+0%") -> list[dict[str, Any]]:
     """The configured voice, falling back to the free local Kokoro voice when edge-tts fails."""
     cfg = config()

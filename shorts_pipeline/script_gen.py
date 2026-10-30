@@ -92,6 +92,14 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
                        "(rhythm, specificity, what is withheld), never the subject:\n"
                        + "\n".join(f"- {o['opening']!r} ({o['avg_view_pct']:.0f}% of the video watched on average)"
                                     for o in openings) + "\n")
+    try:
+        from .retention import guidance as retention_guidance
+        lessons = retention_guidance()
+    except Exception:  # noqa: BLE001
+        lessons = []
+    if lessons:
+        angle_line += ("\nWhat YOUR viewers' retention curves show (YouTube Analytics): where they leave and what holds them. "
+                       "Write accordingly:\n" + "\n".join(f"- {line}" for line in lessons[:4]) + "\n")
     style = blueprint.get("style_guide")
     if style:
         angle_line += (
@@ -552,4 +560,25 @@ def image_prompts(script: dict[str, Any], backend: str = "auto") -> list[str]:
         log.warning("image prompts: got %d for %d lines; using the footage terms", len(out.items), len(chunks))
         return []
     return [p.strip() for p in out.items]
+
+
+def revise_facts(script: dict[str, Any], corrections: list[dict[str, Any]], backend: str = "auto") -> dict[str, Any]:
+    """The same script with the contradicted claims corrected (one Claude pass), everything else kept. The
+    fact-checker's correction replaces the claim; a claim with no good correction is dropped from the line."""
+    chosen = pick_backend(backend)
+    client = anthropic.Anthropic() if chosen == "api" else None
+    fixes = "\n".join(f"- WRONG: {c['claim']}\n  CORRECT: {c.get('correction') or 'no reliable figure: leave this detail out'}"
+                      for c in corrections)
+    prompt = ("Correct this Short's script. Change only what the fact-check found wrong; keep the hook, the structure, "
+              "the rhythm, the visual_keyword of every line and the length. Do not add new facts.\n\nFact-check:\n"
+              + fixes + "\n\nScript JSON:\n" + __import__("json").dumps(
+                  {k: script.get(k) for k in ("title", "hook", "lines", "cta", "description", "hashtags", "visual_fallback",
+                                              "thumbnail_text", "comment_question")}, ensure_ascii=False))
+    parsed = _draft(client, SYSTEM, prompt, chosen)
+    fixed = parsed.model_dump()
+    out = dict(script)
+    out.update({k: fixed[k] for k in ("title", "hook", "lines", "cta", "description", "hashtags", "thumbnail_text") if fixed.get(k)})
+    out["full_text"] = " ".join([out["hook"], *[ln["text"] for ln in out["lines"]], out["cta"]])
+    out["word_count"] = len(out["full_text"].split())
+    return finalize_metadata(out)
 
