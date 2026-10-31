@@ -234,6 +234,11 @@ def run(interactive: bool = False) -> dict[str, Any]:
         stats["followups"] = post_followups(yt)
     except Exception as exc:  # noqa: BLE001
         log.warning("sequel / viewer follow-ups failed: %s", str(exc)[:160])
+    try:
+        from .series import flush as series_flush
+        stats["series_links"] = len(series_flush(yt))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("series links failed: %s", str(exc)[:160])
     items = fetch_new(yt)
     stats["new"] = len(items)
     if not items:

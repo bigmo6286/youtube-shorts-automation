@@ -100,6 +100,10 @@ production:
   subject_screening:          # before writing: Claude proposes subjects, TypeSafe scores curiosity, how visual, demand, repeats;
     enabled: true             # only the best is written (not for sequels or viewer ideas, which have their subject)
     candidates: 6
+  series_links:               # a topic series Short says "Part N of the <series> series" and links the previous part and part 1
+    enabled: true             # in its description; the previous part's description gets "Next part"; both get a comment once public
+    comments: true
+    update_previous: true
   hook_tournament:            # after QA: alternative first sentences compete; the best replaces the hook if clearly better
     enabled: true
     candidates: 4
@@ -109,6 +113,8 @@ production:
   fact_check:                 # every claim searched on the web (Claude Code with web search) and judged by TypeSafe before voicing
     enabled: true
     mode: fix                 # fix = wrong claims are corrected in the script | review = wrong claims only hold the Short | off
+    custom: review            # your own scripts (pasted, from a file, long videos): review = doubtful claims are listed and the
+                              # video waits for you, your words are never changed | fix = corrected like generated scripts | off
     max_unverified: 2         # more unverifiable main claims than this: the Short waits for your review instead of auto-upload
     sources_in_description: true
     max_sources: 3
@@ -190,6 +196,15 @@ schedule:
   skip_when_queue_full: true
   source: trends              # trends | profile (a cloned channel style) | topic (series of your own) | dub (second-language channel)
   topics: []                  # when source = topic: series rotated through, e.g. ["bible stories", "space facts"]
+  compilations:               # once a week: the best uploaded Shorts on one topic stitched into a landscape video with chapters
+    enabled: true
+    weekday: 6                # 0 = Monday ... 6 = Sunday
+    hour: 11
+    window_days: 7            # Shorts uploaded in the last week; their video files are kept this long when they do well
+    min_parts: 4              # a topic needs at least this many Shorts this week
+    max_parts: 8
+    card_seconds: 1.6         # title card before each part
+    upload: true              # upload it (private, like every upload) when done; false = only render and send to Telegram
   seasonal:                   # the writer is told what is coming up (holidays, "on this day" anniversaries) and may use it
     enabled: true
     lead_days: 6

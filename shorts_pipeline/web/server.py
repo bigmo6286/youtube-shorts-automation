@@ -226,6 +226,7 @@ def _args(job: Job) -> SimpleNamespace:
         regenerate=p.get("regenerate", True) is not False, set=p.get("set", True) is not False,
         profile=p.get("profile") or None, topic=p.get("topic") or None, seconds=p.get("seconds") or None, target=p.get("target") or None,
         videos=int(p.get("videos") or 24),
+        days=float(p["days"]) if p.get("days") else None, no_upload=bool(p.get("no_upload")),
     )
 
 
@@ -235,6 +236,7 @@ COMMANDS = {
     "setup_ffmpeg": cli.cmd_setup_ffmpeg, "fetch_music": cli.cmd_music, "telegram": cli.cmd_telegram,
     "channel": cli.cmd_channel, "publish": cli.cmd_publish, "report": cli.cmd_report, "cleanup": cli.cmd_cleanup, "comments": cli.cmd_comments,
     "setup_voice": cli.cmd_setup_voice, "thumbnail": cli.cmd_thumbnail, "profile": cli.cmd_profile,
+    "compile": cli.cmd_compile,
 }
 
 
@@ -410,7 +412,8 @@ class JobRequest(BaseModel):
 
 # Heavy jobs (rendering, trend refresh, channel analysis) take one at a time across every channel's console on
 # this machine; light ones (uploads, publishing, syncs) only wait for their own console.
-HEAVY_KINDS = {"produce", "run", "discover", "judge", "rank", "analyze", "profile", "thumbnail", "setup_ffmpeg", "fetch_music"}
+HEAVY_KINDS = {"produce", "run", "discover", "judge", "rank", "analyze", "profile", "thumbnail", "setup_ffmpeg", "fetch_music",
+               "compile"}
 
 
 class _MachineLock:
@@ -990,6 +993,9 @@ def list_outputs() -> list[dict[str, Any]]:
             "priority_parts": meta.get("priority_parts"), "upload_error": meta.get("upload_error"),
             "channel_stats": meta.get("channel_stats"),
             "mode": meta.get("mode", "blueprint"), "long_video": bool(meta.get("long_video")),
+            "parts": meta.get("parts"), "compiled_in": meta.get("compiled_in"),
+            "series_part": meta.get("series_part"), "series_name": meta.get("series_name"),
+            "series_pending": len(meta.get("series_pending") or []),
             "music": meta.get("music"),
             "intro": meta.get("intro"), "outro": meta.get("outro"),
             "folder": str(d),

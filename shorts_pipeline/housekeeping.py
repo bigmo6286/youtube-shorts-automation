@@ -168,6 +168,13 @@ def cleanup_outputs(dry_run: bool = False, now: float | None = None, force_uploa
         drop_video = video.exists() and (
             (on_youtube and cfg["keep_video_days"] is not None and age_days >= float(cfg["keep_video_days"])) or
             (not on_youtube and cfg["keep_unuploaded_days"] is not None and age_days >= float(cfg["keep_unuploaded_days"])))
+        if drop_video and on_youtube and not force_uploaded:
+            try:
+                from .compilation import wants_video
+                if wants_video(meta, d, now=now, output_dir=OUTPUT_DIR):
+                    drop_video = False                 # a recent, well-watched Short: kept for the weekly compilation
+            except Exception as exc:  # noqa: BLE001
+                log.debug("compilation keep rule skipped: %s", exc)
         if drop_video:
             if not on_youtube:
                 freed += remove_intermediates(d, dry_run)

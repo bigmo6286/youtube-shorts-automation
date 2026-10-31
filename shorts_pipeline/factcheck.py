@@ -58,10 +58,15 @@ def check(script: dict[str, Any]) -> dict[str, Any] | None:
     check could not run (no Claude Code, no web)."""
     from . import claude_code_backend
     cfg = config()
-    prompt = ("Script of a short video. Check it.\n\nTitle: " + script.get("title", "") + "\n\n" + script.get("full_text", ""))
+    text = script.get("full_text", "")
+    long_script = len(text.split()) > 350
+    prompt = (("Script of a video. Check it." if long_script else "Script of a short video. Check it.")
+              + ("\nIt is long: check at most 25 claims, the ones the video's point depends on first.\n" if long_script else "")
+              + "\n\nTitle: " + script.get("title", "") + "\n\n" + text)
     try:
         data = claude_code_backend.generate_json(CHECK_SYSTEM, prompt, CHECK_SCHEMA, tools=["WebSearch", "WebFetch"],
-                                                 max_turns=30, timeout=int(cfg["timeout"]))
+                                                 max_turns=60 if long_script else 30,
+                                                 timeout=int(cfg["timeout"]) * (2 if long_script else 1))
     except Exception as exc:  # noqa: BLE001
         log.warning("fact-check could not run: %s", str(exc)[:200])
         return None
@@ -122,13 +127,41 @@ def summary(result: dict[str, Any] | None) -> str:
     if not result:
         return "not checked"
     n = len(result["claims"])
-    return (f"{result['supported']}/{n} claims verified" + (f", {len(result['contradicted'])} corrected" if result["contradicted"] else "")
+    wrong = len(result["contradicted"])
+    return (f"{result['supported']}/{n} claims verified"
+            + ((f", {wrong} corrected" if result.get("fixed") else f", {wrong} wrong") if wrong else "")
             + (f", {len(result['unverifiable'])} unverifiable" if result["unverifiable"] else ""))
 
 
-def needs_review(result: dict[str, Any]) -> bool:
+def mode_for(script: dict[str, Any], user_written: bool = False) -> str:
+    """fix | review | off for this script: your own scripts (pasted or from a file, enhanced or not) follow
+    `fact_check.custom`, which never rewrites your words by default; generated scripts follow `fact_check.mode`."""
+    cfg = config()
+    if not cfg["enabled"] or script.get("backend") == "dub":
+        return "off"
+    if user_written or script.get("backend") == "custom" or script.get("original_text"):
+        return str(cfg.get("custom", "review"))
+    return str(cfg.get("mode", "fix"))
+
+
+def needs_review(result: dict[str, Any], mode: str = "fix") -> bool:
+    """Hold the video for the owner: wrong claims that were not corrected (review mode, or a failed rewrite), or more
+    unverifiable main claims than allowed."""
+    if result["contradicted"] and not result.get("fixed"):
+        return True
     core_unverified = [c for c in result["unverifiable"] if c.get("core")]
     return len(core_unverified) > int(config()["max_unverified"])
+
+
+def doubts_text(result: dict[str, Any], limit: int = 6) -> str:
+    """The doubtful claims, one per line, for the Telegram note and the card."""
+    lines = []
+    for c in result["contradicted"][:limit]:
+        fix = (c.get("correction") or "").strip()
+        lines.append(f"WRONG: {c['claim'][:140]}" + (f" -> {fix[:160]}" if fix else ""))
+    for c in [u for u in result["unverifiable"] if u.get("core")][: max(0, limit - len(lines))]:
+        lines.append(f"UNVERIFIED: {c['claim'][:140]}")
+    return "\n".join(lines)
 
 
 def sources_block(result: dict[str, Any]) -> str:

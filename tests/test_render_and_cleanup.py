@@ -48,6 +48,7 @@ def _folder(root, name, **meta):
 
 def test_cleanup_rules(tmp_path, monkeypatch):
     monkeypatch.setattr("shorts_pipeline.config.OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr("shorts_pipeline.compilation.config", lambda: {"enabled": False, "window_days": 7})
     monkeypatch.setattr(housekeeping, "cleanup_config", lambda: {"clean_after_upload": True, "keep_video_days": 3,
                                                                   "keep_unuploaded_days": 30})
     now = time.time()
@@ -94,6 +95,7 @@ def test_shared_answers_return_stale_at_once_and_refresh_in_background():
 
 def test_uploaded_videos_go_at_the_next_cleanup_and_first_when_the_disk_is_low(tmp_path, monkeypatch):
     monkeypatch.setattr("shorts_pipeline.config.OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr("shorts_pipeline.compilation.config", lambda: {"enabled": False, "window_days": 7})
     now = time.time()
     monkeypatch.setattr(housekeeping, "cleanup_config", lambda: dict(housekeeping.CLEANUP_DEFAULTS))
     just = _folder(tmp_path, "2026-10-11T10-00-00Z_a", youtube_id="A", privacy="private", uploaded_at=now - 60)

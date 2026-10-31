@@ -11,6 +11,7 @@ Commands:
   /dismiss N         drop draft N                      /report      the daily report now
   /approve N, /reject N   decide a Short waiting for approval (numbers from /videos); the buttons under a video do the same
   /update            pull the latest engine code from GitHub and restart the console
+  /compile [topic]   this week's compilation now: the best uploaded Shorts on one topic in one long video
   /pause, /resume    stop or restart scheduled production
   /stop              stop the job running right now
 If two machines share one bot token, each sees only some messages: give each machine its own bot.
@@ -235,6 +236,14 @@ def handle(text: str) -> str:
         if not arg.isdigit() or not 1 <= int(arg) <= len(names):
             return "Send /videos first, then /approve N or /reject N."
         return _decide(OUTPUT_DIR / names[int(arg) - 1], "approved" if cmd == "/approve" else "rejected")
+    if cmd == "/compile":
+        from .web import server
+        topic = (arg + " " + rest).strip()
+        job = server.submit_job("compile", {"topic": topic} if topic else {})
+        if job is None:
+            running = server._CURRENT.kind if server._CURRENT else "another"
+            return f"Busy: a {running} job is running. Try again when it is done, or send /stop."
+        return "Compiling this week's best Shorts" + (f" on {topic!r}" if topic else "") + "... I'll send the video when it is ready."
     if cmd == "/update":
         from .web import server
         from . import updater

@@ -395,25 +395,28 @@ def cmd_produce(args) -> Path:
     fact_result = None
     fc = __import__("shorts_pipeline.factcheck", fromlist=["config"])
     fcfg = fc.config()
-    if (fcfg["enabled"] and fcfg.get("mode", "fix") != "off" and script.get("backend") not in ("custom", "dub")
-            and fc.available()):
-        log.info("fact-check: searching the web for every claim (Claude + TypeSafe)")
+    fc_mode = fc.mode_for(script, user_written=bool(script_text))
+    if fc_mode != "off" and fc.available():
+        log.info("fact-check: searching the web for every claim (Claude + TypeSafe)%s",
+                 " - your own script: doubtful claims are flagged, your words are not changed" if fc_mode == "review" and script_text else "")
         fact_result = fc.check(script)
         if fact_result:
-            log.info("fact-check: %s", fc.summary(fact_result))
             for c in fact_result["contradicted"]:
                 log.warning("fact-check: WRONG %r -> %s", c["claim"][:90], (c.get("correction") or "?")[:120])
             for c in fact_result["unverifiable"]:
                 log.info("fact-check: unverified %r", c["claim"][:90])
-            if fact_result["contradicted"] and fcfg.get("mode", "fix") == "fix":
+            if fact_result["contradicted"] and fc_mode == "fix":
                 try:
                     script = script_gen.revise_facts(script, fact_result["contradicted"], cfg.get("script_backend", "auto"))
+                    fact_result["fixed"] = True
                     log.info("fact-check: %d claim(s) corrected in the script", len(fact_result["contradicted"]))
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("fact-check: could not rewrite the wrong claims (%s); the Short is held for review", str(exc)[:160])
+                    log.warning("fact-check: could not rewrite the wrong claims (%s); the video is held for review", str(exc)[:160])
                     fact_result["rewrite_failed"] = True
+            log.info("fact-check: %s", fc.summary(fact_result))
             script["fact_check"] = {k: fact_result[k] for k in ("supported", "contradicted", "unverifiable", "sources")} | {
-                "claims": len(fact_result["claims"]), "summary": fc.summary(fact_result)}
+                "claims": len(fact_result["claims"]), "summary": fc.summary(fact_result), "mode": fc_mode,
+                "doubts": fc.doubts_text(fact_result)}
         else:
             log.info("fact-check: could not run this time; the script is used as written")
     save_json(out_dir / "script.json", script)
@@ -581,12 +584,15 @@ def cmd_produce(args) -> Path:
         save_json(out_dir / "meta.json", meta)
         queue_note = "Held for your review: the render check found " + "; ".join(render_result["issues"]) + ". Watch it before uploading."
         print(queue_note)
-    elif fact_result and (fc.needs_review(fact_result) or fact_result.get("rewrite_failed")):
+    elif fact_result and fc.needs_review(fact_result, fc_mode):
         meta["upload_state"] = "review"
         meta["review_reason"] = "fact-check: " + fc.summary(fact_result)
         save_json(out_dir / "meta.json", meta)
-        queue_note = ("Held for your review: the fact-check could not verify some of its main claims ("
-                      + fc.summary(fact_result) + "). Check them, then use Upload on its card.")
+        doubts = fc.doubts_text(fact_result)
+        queue_note = (("Held for your review: the fact-check doubts some claims (" if fact_result["contradicted"]
+                       else "Held for your review: the fact-check could not verify some of its main claims (")
+                      + fc.summary(fact_result) + ")." + (f"\n{doubts}" if doubts else "")
+                      + "\nCheck them, then use Upload on its card" + (" or fix the script and produce it again." if script_text else "."))
         print(queue_note)
     elif script.get("backend") == "ollama":
         meta["upload_state"] = "review"
@@ -676,7 +682,8 @@ def _notify_telegram(out_dir: Path, meta: dict, *, force: bool = False, extra: s
             sys.exit("Telegram is not configured: add the bot token and chat id in Settings.")
         return
     try:
-        note = f"New Short ready ({meta.get('duration', 0):.0f}s)" + (f" · https://youtube.com/shorts/{meta['youtube_id']}" if meta.get("youtube_id") else "")
+        kind = "Weekly compilation ready" if meta.get("mode") == "compilation" else ("New long video ready" if meta.get("long_video") else "New Short ready")
+        note = f"{kind} ({meta.get('duration', 0):.0f}s)" + (f" · https://youtube.com/shorts/{meta['youtube_id']}" if meta.get("youtube_id") else "")
         if extra:
             note += "\n" + extra
         buttons = None
@@ -760,6 +767,19 @@ def cmd_vision_check(args) -> None:
             break
     if not checked:
         print("No Short with its clips still on disk (uploaded Shorts lose them; check new ones before upload).")
+
+
+def cmd_compile(args) -> Path:
+    """This week's compilation: the best uploaded Shorts on one topic in one landscape video with chapters."""
+    from . import compilation, tools
+    if not tools.ensure_ffmpeg_on_path():
+        sys.exit(tools.MISSING_HELP)
+    try:
+        return compilation.run(topic=getattr(args, "topic", None) or None, days=getattr(args, "days", None) or None,
+                               upload=False if getattr(args, "no_upload", False) else None,
+                               telegram=getattr(args, "telegram", True))
+    except RuntimeError as exc:
+        sys.exit(str(exc))
 
 
 def cmd_update(args) -> None:
@@ -888,7 +908,15 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
         return
     tags = meta["hashtags"]
     desc = meta["description"]
-    if "#shorts" not in desc.lower():
+    from . import series
+    series_info = None
+    try:
+        series_info = series.prepare(out_dir, meta)
+        if series_info and series_info["block"] not in desc:
+            desc = desc.rstrip() + "\n\n" + series_info["block"]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("series links skipped: %s", str(exc)[:160])
+    if "#shorts" not in desc.lower() and not meta.get("long_video"):
         desc += "\n\n#Shorts"
     publish_at = None
     if not interactive and cfg["privacy"] == "private":
@@ -912,7 +940,18 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
     meta["uploaded_at"] = time.time()
     if meta.get("upload_state") in ("queued", "expired", "failed", None):
         meta["upload_state"] = "uploaded"
+    if series_info:
+        meta["description"] = desc.replace("\n\n#Shorts", "") if desc.endswith("\n\n#Shorts") else desc
     save_json(out_dir / "meta.json", meta)
+    if series_info:
+        try:
+            done = series.link_after_upload(out_dir, meta, series_info)
+            prev = series_info.get("previous")
+            print(f"Series: part {series_info['part']} of {series_info['series']!r}"
+                  + (f"; previous part linked both ways ({prev['title'][:40]!r})" if prev else " (the first part)")
+                  + (f"; done now: {len(done)}" if done else "") + ". Comments follow once the videos are public.")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("series links failed: %s", str(exc)[:160])
     from . import housekeeping
     if housekeeping.cleanup_config()["clean_after_upload"]:
         housekeeping.remove_intermediates(out_dir)        # the render pieces are not needed any more
@@ -1255,6 +1294,12 @@ def build_parser() -> argparse.ArgumentParser:
     vc.add_argument("dirs", nargs="*", help="output folder names (default: the newest Shorts whose clips are on disk)")
     vc.add_argument("--limit", type=int, default=3)
     vc.set_defaults(func=cmd_vision_check)
+
+    co = sub.add_parser("compile", help="this week's compilation: the best uploaded Shorts on one topic, one landscape video with chapters")
+    co.add_argument("--topic", help="only this series or topic label (default: the topic with the most Shorts this week)")
+    co.add_argument("--days", type=float, help="look back this many days (default: schedule.compilations.window_days)")
+    co.add_argument("--no-upload", dest="no_upload", action="store_true", help="render only; upload from its card later")
+    co.set_defaults(func=cmd_compile)
 
     up = sub.add_parser("update", help="pull the latest engine code from GitHub, install requirements, restart the console")
     up.add_argument("--check", action="store_true", help="only say what is new")

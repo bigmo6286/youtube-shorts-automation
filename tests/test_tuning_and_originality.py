@@ -97,6 +97,9 @@ def test_fact_check_verdicts_follow_the_evidence(monkeypatch):
     factcheck._verify_with_typesafe(claims)
     assert [c["verdict"] for c in claims] == ["supported", "contradicted", "unverifiable"]
     result = {"claims": claims, "supported": 1, "contradicted": [claims[1]], "unverifiable": [claims[2]], "sources": ["https://a", "https://b"]}
+    assert factcheck.summary(result) == "1/3 claims verified, 1 wrong, 1 unverifiable"
+    assert factcheck.needs_review(result)                          # a wrong claim that was not corrected waits for the owner
+    result["fixed"] = True
     assert factcheck.summary(result) == "1/3 claims verified, 1 corrected, 1 unverifiable"
     assert not factcheck.needs_review(result)                      # the unverified claim is not a core one
     assert factcheck.sources_block(result).startswith("Sources:\nhttps://a")

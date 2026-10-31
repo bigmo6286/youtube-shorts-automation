@@ -266,6 +266,11 @@ class Scheduler:
                     maybe_update(now)
             except Exception:  # noqa: BLE001
                 log.exception("nightly update check failed")
+            try:
+                from . import compilation
+                compilation.maybe_weekly(now, self._submit)
+            except Exception:  # noqa: BLE001
+                log.exception("weekly compilation check failed")
             if time.time() - self._last_cleanup > CLEANUP_EVERY_SECONDS:
                 self._last_cleanup = time.time()
                 try:
