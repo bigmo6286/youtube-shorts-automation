@@ -97,6 +97,13 @@ production:
     min_width: 800
   loop_endings: true          # last line runs straight into the first so the Short replays seamlessly (replays count as views);
                               # the voice's lead-in silence is cut and the video ends 0.15 s after the last word
+  subject_screening:          # before writing: Claude proposes subjects, TypeSafe scores curiosity, how visual, demand, repeats;
+    enabled: true             # only the best is written (not for sequels or viewer ideas, which have their subject)
+    candidates: 6
+  hook_tournament:            # after QA: alternative first sentences compete; the best replaces the hook if clearly better
+    enabled: true
+    candidates: 4
+    min_gain: 0.05
   render_check:               # look at the finished video: black stretches (ffmpeg), captions over faces, cut-off text,
     enabled: true             # blank frames (TypeSafe images); a severe problem holds the Short for review
   fact_check:                 # every claim searched on the web (Claude Code with web search) and judged by TypeSafe before voicing
@@ -210,6 +217,11 @@ dub:                          # only used by a second-language channel whose sch
   voice: ""                   # empty = the default native voice for the language (es: es-MX-JorgeNeural)
   source_channel: main        # the channel whose best Shorts are dubbed
   min_lift: 1.0               # dub Shorts with at least this x the source channel's median views per hour
+
+update:                       # self-update from GitHub (Overview card button, /update on Telegram, or nightly)
+  auto: false                 # true = pull and restart by itself every night at `hour` when nothing is running
+  hour: 4
+  branch: main
 
 backup:
   enabled: true               # nightly zip of what the engine learned (never tokens or keys)

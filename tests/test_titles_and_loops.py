@@ -159,3 +159,91 @@ def test_as_written_script_gets_one_footage_term_per_sentence(monkeypatch):
     script_gen.assign_visuals(script)
     assert [ln["visual_keyword"] for ln in script["lines"]] == ["owl skeleton neck", "blood vessels"]
     assert script["visual_fallback"] == "owl turning head"
+
+
+# ------------------------------------------------------------------ subjects, hooks, demand, updater
+def _fake_jev(monkeypatch, answers):
+    import typesafe_sdk
+
+    class _A:
+        def __init__(self, v):
+            if isinstance(v, dict): self.probabilities = v; self.choice = max(v, key=v.get); self.confidence = 0.8
+            elif isinstance(v, tuple): self.score = v[0]
+            else: self.noul = v
+    class _R:
+        pass
+    class _C:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def system_one(self, **k):
+            r = _R(); r.answers = {key: _A(v) for key, v in answers(k["questions"]).items()}; return r
+    monkeypatch.setattr(typesafe_sdk, "TypeSafeClient", _C)
+
+
+def test_subject_screening_prefers_curious_fresh_subjects_and_never_a_repeat(monkeypatch):
+    from shorts_pipeline import subjects
+    monkeypatch.setattr(subjects, "has_typesafe", lambda: True)
+    cands = [{"subject": "Noah's ark", "surprise": "x"}, {"subject": "Eutychus falls from a window", "surprise": "y"}, {"subject": "a genealogy list", "surprise": "z"}]
+
+    def answers(questions):
+        out = {}
+        for k in questions:
+            i = int(k.split("_")[1])
+            if k.startswith("cur"): out[k] = ((2.8 if i == 1 else 2.9 if i == 0 else 0.3),)
+            elif k.startswith("vis"): out[k] = ((1.8, 1.9, 0.5)[i],)
+            elif k.startswith("dem"): out[k] = (0.2, 0.6, 0.0)[i]
+            else: out[k] = (0.95, 0.05, 0.02)[i]          # Noah's ark is already made
+        return out
+    _fake_jev(monkeypatch, answers)
+    ranked = subjects.screen(cands, {"topic": "bible stories", "format": "storytime"}, ["Noah Builds the Ark"], ["why did eutychus fall"])
+    assert ranked[0]["subject"].startswith("Eutychus") and ranked[-1]["subject"] == "Noah's ark"   # the repeat sinks to the bottom
+
+
+def test_hook_tournament_replaces_only_a_clearly_better_hook_that_still_loops(monkeypatch):
+    from shorts_pipeline import hooks
+    monkeypatch.setattr(hooks, "has_typesafe", lambda: True)
+    monkeypatch.setattr(hooks, "alternatives", lambda s, b, backend="auto": ["A dead man stood up when he touched these bones.", "Here is a story about Elisha."])
+    monkeypatch.setattr(hooks, "_max_words", lambda: 13)
+    script = {"hook": "Can a dead prophet raise another dead man?", "lines": [{"text": "In Second Kings, Elisha dies."}], "cta": "Which leaves one question:",
+              "full_text": "x", "title": "T"}
+
+    def answers(questions):
+        out = {}
+        for k in questions:
+            i = int(k.split("_")[1])
+            if k.startswith("stop"): out[k] = ((2.0, 3.0, 1.0)[i],)
+            elif k.startswith("spec"): out[k] = (0.7, 0.95, 0.3)[i]
+            else: out[k] = (0.9, 0.8, 0.9)[i]
+        return out
+    _fake_jev(monkeypatch, answers)
+    out = hooks.run(dict(script), {}, loop=True)
+    assert out["hook"].startswith("A dead man stood up") and out["full_text"].startswith("A dead man stood up")
+    # a challenger that breaks the loop is never chosen
+    def answers2(questions):
+        o = answers(questions)
+        for k in o:
+            if k.startswith("loop_1"): o[k] = 0.1
+        return o
+    _fake_jev(monkeypatch, answers2)
+    out2 = hooks.run(dict(script), {}, loop=True)
+    assert out2["hook"] == script["hook"]
+
+
+def test_demand_phrases_are_deduplicated_and_ranked_by_source_count(monkeypatch):
+    from shorts_pipeline import demand
+    monkeypatch.setattr(demand, "_autocomplete", lambda q, ds: ["why do octopuses have three hearts", "octopus toys for sale"] if ds else ["why do octopuses have three hearts?"])
+    monkeypatch.setattr(demand, "_reddit", lambda topic, limit=25: ["Why do octopuses change colour?"])
+    rows = demand.raw_phrases("octopus")
+    assert rows[0]["text"] == "why do octopuses have three hearts" and rows[0]["sources"] == ["google", "youtube"]
+    assert any(r["text"] == "why do octopuses change colour" and r["sources"] == ["reddit"] for r in rows)
+
+
+def test_updater_refuses_to_overwrite_local_changes(monkeypatch):
+    from shorts_pipeline import updater
+    monkeypatch.setattr(updater, "check", lambda fetch=True: {"local": "aaa", "remote": "bbb", "behind": 2, "ahead": 0,
+                                                              "changes": ["x", "y"], "dirty": ["config.yaml"]})
+    r = updater.apply(restart=False)
+    assert not r["ok"] and "config.yaml" in r["message"]
+    monkeypatch.setattr(updater, "check", lambda fetch=True: {"local": "aaa", "remote": "aaa", "behind": 0, "ahead": 0, "changes": [], "dirty": []})
+    assert updater.apply(restart=False) == {"ok": True, "updated": False, "message": "Already up to date (aaa)."}

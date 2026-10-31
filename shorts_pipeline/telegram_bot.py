@@ -10,6 +10,7 @@ Commands:
   /drafts            comment reply drafts, numbered    /reply N [text]   post draft N (optionally edited)
   /dismiss N         drop draft N                      /report      the daily report now
   /approve N, /reject N   decide a Short waiting for approval (numbers from /videos); the buttons under a video do the same
+  /update            pull the latest engine code from GitHub and restart the console
   /pause, /resume    stop or restart scheduled production
   /stop              stop the job running right now
 If two machines share one bot token, each sees only some messages: give each machine its own bot.
@@ -234,6 +235,12 @@ def handle(text: str) -> str:
         if not arg.isdigit() or not 1 <= int(arg) <= len(names):
             return "Send /videos first, then /approve N or /reject N."
         return _decide(OUTPUT_DIR / names[int(arg) - 1], "approved" if cmd == "/approve" else "rejected")
+    if cmd == "/update":
+        from .web import server
+        from . import updater
+        if server._CURRENT is not None:
+            return f"A {server._CURRENT.kind} job is running; send /update when it is done, or /stop first."
+        return updater.apply(restart=True)["message"]
     if cmd in ("/pause", "/resume"):
         from .config import save_local_config
         save_local_config({"schedule": {"enabled": cmd == "/resume"}})

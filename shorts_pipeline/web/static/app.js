@@ -66,7 +66,15 @@ async function loadStatus() {
     card("Scheduler", s.schedule && s.schedule.enabled, s.schedule && s.schedule.enabled
       ? `${s.schedule.done_today} made today${s.schedule.skipped_today ? `, ${s.schedule.skipped_today} skipped` : ""}${s.schedule.next && s.schedule.next[0] ? `, next ${s.schedule.next[0].kind} ${s.schedule.next[0].time}` : ""}` : "off (Settings)"),
     card("Today's usage", true, s.usage_text || "nothing yet"),
+    card("Engine version", !(state.update && state.update.behind), state.update ? (state.update.error ? "could not check GitHub"
+      : state.update.behind ? `${state.update.behind} update${state.update.behind === 1 ? "" : "s"} available <button id="updatenow" title="${esc((state.update.changes || []).join("\n"))}">Update and restart</button>`
+      : `up to date (${esc(state.update.local || "")})`) : "checking..."),
   ].join("");
+  const upd = $("#updatenow");
+  if (upd) upd.addEventListener("click", async () => {
+    if (!confirm("Pull the latest engine code from GitHub and restart the console now?\n\nNothing is produced while it restarts (about 30 seconds).")) return;
+    try { const r = await api("/api/update", { method: "POST" }); toast(r.message); } catch (e) { toast(e.message, true); }
+  });
   const inst = $("#installffmpeg");
   if (inst) inst.addEventListener("click", () => startJob("setup_ffmpeg"));
   if (s.job_running && (!state.job || state.job.id !== s.job_running.id)) attachJob(s.job_running.id);
@@ -260,7 +268,7 @@ async function loadOutputs(afterStatusSync = false) {
       <div class="outbody">
         <h3>${esc(o.title)} <span class="tag ${o.title.length <= 100 ? "ok" : "warn"}" title="YouTube title limit is 100 characters; Shorts show about 70">${o.title.length}/100</span></h3>
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
-        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}${o.fact_check ? ` · facts: ${esc(o.fact_check.summary)}` : ""}</div>` : ""}
+        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}${o.fact_check ? ` · facts: ${esc(o.fact_check.summary)}` : ""}${o.subject_screening ? ` · subject picked from ${o.subject_screening.considered} (curiosity ${o.subject_screening.curiosity}/3)` : ""}${o.hook_tournament ? ` · hook ${o.hook_tournament.replaced ? "replaced by tournament" : "kept"}` : ""}</div>` : ""}
         ${o.upload_state === "review" && o.review_reason ? `<span class="tag warn" title="${esc(o.review_reason)}">held for review: ${esc(o.review_reason.slice(0, 80))}</span>` : ""}
         ${o.render_check && o.render_check.issues && o.render_check.issues.length ? `<span class="tag warn" title="final-render check">render: ${esc(o.render_check.issues.join("; "))}</span>` : ""}
         ${o.approval === "pending" && !o.youtube_id ? `<span class="tag warn">waiting for your approval (Telegram)</span>` : ""}
@@ -705,3 +713,5 @@ async function loadChannels() {
   } catch (_) {}
 }
 setInterval(loadStatus, 10000);
+async function loadUpdate() { try { state.update = await api("/api/update"); } catch (_) { state.update = { error: true }; } }
+loadUpdate(); setInterval(loadUpdate, 6 * 3600 * 1000);

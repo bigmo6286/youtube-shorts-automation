@@ -762,6 +762,31 @@ def cmd_vision_check(args) -> None:
         print("No Short with its clips still on disk (uploaded Shorts lose them; check new ones before upload).")
 
 
+def cmd_update(args) -> None:
+    """Pull the latest engine code and restart the console (or just report what is new with --check)."""
+    from . import updater
+    if getattr(args, "check", False):
+        info = updater.check()
+        if info.get("error"):
+            sys.exit(f"Could not check: {info['error']}")
+        print(f"This machine: {info['local']} · GitHub: {info['remote']} · "
+              + (f"{info['behind']} update(s) available:" if info["behind"] else "up to date"))
+        for c in info["changes"]:
+            print(f"  - {c}")
+        if info["dirty"]:
+            print("Local changes (would block an update): " + ", ".join(info["dirty"]))
+        return
+    result = updater.apply(restart=not getattr(args, "no_restart", False))
+    print(result["message"])
+    if not result["ok"]:
+        sys.exit(1)
+
+
+def cmd_restart(args) -> None:
+    from . import updater
+    print(updater.restart_console(args.port, delay=args.delay))
+
+
 def cmd_backup(args) -> None:
     from . import backup
     action = getattr(args, "action", "now") or "now"
@@ -1230,6 +1255,15 @@ def build_parser() -> argparse.ArgumentParser:
     vc.add_argument("dirs", nargs="*", help="output folder names (default: the newest Shorts whose clips are on disk)")
     vc.add_argument("--limit", type=int, default=3)
     vc.set_defaults(func=cmd_vision_check)
+
+    up = sub.add_parser("update", help="pull the latest engine code from GitHub, install requirements, restart the console")
+    up.add_argument("--check", action="store_true", help="only say what is new")
+    up.add_argument("--no-restart", dest="no_restart", action="store_true")
+    up.set_defaults(func=cmd_update)
+    rs = sub.add_parser("restart", help="stop and start the console (used by the updater)")
+    rs.add_argument("--port", type=int, default=8787)
+    rs.add_argument("--delay", type=int, default=3)
+    rs.set_defaults(func=cmd_restart)
 
     bk = sub.add_parser("backup", help="back up what the engine learned (nightly by itself): now | list | restore <zip>")
     bk.add_argument("action", nargs="?", default="now", choices=["now", "list", "restore"])

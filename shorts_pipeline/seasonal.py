@@ -85,7 +85,7 @@ def upcoming(today: date | None = None, lead_days: int | None = None) -> list[di
     return rows
 
 
-TRAGEDY = re.compile(r"(kill|killed|killing|dead|death|deaths|dies|died|massacre|crash|crashes|collapse|collapses|attack|"
+TRAGEDY = re.compile(r"\b(kill|killed|killing|dead|death|deaths|dies|died|massacre|crash|crashes|collapse|collapses|attack|"
                      r"bomb|bombing|shoot|shooting|murder|terror|earthquake|tsunami|genocide|executed|assassinat)", re.I)
 MIN_AGE_YEARS = 20            # anniversaries, not last year's news
 

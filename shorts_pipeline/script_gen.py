@@ -112,6 +112,11 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
         angle_line += prompt_note()
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from .demand import prompt_note as demand_note
+        angle_line += demand_note(blueprint.get("series") or str(blueprint.get("topic") or "").replace("_", " "))
+    except Exception:  # noqa: BLE001
+        pass
     style = blueprint.get("style_guide")
     if style:
         angle_line += (
@@ -398,11 +403,23 @@ def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angl
         known = [k for k in known if k["title"].strip().lower() not in allowed]
     if avoid_titles is None:
         avoid_titles = history.avoid_titles(blueprint)
-    return _write_with_qa(system=SYSTEM, user_prompt=_prompt(blueprint, target_seconds, angle, avoid_titles),
-                          blueprint=blueprint, backend=backend, max_attempts=max(max_attempts, 4 if check_repeats else 0),
-                          min_hook_score=min_hook_score,
-                          repeat_check=(lambda s: history.find_repeat(s, known)) if check_repeats else None,
-                          loop=loop_endings())
+    chosen_subject = None
+    if angle is None and not allow_repeat_of:
+        # Subject screening: several candidate subjects, TypeSafe-scored; the writer gets the best as its angle.
+        from . import subjects
+        chosen_subject = subjects.choose(blueprint, avoid_titles, backend)
+        if chosen_subject:
+            angle = f"{chosen_subject['subject']} (the surprise: {chosen_subject['surprise']})"
+    script = _write_with_qa(system=SYSTEM, user_prompt=_prompt(blueprint, target_seconds, angle, avoid_titles),
+                            blueprint=blueprint, backend=backend, max_attempts=max(max_attempts, 4 if check_repeats else 0),
+                            min_hook_score=min_hook_score,
+                            repeat_check=(lambda s: history.find_repeat(s, known)) if check_repeats else None,
+                            loop=loop_endings())
+    if chosen_subject:
+        script["subject_screening"] = {k: chosen_subject[k] for k in ("subject", "curiosity", "visual", "demand", "repeat", "total") if k in chosen_subject}
+        script["subject_screening"]["considered"] = len(chosen_subject.get("all") or [])
+    from . import hooks
+    return hooks.run(script, blueprint, loop=loop_endings(), backend=backend)
 
 
 ENHANCE_SYSTEM = SYSTEM + """

@@ -846,6 +846,25 @@ def dismiss_comment(thread_id: str) -> dict[str, Any]:
     return {"dismissed": thread_id}
 
 
+@app.get("/api/update")
+def update_status() -> dict[str, Any]:
+    from .. import updater
+    return _shared("update_check", 6 * 3600, lambda: updater.check(fetch=True))
+
+
+@app.post("/api/update")
+def update_now() -> dict[str, Any]:
+    """Pull and restart. Refused while a job runs (the restart would kill it)."""
+    from .. import updater
+    if _CURRENT is not None:
+        raise HTTPException(409, f"a {_CURRENT.kind} job is running; update when it is done (or stop it)")
+    result = updater.apply(restart=True)
+    _SHARED.pop("update_check", None)
+    if not result["ok"]:
+        raise HTTPException(400, result["message"])
+    return result
+
+
 @app.get("/api/library")
 def get_library() -> dict[str, Any]:
     from .. import library
@@ -983,6 +1002,9 @@ def list_outputs() -> list[dict[str, Any]]:
                    "faithful": qa.get("faithful", {}).get("noul")} if qa else None,
             "fact_check": (script or {}).get("fact_check"), "review_reason": meta.get("review_reason"),
             "render_check": meta.get("render_check"), "approval": meta.get("approval"),
+            "subject_screening": (script or {}).get("subject_screening"),
+            "hook_tournament": ({"replaced": (script or {}).get("hook_tournament", {}).get("chosen") != (script or {}).get("hook_tournament", {}).get("original", {}).get("hook")}
+                                if (script or {}).get("hook_tournament") else None),
         })
     return out
 

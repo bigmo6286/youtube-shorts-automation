@@ -259,6 +259,13 @@ class Scheduler:
                 maybe_nightly(now)
             except Exception:  # noqa: BLE001
                 log.exception("nightly backup failed")
+            try:
+                from .web import server as _server
+                if _server._CURRENT is None:
+                    from .updater import maybe_nightly as maybe_update
+                    maybe_update(now)
+            except Exception:  # noqa: BLE001
+                log.exception("nightly update check failed")
             if time.time() - self._last_cleanup > CLEANUP_EVERY_SECONDS:
                 self._last_cleanup = time.time()
                 try:
