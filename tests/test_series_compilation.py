@@ -210,3 +210,27 @@ def test_fact_check_mode_for_own_scripts_and_review_rules(monkeypatch):
     assert not factcheck.needs_review(fixed, "fix") and "1 corrected" in factcheck.summary(fixed)
     monkeypatch.setattr(factcheck, "config", lambda: {**factcheck.DEFAULTS, "custom": "off", "enabled": True})
     assert factcheck.mode_for({"backend": "custom"}) == "off"
+
+
+def test_fact_check_ambiguous_evidence_is_not_a_correction(monkeypatch):
+    import typesafe_sdk
+
+    class _A:
+        def __init__(self, v): self.noul = v
+
+    class _R:
+        def __init__(self, answers): self.answers = answers
+
+    class _C:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def system_one(self, state, questions):
+            return _R({"sup_0": _A(0.8), "con_0": _A(0.7), "sup_1": _A(0.1), "con_1": _A(0.9)})
+    monkeypatch.setattr(typesafe_sdk, "TypeSafeClient", _C)
+    monkeypatch.setattr(factcheck, "has_typesafe", lambda: True)
+    claims = [{"claim": "the fat closed over the handle", "verdict": "supported", "evidence": "the fat closed upon the blade", "correction": "", "core": True},
+              {"claim": "Rome fell in 576", "verdict": "contradicted", "evidence": "Rome fell in 476", "correction": "476", "core": True}]
+    factcheck._verify_with_typesafe(claims)
+    assert claims[0]["verdict"] == "unverifiable" and claims[0]["note"] == "evidence ambiguous"
+    assert claims[1]["verdict"] == "contradicted"

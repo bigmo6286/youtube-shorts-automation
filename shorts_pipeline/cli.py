@@ -952,6 +952,7 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
                   + (f"; done now: {len(done)}" if done else "") + ". Comments follow once the videos are public.")
         except Exception as exc:  # noqa: BLE001
             log.warning("series links failed: %s", str(exc)[:160])
+        meta = load_json(out_dir / "meta.json") or meta        # keep the part number and pending links
     from . import housekeeping
     if housekeeping.cleanup_config()["clean_after_upload"]:
         housekeeping.remove_intermediates(out_dir)        # the render pieces are not needed any more

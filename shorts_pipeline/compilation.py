@@ -285,14 +285,17 @@ def run(*, topic: str | None = None, days: float | None = None, upload: bool | N
     cands = candidates(now=now, window_days=days)
     choice = pick(cands, cfg, topic)
     if not choice:
-        have = len(cands)
-        groups = {}
+        uploaded = candidates(now=now, window_days=days, need_video=False)
+        groups: dict[str, int] = {}
         for c in cands:
             groups[c["label"]] = groups.get(c["label"], 0) + 1
         detail = ", ".join(f"{k}: {v}" for k, v in sorted(groups.items(), key=lambda kv: -kv[1])[:5]) or "none"
-        raise RuntimeError(f"Nothing to compile: {have} uploaded Short{'s' if have != 1 else ''} with a video file in the last "
-                           f"{days or cfg['window_days']} days (by topic: {detail}); a compilation needs {cfg['min_parts']} on one topic"
-                           + (f" matching {topic!r}" if topic else "") + ".")
+        window = days or cfg["window_days"]
+        raise RuntimeError(f"Nothing to compile: {len(uploaded)} Shorts uploaded in the last {window} days, {len(cands)} still have "
+                           f"their video file here (by topic: {detail}); a compilation needs {cfg['min_parts']} on one topic"
+                           + (f" matching {topic!r}" if topic else "")
+                           + (". The cleanup used to remove every uploaded video; from now on the better-watched ones of the "
+                              "week are kept, so the first compilation can come after a week of uploads." if uploaded and not cands else "."))
     parts, label = choice["parts"], choice["label"]
     log.info("compilation: %d %s Shorts (%s)", len(parts), label, "; ".join(p["title"][:40] for p in parts))
     frame.use("landscape", long=True)

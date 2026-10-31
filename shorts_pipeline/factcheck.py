@@ -74,6 +74,11 @@ def check(script: dict[str, Any]) -> dict[str, Any] | None:
     if not claims:
         return {"claims": [], "supported": 0, "contradicted": [], "unverifiable": [], "sources": []}
     _verify_with_typesafe(claims)
+    for c in claims:
+        if c["verdict"] == "contradicted" and not (c.get("correction") or "").strip():
+            c["verdict"] = "unverifiable"            # nothing to correct it with: the writer would only guess
+            c["note"] = "no correction given"
+            log.info("fact-check: %r called wrong without a correction; treated as unverified", c["claim"][:80])
     contradicted = [c for c in claims if c["verdict"] == "contradicted"]
     unverifiable = [c for c in claims if c["verdict"] == "unverifiable"]
     supported = [c for c in claims if c["verdict"] == "supported"]
@@ -112,7 +117,10 @@ def _verify_with_typesafe(claims: list[dict[str, Any]]) -> None:
     for i, c in enumerate(with_evidence):
         sup, con = float(resp.answers[f"sup_{i}"].noul), float(resp.answers[f"con_{i}"].noul)
         c["evidence_supports"], c["evidence_contradicts"] = round(sup, 2), round(con, 2)
-        if con >= CONTRADICT_AT:
+        if con >= CONTRADICT_AT and sup >= SUPPORT_AT:
+            c["verdict"] = "unverifiable"          # the evidence reads both ways (a wording detail): not a correction
+            c["note"] = "evidence ambiguous"
+        elif con >= CONTRADICT_AT:
             c["verdict"] = "contradicted"
         elif c["verdict"] == "supported" and sup < SUPPORT_AT:
             c["verdict"] = "unverifiable"
