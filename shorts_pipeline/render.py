@@ -72,20 +72,36 @@ def probe_channels(path: Path) -> int:
     return int(streams[0].get("channels") or 2)
 
 
-def _vchain(idx: int, length: float, label: str) -> str:
+def _vchain(idx: int, length: float, label: str, motion: str = "") -> str:
     W, H = frame.size()
     return (f"[{idx}:v]trim=duration={length:.3f},setpts=PTS-STARTPTS,"
-            f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps=30,format=yuv420p,setsar=1[{label}]")
+            f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},{motion}fps=30,format=yuv420p,setsar=1[{label}]")
+
+
+PUSH_AMOUNT = 0.06          # a 6% slow push over the clip: enough to feel alive, not enough to notice
+FLASH_SECONDS = 0.12        # the hook flash: the first frames fade in from white
+
+
+def _motion(i: int, length: float, amount: float = PUSH_AMOUNT) -> str:
+    """A slow push in (even clips) or pull out (odd clips) over the clip's length: scale per frame, crop the middle."""
+    W, H = frame.size()
+    p = f"min(t/{max(length, 0.5):.3f},1)"
+    z = f"(1+{amount}*{p})" if i % 2 == 0 else f"(1+{amount}*(1-{p}))"
+    return f"scale=w='trunc({W}*{z}/2)*2':h='trunc({H}*{z}/2)*2':eval=frame,crop={W}:{H},"
 
 
 def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out_path: Path, *,
            total_seconds: float, music_path: Path | None = None, music_volume_db: float = -18.0,
            duck: bool = True, fade_seconds: float = 1.5,
-           intro: dict[str, Any] | None = None, outro: dict[str, Any] | None = None) -> Path:
+           intro: dict[str, Any] | None = None, outro: dict[str, Any] | None = None,
+           polish: dict[str, Any] | None = None, sfx_path: Path | None = None) -> Path:
     """Segments are {path, start, end}; each is trimmed/looped to its slot, scaled and cropped to 9:16.
     Music (optional) is looped to the video length, faded in and out, and ducked under the voice.
     intro / outro are {path, seconds, ass?}: a card or clip placed before / after the body; the voice is
-    delayed by the intro and `total_seconds` must already include both. Clips are muted (music plays over them)."""
+    delayed by the intro and `total_seconds` must already include both. Clips are muted (music plays over them).
+    polish: {crossfade: seconds between body clips (the clips are extended so the timing of each line is kept),
+    push_in: slow push on every clip, hook_flash: the first frames fade in from white}. sfx_path: an effects
+    track (whooshes, hit) mixed under voice and music at its own level."""
     work = out_path.parent.resolve()
     inputs: list[str] = []
     filters: list[str] = []
@@ -99,16 +115,32 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
         parts.append("[vintro]")
         idx += 1
 
+    pol = polish or {}
+    xf = float(pol.get("crossfade") or 0.0) if len(segments) > 1 else 0.0
     body_labels = []
-    for seg in segments:
+    lengths = []
+    for i, seg in enumerate(segments):
         length = max(0.5, seg["end"] - seg["start"])
+        extra = xf if (xf and i < len(segments) - 1) else 0.0          # the fade eats into the extension, not the slot
         inputs += ["-stream_loop", "-1", "-i", str(Path(seg["path"]).resolve())]
-        filters.append(_vchain(idx, length, f"v{idx}"))
+        filters.append(_vchain(idx, length + extra, f"v{idx}", _motion(i, length + extra) if pol.get("push_in") else ""))
         body_labels.append(f"[v{idx}]")
+        lengths.append(length)
         idx += 1
-    filters.append("".join(body_labels) + f"concat=n={len(body_labels)}:v=1:a=0[vcat]")
+    if xf and len(body_labels) > 1:
+        prev, offset = body_labels[0], 0.0
+        for k in range(1, len(body_labels)):
+            offset += lengths[k - 1]
+            out = f"[x{k}]" if k < len(body_labels) - 1 else "[vcat]"
+            filters.append(f"{prev}{body_labels[k]}xfade=transition=fade:duration={xf:.3f}:offset={offset:.3f}{out}")
+            prev = out
+    elif len(body_labels) > 1:
+        filters.append("".join(body_labels) + f"concat=n={len(body_labels)}:v=1:a=0[vcat]")
+    else:
+        filters.append(f"{body_labels[0]}null[vcat]")
+    flash = f"fade=t=in:st=0:d={FLASH_SECONDS}:color=white," if pol.get("hook_flash") else ""
     # captions: run ffmpeg from the work dir so the ASS path needs no Windows drive-letter escaping
-    filters.append(f"[vcat]{subtitles_filter(ass_path)}[vbody]")
+    filters.append(f"[vcat]{flash}{subtitles_filter(ass_path)}[vbody]")
     parts.append("[vbody]")
 
     if outro:
@@ -125,21 +157,32 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
 
     voice_idx = idx
     inputs += ["-i", str(voice_path.resolve())]
+    idx += 1
     intro_ms = int(round((intro["seconds"] if intro else 0.0) * 1000))
     voice_pre = f"adelay={intro_ms}|{intro_ms}," if intro_ms else ""
-    if music_path and Path(music_path).exists():
+    # edge-tts voices are mono; aformat's mono->stereo upmix drops 3 dB, so duplicate the channel at unity
+    if probe_channels(voice_path) == 1:
+        voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000,pan=stereo|c0=c0|c1=c0"
+    else:
+        voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo"
+    has_music = bool(music_path and Path(music_path).exists())
+    has_sfx = bool(sfx_path and Path(sfx_path).exists())
+    if has_music:
+        music_idx = idx
+        idx += 1
         fade = max(0.0, min(fade_seconds, total_seconds / 3))
         inputs += ["-stream_loop", "-1", "-i", str(Path(music_path).resolve())]
-        music_chain = (f"[{voice_idx + 1}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+        music_chain = (f"[{music_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
                        f"atrim=duration={total_seconds:.3f},asetpts=PTS-STARTPTS,volume={music_volume_db}dB")
         if fade > 0:
             music_chain += f",afade=t=in:st=0:d={fade:.2f},afade=t=out:st={max(0.0, total_seconds - fade):.3f}:d={fade:.2f}"
         filters.append(music_chain + "[m]")
-        # edge-tts voices are mono; aformat's mono->stereo upmix drops 3 dB, so duplicate the channel at unity
-        if probe_channels(voice_path) == 1:
-            voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000,pan=stereo|c0=c0|c1=c0"
-        else:
-            voice_chain = f"[{voice_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo"
+    if has_sfx:
+        inputs += ["-i", str(Path(sfx_path).resolve())]
+        filters.append(f"[{idx}:a]aformat=sample_rates=48000:channel_layouts=stereo,atrim=duration={total_seconds:.3f},"
+                       f"apad=whole_dur={total_seconds:.3f}[sfx]")
+        idx += 1
+    if has_music:
         filters.append(voice_chain + f",{voice_pre}apad=whole_dur={total_seconds:.3f},asplit=2[vo][vsc]")
         if duck:
             # sidechaincompress lowers the music while the voice is loud, so words stay intelligible
@@ -149,7 +192,12 @@ def render(segments: list[dict[str, Any]], voice_path: Path, ass_path: Path, out
             filters.append("[vsc]anullsink")
             mix_in = "[vo][m]"
         # normalize=0: keep the voice at its own level instead of amix halving every input
-        filters.append(f"{mix_in}amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]")
+        n_in = 3 if has_sfx else 2
+        filters.append(f"{mix_in}{'[sfx]' if has_sfx else ''}amix=inputs={n_in}:duration=first:dropout_transition=0:normalize=0[aout]")
+        amap = "[aout]"
+    elif has_sfx:
+        filters.append(voice_chain + f",{voice_pre}apad=whole_dur={total_seconds:.3f}[vo]")
+        filters.append("[vo][sfx]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]")
         amap = "[aout]"
     elif intro_ms or outro:
         filters.append(f"[{voice_idx}:a]{voice_pre}apad=whole_dur={total_seconds:.3f}[aout]")

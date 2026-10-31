@@ -152,13 +152,13 @@ def mode_for(script: dict[str, Any], user_written: bool = False) -> str:
     return str(cfg.get("mode", "fix"))
 
 
-def needs_review(result: dict[str, Any], mode: str = "fix") -> bool:
+def needs_review(result: dict[str, Any], mode: str = "fix", strict: bool = False) -> bool:
     """Hold the video for the owner: wrong claims that were not corrected (review mode, or a failed rewrite), or more
-    unverifiable main claims than allowed."""
+    unverifiable main claims than allowed (strict, for a trend reaction: any unverified main claim holds it)."""
     if result["contradicted"] and not result.get("fixed"):
         return True
     core_unverified = [c for c in result["unverifiable"] if c.get("core")]
-    return len(core_unverified) > int(config()["max_unverified"])
+    return len(core_unverified) > (0 if strict else int(config()["max_unverified"]))
 
 
 def doubts_text(result: dict[str, Any], limit: int = 6) -> str:

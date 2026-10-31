@@ -90,18 +90,25 @@ def _taken() -> list[datetime]:
     return out
 
 
-def choose(now: datetime | None = None) -> datetime:
-    """The best publish time (UTC) after the review window, respecting the per-hour cap and spacing."""
+URGENT_REVIEW_HOURS = 0.5
+URGENT_HORIZON_HOURS = 3
+
+
+def choose(now: datetime | None = None, urgent: bool = False) -> datetime:
+    """The best publish time (UTC) after the review window, respecting the per-hour cap and spacing. `urgent` (a trend
+    reaction) shortens the review window to half an hour and looks only a few hours ahead: the earliest good slot."""
     cfg = config()
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    earliest = now + timedelta(hours=float(cfg["review_hours"]))
+    review = min(float(cfg["review_hours"]), URGENT_REVIEW_HOURS) if urgent else float(cfg["review_hours"])
+    horizon = URGENT_HORIZON_HOURS if urgent else int(cfg["horizon_hours"])
+    earliest = now + timedelta(hours=review)
     scores = hour_scores()["scores"]
     top = max(scores) or 1.0
     taken = _taken()
     gap = timedelta(minutes=float(cfg["publish_gap_minutes"]))
     best: tuple[float, datetime] | None = None
     start = earliest.replace(minute=0, second=0, microsecond=0)
-    for i in range(int(cfg["horizon_hours"]) + 2):
+    for i in range(horizon + 2):
         hour_start = start + timedelta(hours=i)
         same_hour = [t for t in taken if hour_start <= t < hour_start + timedelta(hours=1)]
         if len(same_hour) >= int(cfg["max_per_hour"]):
@@ -116,7 +123,7 @@ def choose(now: datetime | None = None) -> datetime:
         if candidate >= hour_start + timedelta(hours=1):
             continue
         hours_ahead = (candidate - now).total_seconds() / 3600
-        value = scores[candidate.hour] / top - 0.025 * hours_ahead   # a good hour today beats a slightly better one tomorrow
+        value = scores[candidate.hour] / top - (0.2 if urgent else 0.025) * hours_ahead   # a good hour today beats a slightly better one tomorrow
         if best is None or value > best[0]:
             best = (value, candidate)
     when = best[1] if best else earliest

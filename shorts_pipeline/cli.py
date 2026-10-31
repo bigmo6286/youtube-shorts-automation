@@ -321,6 +321,36 @@ def cmd_produce(args) -> Path:
             if "part 2" not in script["title"].lower():
                 script["title"] = script_gen._shorten(script["title"], script_gen.TITLE_MAX - 9) + " (Part 2)"
             script["description"] = (f"Part 1: https://youtube.com/shorts/{args.sequel_of}\n\n" + script["description"]).strip()
+    elif getattr(args, "trend", None):
+        # A reaction to a search spike (see trends.py): the headlines behind it are the angle; stricter policy and
+        # fact rules; it then jumps the upload queue and gets the earliest good publish time.
+        from . import trends
+        try:
+            script_gen.pick_backend(cfg.get("script_backend", "auto"))
+        except RuntimeError as exc:
+            sys.exit(str(exc))
+        trend_title = args.trend
+        if str(trend_title).strip().lower() == "auto":
+            best = trends.pick()
+            if not best:
+                sys.exit("No search spike fits the channel safely right now (see the log for what was screened).")
+            trend_title = best["title"]
+        blueprint, angle, trend_item = trends.blueprint_for(trend_title)
+        run_name = "trend"
+        log.info("trend reaction: %r (%s searches): %s x %s; headlines: %s", trend_title, f"{int(trend_item.get('traffic') or 0):,}",
+                 blueprint["format"], blueprint["topic"], " | ".join(blueprint["trend"]["headlines"])[:200] or "none")
+        out_dir = OUTPUT_DIR / f"{now_iso()}_trend_{trends.slug(trend_title)[:30]}"
+        try:
+            script = script_gen.generate_script(blueprint, target_seconds=_learned_seconds(blueprint, cfg), angle=angle,
+                                                max_attempts=cfg["script_max_attempts"], min_hook_score=cfg["script_min_hook_score"],
+                                                backend=cfg.get("script_backend", "auto"), avoid_titles=None)
+        except RuntimeError as exc:
+            sys.exit(f"Script writing failed: {exc}")
+        risk = float((((script.get("qa") or {}).get("policy_risk") or {}).get("noul")) or 0.0)
+        if risk > float(trends.config()["max_risk"]):
+            sys.exit(f"Trend Short dropped: TypeSafe puts its policy risk at {risk:.0%}, above the {float(trends.config()['max_risk']):.0%} "
+                     "allowed for a reaction made within hours.")
+        trends.record_made(trend_title, out_dir.name)
     elif getattr(args, "topic", None):
         # One Short of a topic series ("bible stories"): see topics.py.
         from . import topics
@@ -516,12 +546,27 @@ def cmd_produce(args) -> Path:
         thumb = thumbnail.make_thumbnail(script, segments, out_dir, style=_caption_style(cfg),
                                          handle=thumb_cfg.get("handle") or (cfg.get("outro") or {}).get("handle", ""),
                                          band=thumb_cfg.get("band", True))
+    polish_cfg = cfg.get("polish") or {}
+    polish = ({"crossfade": float(polish_cfg.get("crossfade", 0.25)), "push_in": bool(polish_cfg.get("push_in", True)),
+               "hook_flash": bool(polish_cfg.get("hook_flash", True)) and not long_video}
+              if polish_cfg.get("enabled", True) else None)
+    sfx_path = None
+    from . import sfx
+    if sfx.config()["enabled"]:
+        try:
+            cuts = sfx.cut_times(segments, offset=intro_seconds, min_gap=float(sfx.config()["min_gap"]))
+            sfx_path = sfx.build_track(cuts, None if long_video else intro_seconds, total, out_dir / "sfx.wav")
+        except Exception as exc:  # noqa: BLE001 - never lose a render over a sound effect
+            log.warning("sound design skipped: %s", str(exc)[:160])
+    if polish:
+        log.info("polish: %.2fs crossfades, %spush-ins%s", polish["crossfade"], "" if polish["push_in"] else "no ",
+                 ", hook flash" if polish["hook_flash"] else "")
     video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
                           music_path=Path(track["path"]) if track else None,
                           music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
                           fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro and not long_video
                                         else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
-                          intro=intro, outro=outro)
+                          intro=intro, outro=outro, polish=polish, sfx_path=sfx_path)
     render_result = None
     from . import render_check
     if render_check.config()["enabled"]:
@@ -584,7 +629,7 @@ def cmd_produce(args) -> Path:
         save_json(out_dir / "meta.json", meta)
         queue_note = "Held for your review: the render check found " + "; ".join(render_result["issues"]) + ". Watch it before uploading."
         print(queue_note)
-    elif fact_result and fc.needs_review(fact_result, fc_mode):
+    elif fact_result and fc.needs_review(fact_result, fc_mode, strict=bool(getattr(args, "trend", None))):
         meta["upload_state"] = "review"
         meta["review_reason"] = "fact-check: " + fc.summary(fact_result)
         save_json(out_dir / "meta.json", meta)
@@ -611,7 +656,8 @@ def cmd_produce(args) -> Path:
             try:
                 q = upload_queue.enqueue(out_dir)
                 qcfg = upload_queue.config()
-                queue_note = (f"Upload queue: priority {q['priority']}/100, #{q['rank']} of {q['waiting']} waiting"
+                queue_note = (("Trend reaction: it jumps the queue and goes public at the earliest good hour.\n" if getattr(args, "trend", None) else "")
+                              + f"Upload queue: priority {q['priority']}/100, #{q['rank']} of {q['waiting']} waiting"
                               + ("" if q["priority"] >= int(qcfg["min_priority"]) else
                                  f" (below {qcfg['min_priority']}: waits for you, not uploaded automatically)"))
                 print(queue_note)
@@ -922,7 +968,8 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
     if not interactive and cfg["privacy"] == "private":
         from . import publish_times
         if publish_times.config()["schedule_publish"]:
-            publish_at = publish_times.rfc3339(publish_times.choose())
+            urgent = (meta.get("blueprint") or {}).get("source") == "trend"
+            publish_at = publish_times.rfc3339(publish_times.choose(urgent=urgent))
     try:
         resp = upload.upload_video(Path(meta["video"]), title=meta["title"], description=desc, tags=tags,
                                    privacy=cfg["privacy"], category_id=cfg["category_id"], interactive=interactive,
@@ -1213,6 +1260,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--run"); pr.add_argument("--blueprint", type=int, default=1, help="1-based index from analyze")
     pr.add_argument("--angle", help="optional specific subject/angle for the script")
     pr.add_argument("--topic", help='one Short of a topic series, e.g. --topic "bible stories" (a fresh subject inside it each time)')
+    pr.add_argument("--trend", help='react to a search spike: its title from Google Trends, or "auto" for the best one right now')
     pr.add_argument("--profile", help="produce in the style of an analysed channel (see `profile add`)")
     pr.add_argument("--exemplar", help="with --profile: remake one of that channel's Shorts by video id (see `profile show`)")
     pr.add_argument("--dub-of", dest="dub_of", help="dub one of the main channel's Shorts (its output folder name) for this channel")

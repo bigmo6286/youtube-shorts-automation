@@ -129,6 +129,17 @@ production:
     enabled: true             # 1080x1920 thumbnail.jpg per video: first footage frame + dark band + 3-6 word line
     band: true                # dark band behind the text
     handle: ""                # shown small at the bottom; empty = use outro.handle
+  polish:                     # visual polish on every render
+    enabled: true
+    crossfade: 0.25           # seconds of crossfade between background clips (0 = hard cuts); line timing is kept
+    push_in: true             # a slow 6% push in / pull out on every clip
+    hook_flash: true          # the first frames fade in from white, so the hook lands with a flash (replays too)
+  sfx:                        # sound design, mixed under voice and music (assets/sfx: whoosh.wav, hit.wav; drop your own)
+    enabled: true
+    whoosh: true              # a soft whoosh on every background change
+    hit: true                 # a low hit under the hook (Shorts only; it lands again on each replay)
+    whoosh_db: -17
+    hit_db: -9
   music:
     default: random           # none | random | part of a file name or title in assets/music
     pick: mood                # mood = with "random", TypeSafe picks the track whose title fits the script's mood (never the
@@ -196,6 +207,15 @@ schedule:
   skip_when_queue_full: true
   source: trends              # trends | profile (a cloned channel style) | topic (series of your own) | dub (second-language channel)
   topics: []                  # when source = topic: series rotated through, e.g. ["bible stories", "space facts"]
+  trends:                     # fast trend reaction: Google's daily search trends (free), screened by TypeSafe; the Short is
+    enabled: true             # fact-checked strictly, jumps the upload queue and goes public at the earliest good hour
+    checks_per_day: 4
+    max_per_day: 1
+    region: US
+    min_traffic: 1000         # searches a spike needs on the feed's coarse scale (500+, 1K+, 2K+, 20K+)
+    min_fit: 0.7              # how well a narrated explainer can cover it (0-1); scores and schedules fall below this
+    max_risk: 0.3             # stricter than a normal Short: death, crime, politics, private people, health or money advice
+    repeat_days: 14           # never the same spike twice within this
   compilations:               # once a week: the best uploaded Shorts on one topic stitched into a landscape video with chapters
     enabled: true
     weekday: 6                # 0 = Monday ... 6 = Sunday

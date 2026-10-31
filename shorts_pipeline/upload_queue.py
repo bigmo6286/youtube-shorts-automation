@@ -252,6 +252,10 @@ def score_short(out_dir: Path, meta: dict[str, Any] | None = None, script: dict[
     if bp.get("explore") or bp.get("source") in ("sequel", "viewer_idea"):
         priority = min(100, max(priority + 10, int(config()["min_priority"]) + 15))
         parts["special_bonus"] = 1.0
+    if bp.get("source") == "trend":
+        # a trend reaction is worth nothing next week: it goes to the front of the queue
+        priority = min(100, max(priority + 20, int(config()["min_priority"]) + 30))
+        parts["trend_bonus"] = 1.0
     return {"priority": priority, "parts": parts}
 
 

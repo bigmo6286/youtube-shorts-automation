@@ -210,7 +210,7 @@ def add_hook_overlay(ass_path: Path, text: str, seconds: float, *, style: dict[s
     style_line = (f"Style: HookTitle,{st['font']},{size},{color},&H0000FFFF,{outline_c},&H96000000,-1,0,0,0,100,100,"
                   f"{int(st.get('spacing', 0))},0,1,{max(6, int(st['outline']) + 2)},3,8,70,70,0,1")
     event = (f"Dialogue: 1,{_ts(0.0)},{_ts(seconds)},HookTitle,,0,0,0,,"
-             f"{{\\an8\\pos({width // 2},{y})\\fad(0,250)}}{body}")
+             f"{{\\an8\\pos({width // 2},{y})\\fad(0,250)\\fscx112\\fscy112\\t(0,140,\\fscx100\\fscy100)}}{body}")
     content = ass_path.read_text(encoding="utf-8")
     lines = content.splitlines()
     out, styled = [], False

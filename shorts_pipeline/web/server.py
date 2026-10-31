@@ -227,6 +227,7 @@ def _args(job: Job) -> SimpleNamespace:
         profile=p.get("profile") or None, topic=p.get("topic") or None, seconds=p.get("seconds") or None, target=p.get("target") or None,
         videos=int(p.get("videos") or 24),
         days=float(p["days"]) if p.get("days") else None, no_upload=bool(p.get("no_upload")),
+        trend=p.get("trend") or None,
     )
 
 
@@ -982,7 +983,7 @@ def list_outputs() -> list[dict[str, Any]]:
         out.append({
             "dir": d.name, "title": meta.get("title"), "description": meta.get("description"),
             "hashtags": meta.get("hashtags", []), "duration": meta.get("duration"),
-            "blueprint": {k: meta.get("blueprint", {}).get(k) for k in ("format", "topic", "hook_style")},
+            "blueprint": {k: meta.get("blueprint", {}).get(k) for k in ("format", "topic", "hook_style", "source", "trend")},
             "video_url": f"/outputs/{d.name}/short.mp4" if (d / "short.mp4").exists() else None,
             "thumbnail_url": f"/outputs/{d.name}/thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
             "thumbnail_text": meta.get("thumbnail_text"),

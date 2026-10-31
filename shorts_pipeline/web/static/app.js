@@ -262,7 +262,7 @@ async function loadOutputs(afterStatusSync = false) {
   const outs = await api("/api/outputs");
   state.outputs = Object.fromEntries(outs.map((o) => [o.dir, o]));
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
-  const writer = (o) => o.mode === "compilation" ? `weekly compilation of ${(o.parts || []).length} Shorts` : (o.long_video ? "long video · " : "") + (o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API");
+  const writer = (o) => (o.blueprint && o.blueprint.source === "trend" ? "trend reaction · " : "") + (o.mode === "compilation" ? `weekly compilation of ${(o.parts || []).length} Shorts` : (o.long_video ? "long video · " : "") + (o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API"));
   $("#outputs").innerHTML = outs.map((o) => `<div class="out">
       ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"${o.thumbnail_url ? ` poster="${o.thumbnail_url}"` : ""}></video>` : `<div class="novideo">${o.video_removed ? (o.youtube_id ? "video file removed to save disk space; it is on YouTube" : "video file removed after 30 days unuploaded") : "no video"}</div>`}
       <div class="outbody">
@@ -503,6 +503,7 @@ $("#tp-produce").addEventListener("click", () => {
   const topic = $("#tp-topic").value.trim(); if (!topic) return toast("Type a topic first", true);
   startJob("produce", { topic, angle: $("#tp-angle").value, music: $("#tp-music").value, upload: $("#tp-upload").checked });
 });
+$("#tp-trend").addEventListener("click", () => startJob("produce", { trend: "auto", music: "random" }));
 $("#tp-compile").addEventListener("click", () => {
   const topic = $("#tp-topic").value.trim();
   startJob("compile", topic ? { topic } : {});

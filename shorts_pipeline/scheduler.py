@@ -271,6 +271,12 @@ class Scheduler:
                 compilation.maybe_weekly(now, self._submit)
             except Exception:  # noqa: BLE001
                 log.exception("weekly compilation check failed")
+            if cfg["enabled"]:
+                try:
+                    from . import trends
+                    trends.maybe_check(now, self._submit)
+                except Exception:  # noqa: BLE001
+                    log.exception("trend check failed")
             if time.time() - self._last_cleanup > CLEANUP_EVERY_SECONDS:
                 self._last_cleanup = time.time()
                 try:
