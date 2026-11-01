@@ -549,6 +549,11 @@ def sync() -> dict[str, Any]:
         log.info("channel feedback: labelled %d new upload(s) with TypeSafe", new)
     from .analytics import sync_quietly
     log.info("%s", sync_quietly())
+    try:
+        from . import traffic
+        log.info("%s", traffic.sync())                    # search terms, suggested videos, feed share, feed-drop alert
+    except Exception as exc:  # noqa: BLE001
+        log.warning("traffic sources skipped: %s", exc)
     matched = match_outputs(data["videos"])
     perf = blueprint_performance(matched)
     log.info("channel feedback: %d uploads labelled, %d matched to local outputs, %d format x topic pairs with data",
@@ -592,7 +597,12 @@ def cached_report() -> dict[str, Any] | None:
     perf = blueprint_performance(matched)
     from . import analytics
     an = analytics.cached()
+    try:
+        from .traffic import overview as traffic_overview
+        tr = traffic_overview()
+    except Exception:  # noqa: BLE001
+        tr = None
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
             "matched": matched, "performance": perf, "winners": load_json(CHANNEL_BLUEPRINTS_PATH) or [],
             "analytics": {"connected": analytics.connected(), "fetched_at": an.get("fetched_at"),
-                          "videos": len(an.get("videos") or {})}}
+                          "videos": len(an.get("videos") or {})}, "traffic": tr}

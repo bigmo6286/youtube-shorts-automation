@@ -75,6 +75,29 @@ def _at(curve: list[float], frac: float) -> float:
     return curve[i]
 
 
+def steepest_drop(curve: list[float], hook_end: float, cta_start: float, window: int = 5) -> float | None:
+    """Fraction of the video where the (normalised) curve loses most over `window` points, inside the body."""
+    n = len(curve)
+    if n < 20:
+        return None
+    lo, hi = int(hook_end * (n - 1)), int(cta_start * (n - 1))
+    best, best_i = 0.0, None
+    for i in range(lo, max(lo + 1, hi - window)):
+        loss = curve[i] - curve[i + window]
+        if loss > best:
+            best, best_i = loss, i
+    if best_i is None:
+        return None
+    return round((best_i + window / 2) / (n - 1), 3)
+
+
+def drop_point() -> float | None:
+    """Where this channel's viewers leave fastest (fraction of the video), once enough curves are measured."""
+    from .tuning import TUNING_PATH
+    r = (load_json(TUNING_PATH) or {}).get("retention") or {}
+    return float(r["drop_at"]) if r.get("drop_at") else None
+
+
 def _outputs_by_video() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     out = {}
     if not OUTPUT_DIR.exists():
@@ -112,6 +135,7 @@ def measure(curve: list[float], meta: dict[str, Any], script: dict[str, Any]) ->
         losses[name] = round((_at(curve, a) - _at(curve, b)) / length, 3)      # loss per unit of video
     return {"start": round(start, 3), "hook_hold": round(min(1.0, _at(curve, hook_end)), 3), "end_hold": round(min(1.0, _at(curve, cta_start)), 3),
             "finish": round(_at(curve, 0.98), 3), "worst_section": max(losses, key=losses.get), "losses": losses,
+            "drop_at": steepest_drop(curve, hook_end, cta_start),
             "hook_words": len(hook), "cta_words": len(cta), "hook_style": (meta.get("blueprint") or {}).get("hook_style"),
             "format": (meta.get("blueprint") or {}).get("format"), "views": 0}
 
@@ -139,6 +163,10 @@ def learn() -> dict[str, Any]:
     end_hold = st.mean(r["end_hold"] for r in rows)
     result.update(hook_hold=round(hook_hold, 3), end_hold=round(end_hold, 3),
                   replay=round(st.mean(r["start"] for r in rows), 3))
+    drops = [r["drop_at"] for r in rows if r.get("drop_at")]
+    if len(drops) >= MIN_VIDEOS:
+        result["drop_at"] = round(st.median(drops), 3)       # the pattern interrupt goes here (interrupt.py)
+        result["drop_at_videos"] = len(drops)
     g = result["guidance"]
 
     # 1. hook length

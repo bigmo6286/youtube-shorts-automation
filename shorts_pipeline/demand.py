@@ -123,7 +123,16 @@ def _filter(topic: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def prompt_note(topic: str, limit: int = 8) -> str:
     qs = questions(topic, limit)
-    if not qs:
-        return ""
-    return ("\nQuestions people are actually asking about this topic (search autocomplete and Reddit). A subject that answers "
-            "one of these has proven demand; prefer it when it fits:\n" + "\n".join(f"- {q['text']}?" for q in qs) + "\n")
+    note = ""
+    if qs:
+        note += ("\nQuestions people are actually asking about this topic (search autocomplete and Reddit). A subject that answers "
+                 "one of these has proven demand; prefer it when it fits:\n" + "\n".join(f"- {q['text']}?" for q in qs) + "\n")
+    try:
+        from .traffic import terms_for
+        own = terms_for(topic, limit=6)
+    except Exception:  # noqa: BLE001
+        own = []
+    if own:
+        note += ("\nSearches that already brought viewers to THIS channel about this topic (YouTube Analytics), demand proven "
+                 "here:\n" + "\n".join(f"- {t}" for t in own) + "\n")
+    return note

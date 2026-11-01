@@ -268,7 +268,7 @@ async function loadOutputs(afterStatusSync = false) {
       <div class="outbody">
         <h3>${esc(o.title)} <span class="tag ${o.title.length <= 100 ? "ok" : "warn"}" title="YouTube title limit is 100 characters; Shorts show about 70">${o.title.length}/100</span></h3>
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
-        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}${o.fact_check ? ` · facts: ${esc(o.fact_check.summary)}` : ""}${o.subject_screening ? ` · subject picked from ${o.subject_screening.considered} (curiosity ${o.subject_screening.curiosity}/3)` : ""}${o.hook_tournament ? ` · hook ${o.hook_tournament.replaced ? "replaced by tournament" : "kept"}` : ""}</div>` : ""}
+        ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}${o.fact_check ? ` · facts: ${esc(o.fact_check.summary)}` : ""}${o.subject_screening ? ` · subject picked from ${o.subject_screening.considered} (curiosity ${o.subject_screening.curiosity}/3)` : ""}${o.hook_tournament ? ` · hook ${o.hook_tournament.replaced ? "replaced by tournament" : "kept"}` : ""}${o.interrupt ? ` · re-hook at ${o.interrupt.seconds}s (${o.interrupt.rewritten ? "rewritten" : "kept"}${o.interrupt.card_text ? `, callout "${esc(o.interrupt.card_text)}"` : ""})` : ""}${o.loudness && o.loudness.input_lufs != null ? ` · loudness ${o.loudness.input_lufs} → ${o.loudness.target} LUFS` : ""}</div>` : ""}
         ${o.upload_state === "review" && o.review_reason ? `<span class="tag warn" title="${esc(o.review_reason)}">held for review: ${esc(o.review_reason.slice(0, 80))}</span>` : ""}
         ${o.render_check && o.render_check.issues && o.render_check.issues.length ? `<span class="tag warn" title="final-render check">render: ${esc(o.render_check.issues.join("; "))}</span>` : ""}
         ${o.approval === "pending" && !o.youtube_id ? `<span class="tag warn">waiting for your approval (Telegram)</span>` : ""}
@@ -412,11 +412,17 @@ async function loadChannel() {
   const hookRows = Object.entries(perf.hooks || {}).filter(([, v]) => v.median_view_pct != null).sort((a, b) => b[1].median_view_pct - a[1].median_view_pct)
     .map(([k, v]) => `<span class="tag">${esc(k)} · ${Math.round(v.median_view_pct)}% viewed</span>`).join(" ");
   const winners = (r.winners || []).map((w) => `<span class="tag ok">★ ${esc(w.key.replace("|", " × "))} x${w.opportunity}</span>`).join(" ");
+  const tr = r.traffic;
+  const trafficLine = tr ? `<br>Traffic (${tr.days} d): ${tr.shares.map((s) => `${esc(s.source)} ${Math.round(s.share * 100)}%`).join(" · ")}`
+    + (tr.search_terms.length ? `. Searches that found you: ${tr.search_terms.map(esc).join(" · ")}` : "")
+    + (tr.suggested_from.length ? `. Suggested next to: ${tr.suggested_from.map((s) => esc(s.title) + (s.channel ? ` (${esc(s.channel)})` : "")).join(" · ")}` : "")
+    + (tr.feed_drop ? `<br><span class="warn">${esc(tr.feed_drop.text)}</span>` : "") : "";
   el.innerHTML = `Your channel <b>${esc(r.channel.title)}</b>: ${r.uploads} Shorts, ${perf.uploads_labelled ?? 0} labelled by format × topic, median ${perf.channel_median_vph ?? "-"} views/h over ${perf.videos} scored (synced ${esc(r.fetched_at)}). `
     + (winners ? `<br>Channel winners (always in the production pool): ${winners}<br>` : "")
     + (rows || "No labelled videos old enough to score yet - run Sync.")
     + (an.connected ? `<br>Retention (YouTube Analytics, ${an.videos} videos, channel median ${perf.channel_median_view_pct ?? "-"}% viewed): factors blend views/hour and retention.${hookRows ? " Hook styles: " + hookRows : ""}`
-       : `<br><span class="warn">Retention is not used yet.</span> Connect YouTube Analytics (read-only) so formats are also judged by how long viewers stay.`);
+       : `<br><span class="warn">Retention is not used yet.</span> Connect YouTube Analytics (read-only) so formats are also judged by how long viewers stay.`)
+    + trafficLine;
 }
 $("#channelsync").addEventListener("click", () => startJob("channel", { action: "sync" }));
 async function loadComments() {

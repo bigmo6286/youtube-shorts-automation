@@ -140,6 +140,19 @@ production:
     hit: true                 # a low hit under the hook (Shorts only; it lands again on each replay)
     whoosh_db: -17
     hit_db: -9
+  interrupt:                  # pattern interrupt where this channel's viewers leave (learned from the retention curves)
+    enabled: true
+    rewrite: true             # a weak line at that point is rewritten as a re-hook (same facts) when TypeSafe finds it clearly stronger
+    card: true                # the moment's key number or name as big on-screen text (chosen by Claude, checked by TypeSafe)
+    punch: true               # a quick punch-in on the footage at that line
+    hit: true                 # a low hit under it
+    default_at: 0.42          # fraction of the video used until the channel has enough retention curves
+  mastering:                  # audio mastering on every render
+    enabled: true
+    target_lufs: -14          # YouTube's playback level: every Short lands at the same loudness (two-pass loudnorm)
+    true_peak: -1.5
+    voice_compress: true      # a light compressor on the voice
+    deess: true               # 80 Hz high-pass and a de-esser on the voice
   music:
     default: random           # none | random | part of a file name or title in assets/music
     pick: mood                # mood = with "random", TypeSafe picks the track whose title fits the script's mood (never the
@@ -216,6 +229,12 @@ schedule:
     min_fit: 0.7              # how well a narrated explainer can cover it (0-1); scores and schedules fall below this
     max_risk: 0.3             # stricter than a normal Short: death, crime, politics, private people, health or money advice
     repeat_days: 14           # never the same spike twice within this
+  traffic:                    # traffic sources from YouTube Analytics at every channel sync: search terms that found the
+    enabled: true             # channel, the videos yours are suggested next to, each Short's feed/search/suggested split
+    days: 28
+    per_video: 8              # per-video splits fetched per sync (one Analytics call each)
+    feed_drop_factor: 0.35    # Telegram alert when the last 3 days' Shorts-feed views fall to this share of the 14 before...
+    min_daily_feed: 50        # ...and the channel usually gets at least this many feed views a day
   compilations:               # once a week: the best uploaded Shorts on one topic stitched into a landscape video with chapters
     enabled: true
     weekday: 6                # 0 = Monday ... 6 = Sunday

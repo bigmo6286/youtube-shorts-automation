@@ -479,6 +479,9 @@ def cmd_produce(args) -> Path:
     n_hook, n_cta = len((script.get("hook") or "").split()), len((script.get("cta") or "").split())
     timeline = {"hook_end": words[min(len(words), n_hook) - 1]["end"] if words and n_hook else None,
                 "cta_start": words[max(0, len(words) - n_cta)]["start"] if words and n_cta else None}
+    from . import interrupt
+    itp_at = interrupt.timing(script, words) if not long_video else None        # the pattern interrupt, body-local
+    itp_info = script.get("interrupt") or {}
 
     intro = _card(cfg.get("intro") or {}, "intro", script, out_dir, cfg, enabled=getattr(args, "intro", None))
     outro = _card(cfg.get("outro") or {}, "outro", script, out_dir, cfg, enabled=getattr(args, "outro", None))
@@ -500,6 +503,9 @@ def cmd_produce(args) -> Path:
         hook_end = words[min(len(words), max(n, 1)) - 1]["end"] + 0.5 if words and n else 2.5
         seconds = max(1.5, min(float(hook_cfg.get("max_seconds", 3.5)), hook_end))
         captions.add_hook_overlay(ass_path, script.get("thumbnail_text") or script["hook"], seconds, style=_caption_style(cfg))
+    if itp_at is not None and itp_info.get("card_text") and interrupt.config()["card"]:
+        captions.add_card_event(ass_path, itp_info["card_text"], itp_at, float(interrupt.config()["card_seconds"]),
+                                style=_caption_style(cfg), width=frame.size()[0], height=frame.size()[1])
     photo_credits: list[dict] = []
     segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir, credits=photo_credits)
 
@@ -550,23 +556,43 @@ def cmd_produce(args) -> Path:
     polish = ({"crossfade": float(polish_cfg.get("crossfade", 0.25)), "push_in": bool(polish_cfg.get("push_in", True)),
                "hook_flash": bool(polish_cfg.get("hook_flash", True)) and not long_video}
               if polish_cfg.get("enabled", True) else None)
+    if itp_at is not None and interrupt.config()["punch"]:
+        polish = {**(polish or {"crossfade": 0.0, "push_in": False, "hook_flash": False}), "punch_at": itp_at}
     sfx_path = None
     from . import sfx
     if sfx.config()["enabled"]:
         try:
             cuts = sfx.cut_times(segments, offset=intro_seconds, min_gap=float(sfx.config()["min_gap"]))
-            sfx_path = sfx.build_track(cuts, None if long_video else intro_seconds, total, out_dir / "sfx.wav")
+            sfx_path = sfx.build_track(cuts, None if long_video else intro_seconds, total, out_dir / "sfx.wav",
+                                       hits=[itp_at + intro_seconds] if (itp_at is not None and interrupt.config()["hit"]) else None)
         except Exception as exc:  # noqa: BLE001 - never lose a render over a sound effect
             log.warning("sound design skipped: %s", str(exc)[:160])
     if polish:
         log.info("polish: %.2fs crossfades, %spush-ins%s", polish["crossfade"], "" if polish["push_in"] else "no ",
                  ", hook flash" if polish["hook_flash"] else "")
+    if itp_at is not None:
+        icfg = interrupt.config()
+        what = [("re-hook rewritten" if itp_info.get("rewritten") else "re-hook kept"),
+                f"callout {itp_info['card_text']!r}" if itp_info.get("card_text") and icfg["card"] else "",
+                "punch-in" if icfg["punch"] else "", "hit" if icfg["hit"] else ""]
+        log.info("pattern interrupt at %.1fs (line %d, %s drop point %.0f%%): %s", itp_at + intro_seconds, int(itp_info.get("line", 0)) + 1,
+                 itp_info.get("basis", "default"), float(itp_info.get("at", 0)) * 100, ", ".join(x for x in what if x))
+    master_cfg = cfg.get("mastering") or {}
+    mastering = {**render.MASTER_DEFAULTS, **master_cfg} if master_cfg.get("enabled", True) else None
+    loudness: dict[str, Any] = {}
     video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
                           music_path=Path(track["path"]) if track else None,
                           music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
                           fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro and not long_video
                                         else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
-                          intro=intro, outro=outro, polish=polish, sfx_path=sfx_path)
+                          intro=intro, outro=outro, polish=polish, sfx_path=sfx_path, mastering=mastering, report=loudness)
+    if mastering:
+        if loudness.get("input_lufs") is not None:
+            log.info("mastering: mix measured %.1f LUFS (true peak %.1f dB) -> %.0f LUFS, voice %s", loudness["input_lufs"],
+                     loudness["input_true_peak"], loudness["target"],
+                     "compressed and de-essed" if mastering.get("voice_compress") and mastering.get("deess") else "processed")
+        else:
+            log.info("mastering: loudness not measured (silent mix?); normalised dynamically to %.0f LUFS", mastering["target_lufs"])
     render_result = None
     from . import render_check
     if render_check.config()["enabled"]:
@@ -589,6 +615,9 @@ def cmd_produce(args) -> Path:
             "segments": segments, "photo_credits": photo_credits, "timeline": timeline,
             "fact_check": script.get("fact_check", {}).get("summary") if script.get("fact_check") else None,
             "render_check": {k: render_result[k] for k in ("severity", "issues", "black_seconds")} if render_result else None,
+            "interrupt": ({k: itp_info.get(k) for k in ("line", "at", "basis", "rewritten", "card_text")} | {"seconds": round(itp_at + intro_seconds, 2)}
+                          if itp_at is not None else None),
+            "loudness": loudness or None,
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint"),
             "long_video": long_video, "orientation": "landscape" if frame.landscape() else "vertical"}

@@ -107,7 +107,7 @@ def ensure_free_space() -> None:
 # ---------------------------------------------------------------------------------------------------- output folders
 # Render pieces: only needed while the Short is being made. The final video, its script, details and thumbnail stay.
 INTERMEDIATE_PATTERNS = ("bg_*.mp4", "bg_*.jpg", "bg_*.png", "outro_bg.mp4", "intro_bg.mp4", "voice.mp3", "*.ass",
-                         "words.json", "*.tmp", ".*.tmp")
+                         "words.json", "*.tmp", ".*.tmp", "mix.wav", "sfx.wav")
 KEEP_FILES = {"short.mp4", "meta.json", "script.json", "thumbnail.jpg"}
 CLEANUP_DEFAULTS = {"clean_after_upload": True, "keep_video_days": 0, "keep_unuploaded_days": 30}
 

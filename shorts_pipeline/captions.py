@@ -188,6 +188,39 @@ def subtitles_filter(ass_path: Path) -> str:
     return arg
 
 
+def add_card_event(ass_path: Path, text: str, start: float, seconds: float, *, style: dict[str, Any] | None = None,
+                   width: int = 1080, height: int = 1920) -> Path:
+    """A big centred callout (the key number or name of a moment) that pops in at `start` for `seconds`, above the
+    running captions. Appends a style and one event to an existing captions file."""
+    st = resolve_style(style)
+    words = re.sub(r"\s+", " ", (text or "").strip()).upper().split()
+    if not words or seconds <= 0:
+        return ass_path
+    if len(" ".join(words)) > 14 and len(words) > 1:
+        half = max(1, round(len(words) / 2))
+        body = " ".join(words[:half]) + r"\N" + " ".join(words[half:])
+    else:
+        body = " ".join(words)
+    size = int(int(st["size"]) * 1.35)
+    y = int(height * (0.58 if st["position"] == "top" else 0.30))
+    color = _ass_color(st["highlight"])
+    outline_c = _ass_color(st["outline_color"])
+    style_line = (f"Style: Callout,{st['font']},{size},{color},&H0000FFFF,{outline_c},&H96000000,-1,0,0,0,100,100,"
+                  f"{int(st.get('spacing', 0))},0,1,{max(6, int(st['outline']) + 2)},3,5,70,70,0,1")
+    event = (f"Dialogue: 1,{_ts(start)},{_ts(start + seconds)},Callout,,0,0,0,,"
+             f"{{\\an5\\pos({width // 2},{y})\\fad(0,200)\\fscx135\\fscy135\\t(0,120,\\fscx100\\fscy100)}}{body}")
+    lines = ass_path.read_text(encoding="utf-8").splitlines()
+    out, styled = [], False
+    for line in lines:
+        out.append(line)
+        if not styled and line.startswith("Style: "):
+            out.append(style_line)
+            styled = True
+    out.append(event)
+    ass_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return ass_path
+
+
 def add_hook_overlay(ass_path: Path, text: str, seconds: float, *, style: dict[str, Any] | None = None,
                      width: int = 1080, height: int = 1920) -> Path:
     """Large on-screen hook from the first frame (the punchiest words of the video), above the captions, for the

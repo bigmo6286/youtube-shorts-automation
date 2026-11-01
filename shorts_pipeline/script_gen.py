@@ -133,6 +133,11 @@ def _prompt(blueprint: dict[str, Any], target_seconds: int, angle: str | None, a
         )
     from .originality import prompt_note
     angle_line += prompt_note()
+    try:
+        from .interrupt import prompt_note as interrupt_note
+        angle_line += interrupt_note(target_seconds)
+    except Exception:  # noqa: BLE001
+        pass
     if loop_endings():
         angle_line += (
             "\nLOOP ENDING (Shorts replay automatically, and replays count as views): deliver the payoff in the body, then "
@@ -418,8 +423,9 @@ def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angl
     if chosen_subject:
         script["subject_screening"] = {k: chosen_subject[k] for k in ("subject", "curiosity", "visual", "demand", "repeat", "total") if k in chosen_subject}
         script["subject_screening"]["considered"] = len(chosen_subject.get("all") or [])
-    from . import hooks
-    return hooks.run(script, blueprint, loop=loop_endings(), backend=backend)
+    from . import hooks, interrupt
+    script = hooks.run(script, blueprint, loop=loop_endings(), backend=backend)
+    return interrupt.plan(script, backend)          # the re-hook where this channel's viewers leave
 
 
 ENHANCE_SYSTEM = SYSTEM + """

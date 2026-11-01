@@ -90,11 +90,21 @@ def suggestions(query: str, cfg: dict[str, Any] | None = None) -> list[str]:
         return []
 
 
+def proven_phrases(script: dict[str, Any]) -> list[str]:
+    """Search terms that already brought viewers to this channel (YouTube Analytics) and share a subject word."""
+    try:
+        from .traffic import terms_for
+        return terms_for(" ".join(subject_words(script, 3)), limit=6)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def search_phrases(script: dict[str, Any], limit: int = 20) -> list[str]:
-    """Suggestions that are about this video: each must contain one of its two main subject words."""
+    """Suggestions that are about this video: each must contain one of its two main subject words. Phrases that
+    already brought viewers to this channel from search come first."""
     cfg = config()
     core = {_stem(w) for w in subject_words(script, 2)}
-    seen: list[str] = []
+    seen: list[str] = list(proven_phrases(script))
     for q in seed_queries(script):
         for sug in suggestions(q, cfg):
             sug = sug.strip().lower()
@@ -104,14 +114,16 @@ def search_phrases(script: dict[str, Any], limit: int = 20) -> list[str]:
     return seen[:limit]
 
 
-def _variants(script: dict[str, Any], phrases: list[str], n: int) -> list[str]:
-    """New titles from the script writer, each built around a real search phrase."""
+def _variants(script: dict[str, Any], phrases: list[str], n: int, proven: int = 0) -> list[str]:
+    """New titles from the script writer, each built around a real search phrase (`proven`: how many of the first
+    phrases already brought viewers to this channel)."""
     from . import script_gen
     system = ("You rewrite YouTube Shorts titles so they match what people actually search for, without changing what "
               "the video is about. Output only the JSON object.")
     prompt = (f"Current title: {script['title']!r}\nOpening line: {script.get('hook', '')!r}\n"
               f"Script: {script.get('full_text', '')[:900]!r}\n\n"
-              f"Phrases people type into YouTube search about this subject (from YouTube's own suggestions):\n"
+              f"Phrases people type into YouTube search about this subject (from YouTube's own suggestions"
+              + (f"; the first {proven} already brought viewers to THIS channel from search, favour them" if proven else "") + "):\n"
               + "\n".join(f"- {p}" for p in phrases) +
               f"\n\nWrite {n} alternative titles. Each one must naturally contain one of those phrases (exactly or nearly), "
               "keep the curiosity of the current title, stay 100% accurate to the script (no promise the video does not "
@@ -194,7 +206,7 @@ def improve(script: dict[str, Any]) -> dict[str, Any]:
         if not phrases:
             log.info("search titles: no suggestions for this subject; keeping %r", script["title"])
             return script
-        variants = _variants(script, phrases, int(cfg["variants"]))
+        variants = _variants(script, phrases, int(cfg["variants"]), proven=len(proven_phrases(script)))
         candidates = [script["title"]] + variants
         best, details = pick(script, candidates, phrases)
         script["title_search"] = {"phrases": phrases, **details, "chosen": candidates[best], "original": script["title"]}

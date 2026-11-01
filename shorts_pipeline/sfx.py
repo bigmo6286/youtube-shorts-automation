@@ -58,14 +58,16 @@ def cut_times(segments: list[dict[str, Any]], offset: float = 0.0, min_gap: floa
 
 
 def build_track(cuts: list[float], hook_at: float | None, total: float, out_path: Path,
-                cfg: dict[str, Any] | None = None) -> Path | None:
-    """One stereo 48 kHz track of `total` seconds with the effects in place, or None when there is nothing to add."""
+                cfg: dict[str, Any] | None = None, hits: list[float] | None = None) -> Path | None:
+    """One stereo 48 kHz track of `total` seconds with the effects in place, or None when there is nothing to add.
+    `hits`: extra hit times (the pattern interrupt), used even when the hook hit is off."""
     cfg = cfg or config()
     if not cfg["enabled"]:
         return None
     cuts = cuts if cfg["whoosh"] else []
     hook = hook_at if (cfg["hit"] and hook_at is not None) else None
-    if not cuts and hook is None:
+    hits = [float(t) for t in (hits or []) if t is not None and t >= 0]
+    if not cuts and hook is None and not hits:
         return None
     assets = ensure_assets()
     inputs: list[str] = []
@@ -81,11 +83,15 @@ def build_track(cuts: list[float], hook_at: float | None, total: float, out_path
             filters.append(f"[w{i}]adelay={ms}|{ms}[wd{i}]")
             mixed.append(f"[wd{i}]")
         idx += 1
-    if hook is not None:
+    hit_times = ([hook] if hook is not None else []) + [t for t in hits if hook is None or abs(t - hook) > 0.5]
+    if hit_times:
         inputs += ["-i", str(assets["hit"])]
-        ms = max(0, int(round(hook * 1000)))
-        filters.append(f"[{idx}:a]volume={float(cfg['hit_db'])}dB,adelay={ms}|{ms}[hd]")
-        mixed.append("[hd]")
+        n = len(hit_times)
+        filters.append(f"[{idx}:a]volume={float(cfg['hit_db'])}dB,asplit={n}" + "".join(f"[h{i}]" for i in range(n)))
+        for i, t in enumerate(hit_times):
+            ms = max(0, int(round(t * 1000)))
+            filters.append(f"[h{i}]adelay={ms}|{ms}[hd{i}]")
+            mixed.append(f"[hd{i}]")
         idx += 1
     if len(mixed) > 1:
         filters.append("".join(mixed) + f"amix=inputs={len(mixed)}:duration=longest:normalize=0[mx]")
@@ -95,5 +101,6 @@ def build_track(cuts: list[float], hook_at: float | None, total: float, out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
     _run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(filters), "-map", "[out]",
           "-c:a", "pcm_s16le", str(out_path)], check=True, text=True, timeout=120)
-    log.info("sound design: %d whoosh%s%s", len(cuts), "" if len(cuts) == 1 else "es", ", hit under the hook" if hook is not None else "")
+    log.info("sound design: %d whoosh%s%s%s", len(cuts), "" if len(cuts) == 1 else "es", ", hit under the hook" if hook is not None else "",
+             f", {len(hit_times) - (1 if hook is not None else 0)} more hit(s)" if len(hit_times) > (1 if hook is not None else 0) else "")
     return out_path

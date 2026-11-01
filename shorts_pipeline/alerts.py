@@ -214,6 +214,13 @@ def daily_report(now: datetime | None = None) -> str:
         lines.append("Usage today: " + summary_text())
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from .traffic import summary_text as traffic_summary
+        t = traffic_summary()
+        if t:
+            lines.append(t)
+    except Exception:  # noqa: BLE001
+        pass
     lines.append(f"Disk: {housekeeping.free_gb():.1f} GB free · footage cache {housekeeping.cache_size_gb():.1f} GB")
     return "\n".join(lines)
 

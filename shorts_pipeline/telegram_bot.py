@@ -9,6 +9,7 @@ Commands:
   /publish N         make upload N public now          /private N   keep upload N private (cancels its publish time)
   /drafts            comment reply drafts, numbered    /reply N [text]   post draft N (optionally edited)
   /dismiss N         drop draft N                      /report      the daily report now
+  /traffic           where views come from: search terms, suggested-next-to videos, Shorts-feed share
   /approve N, /reject N   decide a Short waiting for approval (numbers from /videos); the buttons under a video do the same
   /update            pull the latest engine code from GitHub and restart the console
   /compile [topic]   this week's compilation now: the best uploaded Shorts on one topic in one long video
@@ -224,6 +225,9 @@ def handle(text: str) -> str:
     if cmd == "/report":
         from .alerts import daily_report
         return daily_report()
+    if cmd == "/traffic":
+        from .traffic import report_text
+        return report_text()
     if cmd == "/stop":
         from .web import server
         if server._CURRENT is None:
