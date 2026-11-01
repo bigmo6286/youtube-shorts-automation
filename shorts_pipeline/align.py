@@ -49,12 +49,20 @@ def ensure_model() -> bool:
         import requests
         MODEL_DIR.parent.mkdir(parents=True, exist_ok=True)
         zip_path = MODEL_DIR.parent / f"{MODEL_NAME}.zip"
-        log.info("fetching the offline speech model for word timings (Vosk, ~40 MB, once)")
-        with requests.get(MODEL_URL, stream=True, timeout=60) as r:
-            r.raise_for_status()
-            with open(zip_path, "wb") as f:
-                for chunk in r.iter_content(1 << 20):
-                    f.write(chunk)
+        part = zip_path.with_suffix(".zip.part")
+        if not (zip_path.exists() and zipfile.is_zipfile(zip_path)):
+            log.info("fetching the offline speech model for word timings (Vosk, ~40 MB, once)")
+            # resumes a download a flaky connection cut short; the archive is only kept once it is complete
+            have = part.stat().st_size if part.exists() else 0
+            with requests.get(MODEL_URL, stream=True, timeout=120, headers={"Range": f"bytes={have}-"} if have else None) as r:
+                r.raise_for_status()
+                mode = "ab" if (have and r.status_code == 206) else "wb"
+                with open(part, mode) as f:
+                    for chunk in r.iter_content(1 << 20):
+                        f.write(chunk)
+            if not zipfile.is_zipfile(part):
+                raise RuntimeError("the download is incomplete; it resumes next time")
+            part.replace(zip_path)
         with zipfile.ZipFile(zip_path) as z:
             z.extractall(MODEL_DIR.parent)
         zip_path.unlink(missing_ok=True)
