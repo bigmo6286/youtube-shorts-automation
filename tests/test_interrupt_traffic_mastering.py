@@ -1,6 +1,7 @@
 """Pattern interrupt at the drop-off point, traffic sources from Analytics, audio mastering."""
 import shutil
 import subprocess
+from datetime import date
 
 import pytest
 
@@ -145,13 +146,16 @@ def _rows(kw):
     if dims == "insightTrafficSourceType" and filt.startswith("video=="):
         return [["YT_SEARCH", 30], ["SHORTS", 10]]
     if dims == "insightTrafficSourceType":
+        span = (date.fromisoformat(kw["endDate"]) - date.fromisoformat(kw["startDate"])).days + 1
+        if span == 3:                                   # the last three days: the feed went quiet
+            return [["SHORTS", 60], ["YT_SEARCH", 30]]
+        if span == 14:                                  # the two weeks before
+            return [["SHORTS", 1400], ["YT_SEARCH", 200]]
         return [["SHORTS", 700], ["YT_SEARCH", 200], ["RELATED_VIDEO", 100]]
     if dims == "insightTrafficSourceDetail" and "YT_SEARCH" in filt:
         return [["octopus garden", 120], ["neutron star weight", 80]]
     if dims == "insightTrafficSourceDetail" and "RELATED_VIDEO" in filt:
         return [["abc123", 60]]
-    if dims == "day":
-        return [[f"2026-10-{d:02d}", 100 if d <= 18 else 20] for d in range(1, 22)]
     return []
 
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 import re
-import statistics as st
 import time
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -26,7 +25,6 @@ log = logging.getLogger(__name__)
 TRAFFIC_PATH = DATA_DIR / "traffic.json"
 DEFAULTS = {"enabled": True, "days": 28, "per_video": 8, "feed_drop_factor": 0.35, "min_daily_feed": 50}
 LAG_DAYS = 2
-FEED_DAYS = 21
 NAMES = {"SHORTS": "Shorts feed", "YT_SEARCH": "YouTube search", "RELATED_VIDEO": "suggested videos",
          "SUBSCRIBER": "subscriptions feed", "NOTIFICATION": "notifications", "EXT_URL": "external links",
          "NO_LINK_OTHER": "direct or unknown", "YT_CHANNEL": "channel page", "YT_OTHER_PAGE": "other YouTube pages",
@@ -115,10 +113,14 @@ def fetch(days: int | None = None, per_video: int | None = None) -> dict[str, An
         info = known.get(s["video_id"]) or found.get(s["video_id"]) or {}
         s["title"], s["channel"] = info.get("title", ""), info.get("channel", "")
     data["suggested_from"] = sugg
-    fstart = end - timedelta(days=FEED_DAYS)
-    rows = _query(yt, "read daily Shorts-feed views", startDate=fstart.isoformat(), endDate=end.isoformat(), metrics="views",
-                  dimensions="day", filters="insightTrafficSourceType==SHORTS", sort="day")
-    data["feed_daily"] = [{"day": str(r[0]), "views": int(r[1])} for r in rows]
+    # the Shorts-feed watch: the API allows no daily series per traffic source, so two windows are read instead
+    windows = {}
+    for name, days_, a, b in (("recent", 3, end - timedelta(days=2), end), ("before", 14, end - timedelta(days=16), end - timedelta(days=3))):
+        rows = _query(yt, f"read Shorts-feed views ({name})", startDate=a.isoformat(), endDate=b.isoformat(), metrics="views",
+                      dimensions="insightTrafficSourceType", sort="-views")
+        feed = sum(int(r[1]) for r in rows if str(r[0]) == "SHORTS")
+        windows[name] = {"days": days_, "feed_views": feed, "feed_per_day": round(feed / days_, 1), "start": a.isoformat(), "end": b.isoformat()}
+    data["feed_windows"] = windows
     # per-video split for the newest public uploads: one call each, refreshed weekly while the video is young
     per: dict[str, Any] = dict(prev.get("per_video") or {})
     now = time.time()
@@ -187,16 +189,13 @@ def split_for(video_id: str) -> dict[str, Any] | None:
 
 
 def feed_check(data: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """A drop in daily Shorts-feed views: the last 3 complete days against the 14 before. None when nothing is wrong."""
+    """A drop in Shorts-feed views a day: the last 3 complete days against the 14 before. None when nothing is wrong."""
     cfg = config()
     data = data if data is not None else cached()
-    days = [int(d["views"]) for d in data.get("feed_daily") or []]
-    if len(days) < 10:
+    w = data.get("feed_windows") or {}
+    if not w.get("recent") or not w.get("before"):
         return None
-    recent, before = days[-3:], days[-17:-3]
-    if len(before) < 7:
-        return None
-    med_before, med_recent = st.median(before), st.median(recent)
+    med_before, med_recent = float(w["before"]["feed_per_day"]), float(w["recent"]["feed_per_day"])
     if med_before < float(cfg["min_daily_feed"]):
         return None
     if med_recent <= float(cfg["feed_drop_factor"]) * med_before:
