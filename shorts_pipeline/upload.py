@@ -222,6 +222,19 @@ def sync_output_status(output_dir: Path) -> int:
     return changed
 
 
+def upload_caption(video_id: str, srt_path: Path, language: str = "en", name: str = "English") -> str:
+    """Attach a caption track (SubRip) to an uploaded video: 400 quota units. Returns the caption id."""
+    from googleapiclient.http import MediaFileUpload
+    from .usage import record
+
+    youtube = with_retries(lambda: youtube_service(interactive=False), "connect to YouTube")
+    resp = with_retries(lambda: youtube.captions().insert(
+        part="snippet", body={"snippet": {"videoId": video_id, "language": language, "name": name, "isDraft": False}},
+        media_body=MediaFileUpload(str(srt_path), mimetype="application/octet-stream", resumable=False)).execute(), "upload a caption track")
+    record(youtube_units=400)
+    return str(resp.get("id") or "")
+
+
 def set_thumbnail(video_id: str, image_path: Path) -> None:
     from googleapiclient.http import MediaFileUpload
 

@@ -48,7 +48,17 @@ production:
     engine: edge              # edge = Microsoft's online voices (exact word timings) | kokoro = free local voice for everything
     fallback: kokoro          # when edge-tts fails, voice with Kokoro (run `python main.py setup-voice` once; ~120 MB)
     kokoro_voice: am_michael  # e.g. am_michael, am_adam, af_heart, af_bella, bm_george
-  voice_rate: "+8%"
+    align: true               # Kokoro gives no word timings: a small offline recogniser (Vosk, ~40 MB once) places each word
+  voice_rate: "+8%"           # the pace when voice casting is off or undecided
+  voice_casting:              # TypeSafe casts the narrator and the pace per Short from its mood and subject; each voice's
+    enabled: true             # retention (YouTube Analytics) weighs the choice once it has min_videos uploads
+    learn: true
+    min_videos: 5
+    voices:                   # edge-tts voices with a description TypeSafe chooses by; add or replace freely
+      en-US-AndrewNeural: "warm, calm, friendly: stories, nature, history told gently"
+      en-US-BrianNeural: "bright, energetic, youthful: fast facts, surprising science, lists"
+      en-US-ChristopherNeural: "deep, steady, authoritative: mysteries, serious history, big numbers"
+    rates: {slow: "+2%", normal: "+8%", brisk: "+14%"}
   target_seconds: 40          # script length target (30-55 is the Shorts sweet spot)
   captions:
     style: bold_impact        # bold_impact | clean_sans | boxed | pop | minimal | neon (presets in captions.py)
@@ -149,6 +159,10 @@ production:
     punch: true               # a quick punch-in on the footage at that line
     hit: true                 # a low hit under it
     default_at: 0.42          # fraction of the video used until the channel has enough retention curves
+  callouts:                   # the key number, name or phrase of up to `max` lines pops over the footage for a second
+    enabled: true             # (chosen by Claude, each checked against its line by TypeSafe)
+    max: 3
+    seconds: 1.2
   mastering:                  # audio mastering on every render
     enabled: true
     target_lufs: -14          # YouTube's playback level: every Short lands at the same loudness (two-pass loudnorm)
@@ -175,7 +189,9 @@ production:
     max_per_video: 4          # AI images per video at most (each takes a few seconds and may use provider credits)
     pollinations_model: black-forest-labs/flux.2-klein-4b   # with a pollen key (POLLINATIONS_TOKEN): 0.005 pollen an
                               # image; also good: tongyi-mai/z-image-turbo (0.004), black-forest-labs/flux.1-schnell (0.002)
-    provider: pollinations    # pollinations (free, no key) | together (TOGETHER_API_KEY) | huggingface (HF_TOKEN) | openai (OPENAI_API_KEY, paid)
+    provider: pollinations    # pollinations (free, no key) | cloudflare (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN, free daily
+                              # allowance) | together (TOGETHER_API_KEY) | huggingface (HF_TOKEN) | openai (OPENAI_API_KEY, paid)
+                              # when the configured one fails, every other provider with a key is tried, then the free one
     model: ""                 # optional model id for together / huggingface / openai, e.g. black-forest-labs/FLUX.1-schnell
     style: "cinematic photograph, natural light, realistic, sharp detail, vertical composition, no text, no watermark, no logo"
   cache_max_gb: 4             # downloaded Pexels clips kept for reuse; least recently used are deleted beyond this
@@ -237,6 +253,9 @@ schedule:
     per_video: 8              # per-video splits fetched per sync (one Analytics call each)
     feed_drop_factor: 0.35    # Telegram alert when the last 3 days' Shorts-feed views fall to this share of the 14 before...
     min_daily_feed: 50        # ...and the channel usually gets at least this many feed views a day
+  health:                     # at every channel sync: rejected, restricted or vanished uploads, a collapse in views per
+    enabled: true             # hour or in likes per view on the newest Shorts; one Telegram alert a day per finding
+    drop_factor: 0.3          # newest Shorts at this share of the previous two weeks' views/hour (or less) is a finding
   compilations:               # once a week: the best uploaded Shorts on one topic stitched into a landscape video with chapters
     enabled: true
     weekday: 6                # 0 = Monday ... 6 = Sunday
@@ -300,6 +319,7 @@ upload:
   review_hours: 2             # ...but not before this many hours after the upload: your window to cancel
   max_per_hour: 2             # at most this many Shorts go public in the same hour
   publish_gap_minutes: 25     # and at least this many minutes apart
+  caption_track: true         # attach the spoken words as an English caption track after each upload (400 quota units)
   playlists:                  # every topic series gets a playlist in part order; weekly compilations get their own
     enabled: true
     privacy: public

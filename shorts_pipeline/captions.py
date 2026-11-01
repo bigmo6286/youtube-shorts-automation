@@ -149,6 +149,25 @@ def write_ass(words: list[dict[str, Any]], out_path: Path, *, style: dict[str, A
     return out_path
 
 
+def _srt_ts(seconds: float) -> str:
+    ms = int(round(max(0.0, seconds) * 1000))
+    return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
+
+
+def write_srt(words: list[dict[str, Any]], out_path: Path, *, full_text: str | None = None, offset: float = 0.0,
+              max_words: int = 7) -> Path:
+    """A plain SubRip file of the spoken words (for YouTube's caption track): a cue per sentence, split at `max_words`.
+    `offset` shifts the clock by the intro card."""
+    cues = []
+    for group in group_words(words, max_words, full_text):
+        text = " ".join(w["text"] for w in group).strip()
+        if text:
+            cues.append((float(group[0]["start"]) + offset, float(group[-1]["end"]) + 0.05 + offset, text))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("".join(f"{i}\n{_srt_ts(a)} --> {_srt_ts(b)}\n{t}\n\n" for i, (a, b, t) in enumerate(cues, 1)), encoding="utf-8")
+    return out_path
+
+
 def write_card_ass(text: str, seconds: float, out_path: Path, *, sub_text: str = "", style: dict[str, Any] | None = None,
                    width: int = 1080, height: int = 1920, font: str | None = None, font_size: int | None = None) -> Path:
     """A title / end card: big centred text that fades in and out over `seconds`."""

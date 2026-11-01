@@ -14,4 +14,5 @@ python-multipart>=0.0.9
 huggingface_hub>=0.30
 pillow>=10.0
 kokoro-onnx>=0.6
+vosk>=0.3.45           # word timings for the free local voice (small offline speech model, fetched once)
 psutil>=5.9            # Stop button: ends the programs a stopped job started

@@ -176,6 +176,15 @@ def synthesize_kokoro(text: str, out_path: Path, *, voice: str | None = None, ra
         w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
     run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-c:a", "libmp3lame", "-b:a", "128k", str(out_path)],
         check=True, text=True)
+    try:
+        from . import align
+        if align.enabled() and align.ensure_model():
+            aligned = align.align(text, align.recognize(wav), fallback=words)
+            if aligned:
+                words = aligned
+                log.info("word timings: %d words placed by the offline recogniser", len(words))
+    except Exception as exc:  # noqa: BLE001 - the spread timings still work
+        log.warning("word alignment skipped: %s", str(exc)[:120])
     wav.unlink(missing_ok=True)
     return words
 

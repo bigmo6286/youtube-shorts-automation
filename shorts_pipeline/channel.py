@@ -129,7 +129,8 @@ def fetch_uploads(max_videos: int = 200) -> dict[str, Any]:
             hours = max(1.0, (now - published) / 3600.0)
             st = v.get("statistics", {})
             views = int(st.get("viewCount", 0))
-            privacy = (v.get("status") or {}).get("privacyStatus", "public")
+            status = v.get("status") or {}
+            privacy = status.get("privacyStatus", "public")
             # views per hour over the first RATE_WINDOW_HOURS only: a Short gets most of its views early, so an old
             # video is not punished for having stopped growing, and a 3-day-old one is comparable to a 3-month-old one
             public_hours = hours if privacy == "public" else 0.0
@@ -139,6 +140,8 @@ def fetch_uploads(max_videos: int = 200) -> dict[str, Any]:
                 "age_hours": round(hours, 1), "duration": seconds, "views": views, "privacy": privacy,
                 "likes": int(st.get("likeCount", 0)), "comments": int(st.get("commentCount", 0)),
                 "views_per_hour": round(views / min(hours, RATE_WINDOW_HOURS), 2), "public_hours": round(public_hours, 1),
+                "upload_status": status.get("uploadStatus"), "rejection_reason": status.get("rejectionReason"),
+                "age_restricted": ((v["contentDetails"].get("contentRating") or {}).get("ytRating") == "ytAgeRestricted"),
             })
     data = {"fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "channel": channel, "videos": videos}
     save_json(STATS_PATH, data)
@@ -554,6 +557,11 @@ def sync() -> dict[str, Any]:
         log.info("%s", traffic.sync())                    # search terms, suggested videos, feed share, feed-drop alert
     except Exception as exc:  # noqa: BLE001
         log.warning("traffic sources skipped: %s", exc)
+    try:
+        from . import health
+        log.info("%s", health.sync(data["videos"]))       # removed or restricted uploads, a views or likes collapse
+    except Exception as exc:  # noqa: BLE001
+        log.warning("health check skipped: %s", exc)
     matched = match_outputs(data["videos"])
     perf = blueprint_performance(matched)
     log.info("channel feedback: %d uploads labelled, %d matched to local outputs, %d format x topic pairs with data",
@@ -605,4 +613,12 @@ def cached_report() -> dict[str, Any] | None:
     return {"channel": data["channel"], "fetched_at": data["fetched_at"], "uploads": len(data["videos"]),
             "matched": matched, "performance": perf, "winners": load_json(CHANNEL_BLUEPRINTS_PATH) or [],
             "analytics": {"connected": analytics.connected(), "fetched_at": an.get("fetched_at"),
-                          "videos": len(an.get("videos") or {})}, "traffic": tr}
+                          "videos": len(an.get("videos") or {})}, "traffic": tr, "health": _health_overview()}
+
+
+def _health_overview() -> dict[str, Any] | None:
+    try:
+        from .health import overview
+        return overview()
+    except Exception:  # noqa: BLE001
+        return None

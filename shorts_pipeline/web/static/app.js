@@ -270,7 +270,7 @@ async function loadOutputs(afterStatusSync = false) {
         <div class="muted">${o.mode === "custom" ? "custom" : `${esc(o.blueprint.format)} × ${esc(o.blueprint.topic)} · ${esc(o.blueprint.hook_style)} hook`} · ${o.duration ? o.duration.toFixed(1) + "s" : ""} · ${writer(o)}${o.music ? ` · ♪ ${esc(o.music.title)}` : ""}</div>
         ${o.qa ? `<div class="qa">hook ${o.qa.hook_strength?.toFixed(1)}/3 · clarity ${o.qa.clarity?.toFixed(1)}/2 · on-format ${pct(o.qa.matches_format)} · payoff ${pct(o.qa.has_payoff)} · policy risk ${pct(o.qa.policy_risk)}${o.qa.faithful != null ? ` · faithful ${pct(o.qa.faithful)}` : ""}${o.fact_check ? ` · facts: ${esc(o.fact_check.summary)}` : ""}${o.subject_screening ? ` · subject picked from ${o.subject_screening.considered} (curiosity ${o.subject_screening.curiosity}/3)` : ""}${o.hook_tournament ? ` · hook ${o.hook_tournament.replaced ? "replaced by tournament" : "kept"}` : ""}${o.interrupt ? ` · re-hook at ${o.interrupt.seconds}s (${o.interrupt.rewritten ? "rewritten" : "kept"}${o.interrupt.card_text ? `, callout "${esc(o.interrupt.card_text)}"` : ""})` : ""}${o.loudness && o.loudness.input_lufs != null ? ` · loudness ${o.loudness.input_lufs} → ${o.loudness.target} LUFS` : ""}</div>` : ""}
         ${o.upload_state === "review" && o.review_reason ? `<span class="tag warn" title="${esc(o.review_reason)}">held for review: ${esc(o.review_reason.slice(0, 80))}</span>` : ""}
-        ${o.render_check && o.render_check.issues && o.render_check.issues.length ? `<span class="tag warn" title="final-render check">render: ${esc(o.render_check.issues.join("; "))}</span>` : ""}${o.render_check && o.render_check.healed && o.render_check.healed.length ? `<span class="tag" title="self-healing render">healed: ${esc(o.render_check.healed.join("; "))}</span>` : ""}${o.playlist ? `<span class="tag" title="playlist">playlist: ${esc(o.playlist)}</span>` : ""}
+        ${o.render_check && o.render_check.issues && o.render_check.issues.length ? `<span class="tag warn" title="final-render check">render: ${esc(o.render_check.issues.join("; "))}</span>` : ""}${o.render_check && o.render_check.healed && o.render_check.healed.length ? `<span class="tag" title="self-healing render">healed: ${esc(o.render_check.healed.join("; "))}</span>` : ""}${o.playlist ? `<span class="tag" title="playlist">playlist: ${esc(o.playlist)}</span>` : ""}${o.caption_track ? `<span class="tag" title="caption track">captions: ${esc(o.caption_track)}</span>` : ""}${o.voice ? `<span class="tag" title="narrator${o.casting ? `, ${esc(o.casting.pace)} pace, cast by TypeSafe` : ""}">${esc(String(o.voice).replace("en-US-", "").replace("Neural", ""))}${o.voice_rate ? ` ${esc(o.voice_rate)}` : ""}</span>` : ""}${o.callouts && o.callouts.length ? `<span class="tag" title="key-fact callouts">${o.callouts.map((c) => esc(c.text)).join(" · ")}</span>` : ""}
         ${o.approval === "pending" && !o.youtube_id ? `<span class="tag warn">waiting for your approval (Telegram)</span>` : ""}
         ${o.upload_state === "rejected" ? `<span class="tag warn">rejected: not uploaded</span>` : ""}
         <details><summary>Script</summary><p>${esc(o.script_text)}</p></details>
@@ -417,12 +417,14 @@ async function loadChannel() {
     + (tr.search_terms.length ? `. Searches that found you: ${tr.search_terms.map(esc).join(" · ")}` : "")
     + (tr.suggested_from.length ? `. Suggested next to: ${tr.suggested_from.map((s) => esc(s.title) + (s.channel ? ` (${esc(s.channel)})` : "")).join(" · ")}` : "")
     + (tr.feed_drop ? `<br><span class="warn">${esc(tr.feed_drop.text)}</span>` : "") : "";
+  const hf = (r.health && r.health.findings) || [];
+  const healthLine = hf.length ? `<br><span class="warn">Health: ${hf.map((f) => esc(f.title)).join(" · ")}</span>` : (r.health && r.health.checked_at ? `<br>Health: nothing unusual.` : "");
   el.innerHTML = `Your channel <b>${esc(r.channel.title)}</b>: ${r.uploads} Shorts, ${perf.uploads_labelled ?? 0} labelled by format × topic, median ${perf.channel_median_vph ?? "-"} views/h over ${perf.videos} scored (synced ${esc(r.fetched_at)}). `
     + (winners ? `<br>Channel winners (always in the production pool): ${winners}<br>` : "")
     + (rows || "No labelled videos old enough to score yet - run Sync.")
     + (an.connected ? `<br>Retention (YouTube Analytics, ${an.videos} videos, channel median ${perf.channel_median_view_pct ?? "-"}% viewed): factors blend views/hour and retention.${hookRows ? " Hook styles: " + hookRows : ""}`
        : `<br><span class="warn">Retention is not used yet.</span> Connect YouTube Analytics (read-only) so formats are also judged by how long viewers stay.`)
-    + trafficLine;
+    + trafficLine + healthLine;
 }
 $("#channelsync").addEventListener("click", () => startJob("channel", { action: "sync" }));
 async function loadComments() {

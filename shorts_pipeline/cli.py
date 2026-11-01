@@ -463,10 +463,17 @@ def cmd_produce(args) -> Path:
     voice_path = out_dir / "voice.mp3"
     from . import originality
     voice = originality.voice_for(script["title"], cfg["voice"])         # a few similar narrators, not one for every Short
+    voice_rate = cfg["voice_rate"]
+    cast = None
     if script.get("backend") == "dub":
         from . import dub
         voice = dub.config()["voice"]
-    words = tts.synthesize(script["full_text"], voice_path, voice=voice, rate=cfg["voice_rate"])
+    elif not long_video:
+        from . import casting
+        cast = casting.choose(script, blueprint)                         # narrator and pace for this script, retention-weighted
+        if cast:
+            voice, voice_rate = cast["voice"], cast["rate"]
+    words = tts.synthesize(script["full_text"], voice_path, voice=voice, rate=voice_rate)
     outro_cfg = cfg.get("outro") or {}
     outro_on = outro_cfg.get("enabled", True) if getattr(args, "outro", None) is None else bool(args.outro)
     if script_gen.loop_endings() and not outro_on and not long_video and words:
@@ -489,6 +496,8 @@ def cmd_produce(args) -> Path:
     total = intro_seconds + body_seconds + (outro["seconds"] if outro else 0.0)
     log.info("timeline: intro %.1fs + body %.1fs + outro %.1fs = %.1fs", intro_seconds, body_seconds,
              outro["seconds"] if outro else 0.0, total)
+    if words:
+        captions.write_srt(words, out_dir / "captions.srt", full_text=script["full_text"], offset=intro_seconds)   # the caption track
 
     # Captions are burned onto the body stream before the intro is concatenated in front of it, so their
     # clock is body-local: no offset here (the intro card carries its own subtitle file).
@@ -497,20 +506,33 @@ def cmd_produce(args) -> Path:
         cap_style = {**cap_style, "size": int(round(float(cap_style.get("size") or 84) * float(lv_cfg.get("caption_scale", 0.7))))}
     hook_cfg = cfg.get("hook_overlay") or {}
 
+    from . import callouts
+    callout_times: list[tuple[float, str]] = []
+
     def write_captions(style: dict) -> Path:
-        """Captions, the hook overlay and the interrupt callout for one render (called again by the self-healing loop)."""
+        """Captions, the hook overlay, the interrupt callout and the key-fact callouts for one render (called again by
+        the self-healing loop)."""
         ass = captions.write_ass(words, out_dir / "captions.ass", style=style, full_text=script["full_text"],
                                  width=frame.size()[0], height=frame.size()[1])
+        overlay_end = 0.0
         if not long_video and hook_cfg.get("enabled", True) and (script.get("thumbnail_text") or script.get("hook")):
             n = len((script.get("hook") or "").split())
             hook_end = words[min(len(words), max(n, 1)) - 1]["end"] + 0.5 if words and n else 2.5
             seconds = max(1.5, min(float(hook_cfg.get("max_seconds", 3.5)), hook_end))
             captions.add_hook_overlay(ass, script.get("thumbnail_text") or script["hook"], seconds, style=style)
+            overlay_end = seconds
         if itp_at is not None and itp_info.get("card_text") and interrupt.config()["card"]:
             captions.add_card_event(ass, itp_info["card_text"], itp_at, float(interrupt.config()["card_seconds"]),
                                     style=style, width=frame.size()[0], height=frame.size()[1])
+        callout_times[:] = [(t, text) for t, text in callouts.times(script, words, avoid=[itp_at] if itp_at is not None else [])
+                            if t >= overlay_end + 0.5] if not long_video else []
+        for t, text in callout_times:
+            captions.add_card_event(ass, text, t, float(callouts.config()["seconds"]), style=style,
+                                    width=frame.size()[0], height=frame.size()[1])
         return ass
     ass_path = write_captions(cap_style)
+    if callout_times:
+        log.info("callouts: %s", ", ".join(f"{text!r} at {t:.1f}s" for t, text in callout_times))
     photo_credits: list[dict] = []
     segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir, credits=photo_credits)
 
@@ -662,6 +684,8 @@ def cmd_produce(args) -> Path:
             "interrupt": ({k: itp_info.get(k) for k in ("line", "at", "basis", "rewritten", "card_text")} | {"seconds": round(itp_at + intro_seconds, 2)}
                           if itp_at is not None else None),
             "loudness": loudness or None,
+            "callouts": [{"at": round(t + intro_seconds, 2), "text": text} for t, text in callout_times] or None,
+            "voice_rate": voice_rate, "casting": ({k: cast[k] for k in ("pace", "probabilities", "factors")} if cast else None),
             "thumbnail_text": script.get("thumbnail_text", ""),
             "mode": "custom" if script.get("backend") == "custom" else ("enhanced" if script.get("original_text") else "blueprint"),
             "long_video": long_video, "orientation": "landscape" if frame.landscape() else "vertical"}
@@ -1079,6 +1103,16 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
         print(f"Playlist {pl['title']!r}: {'added' if pl['added'] else 'already in it'}"
               + (f", {pl['backfilled']} earlier part(s) added too" if pl["backfilled"] else "") + ".")
         meta = load_json(out_dir / "meta.json") or meta
+    srt = out_dir / "captions.srt"
+    if cfg.get("caption_track", True) and srt.exists() and not meta.get("caption_track"):
+        try:
+            upload.upload_caption(vid, srt, language="en", name="English")
+            meta = load_json(out_dir / "meta.json") or meta
+            meta["caption_track"] = "en"
+            save_json(out_dir / "meta.json", meta)
+            print("English caption track attached (the spoken words are indexed for search).")
+        except Exception as exc:  # noqa: BLE001 - a caption track must never fail an upload
+            log.warning("caption track not attached: %s", str(exc)[:160])
     from . import housekeeping
     if housekeeping.cleanup_config()["clean_after_upload"]:
         housekeeping.remove_intermediates(out_dir)        # the render pieces are not needed any more

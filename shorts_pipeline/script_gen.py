@@ -423,9 +423,10 @@ def generate_script(blueprint: dict[str, Any], *, target_seconds: int = 40, angl
     if chosen_subject:
         script["subject_screening"] = {k: chosen_subject[k] for k in ("subject", "curiosity", "visual", "demand", "repeat", "total") if k in chosen_subject}
         script["subject_screening"]["considered"] = len(chosen_subject.get("all") or [])
-    from . import hooks, interrupt
+    from . import callouts, hooks, interrupt
     script = hooks.run(script, blueprint, loop=loop_endings(), backend=backend)
-    return interrupt.plan(script, backend)          # the re-hook where this channel's viewers leave
+    script = interrupt.plan(script, backend)        # the re-hook where this channel's viewers leave
+    return callouts.pick(script, backend)           # the key numbers and names shown large
 
 
 ENHANCE_SYSTEM = SYSTEM + """

@@ -221,6 +221,11 @@ def daily_report(now: datetime | None = None) -> str:
             lines.append(t)
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from .health import report_lines as health_lines
+        lines += health_lines()
+    except Exception:  # noqa: BLE001
+        pass
     lines.append(f"Disk: {housekeeping.free_gb():.1f} GB free · footage cache {housekeeping.cache_size_gb():.1f} GB")
     return "\n".join(lines)
 

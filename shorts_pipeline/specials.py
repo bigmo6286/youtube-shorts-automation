@@ -116,6 +116,18 @@ def idea_blueprint(thread_id: str) -> tuple[dict[str, Any], str, dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------------------------------- scheduling
+_LAST_NOTE = {"text": ""}
+
+
+def _note(text: str) -> None:
+    """The scheduler asks every tick while the machine is busy: say what is due once, not every 30 seconds."""
+    if text != _LAST_NOTE["text"]:
+        log.info("%s", text)
+        _LAST_NOTE["text"] = text
+    else:
+        log.debug("%s", text)
+
+
 def next_special() -> dict[str, Any] | None:
     """Production parameters for a special that is due now, or None."""
     cfg = config()
@@ -124,12 +136,12 @@ def next_special() -> dict[str, Any] | None:
         cands = sequel_candidates()
         if cands:
             c = cands[0]
-            log.info("special: a sequel of %r (x%.1f the channel's typical views per hour)", c["title"][:60], c["lift"])
+            _note(f"special: a sequel of {c['title'][:60]!r} (x{c['lift']:.1f} the channel's typical views per hour)")
             return {"sequel_of": c["id"]}
     if cfg["ideas"] and _made_today(state, "idea") < int(cfg["ideas_per_day"]):
         ideas = idea_candidates()
         if ideas:
-            log.info("special: a viewer's request: %r", ideas[0]["text"][:80])
+            _note(f"special: a viewer's request: {ideas[0]['text'][:80]!r}")
             return {"idea": ideas[0]["id"]}
     return None
 

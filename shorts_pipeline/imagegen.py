@@ -2,9 +2,13 @@
 
 Providers:
   pollinations  free, no key, ~5 s per image (default)
+  cloudflare    FLUX.1 schnell on Cloudflare Workers AI (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN; a free account
+                has a daily allowance of about 10,000 neurons, roughly 100-200 images, no card needed)
   together      FLUX.1 schnell via api.together.xyz (TOGETHER_API_KEY)
   huggingface   FLUX.1 schnell (or any text-to-image model) via the HF Inference API (HF_TOKEN)
   openai        gpt-image-1 via api.openai.com (OPENAI_API_KEY)
+Failover: the configured provider first, then every other provider with a key, then the free keyless generator; a
+provider that hits a limit is skipped for an hour, the free generator for a quarter of an hour after a failure.
 Images are cached under data/cache/aiimg by prompt hash.
 """
 from __future__ import annotations
@@ -63,6 +67,8 @@ def available(provider: str | None = None) -> bool:
         return bool(env("OPENAI_API_KEY"))
     if p == "huggingface":
         return bool(env("HF_TOKEN"))
+    if p == "cloudflare":
+        return bool(env("CLOUDFLARE_ACCOUNT_ID") and env("CLOUDFLARE_API_TOKEN"))
     return False
 
 
@@ -247,11 +253,47 @@ def _huggingface(prompt: str, dest: Path) -> Path:
     return dest
 
 
-PROVIDERS = {"pollinations": _pollinations, "together": _together, "openai": _openai, "huggingface": _huggingface}
+CF_DEFAULT_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+
+
+def _cloudflare(prompt: str, dest: Path) -> Path:
+    """Cloudflare Workers AI: FLUX schnell answers JSON with a base64 image; Stable Diffusion models answer PNG bytes."""
+    model = settings().get("model") if str(settings().get("model") or "").startswith("@cf/") else CF_DEFAULT_MODEL
+    r = requests.post(f"https://api.cloudflare.com/client/v4/accounts/{env('CLOUDFLARE_ACCOUNT_ID')}/ai/run/{model}",
+                      headers={"Authorization": f"Bearer {env('CLOUDFLARE_API_TOKEN')}"},
+                      json={"prompt": prompt, "steps": 4, "width": _dims(768, 1344)[0], "height": _dims(768, 1344)[1]}, timeout=120)
+    if r.status_code != 200:
+        raise RuntimeError(f"cloudflare {r.status_code}: {r.text[:200]}")
+    if r.headers.get("content-type", "").startswith("image/"):
+        dest.write_bytes(r.content)
+        return dest
+    data = r.json()
+    image = (data.get("result") or {}).get("image") if isinstance(data, dict) else None
+    if not image:
+        raise RuntimeError(f"cloudflare: no image in the answer ({str(data)[:160]})")
+    dest.write_bytes(base64.b64decode(image))
+    return dest
+
+
+PROVIDERS = {"pollinations": _pollinations, "cloudflare": _cloudflare, "together": _together, "openai": _openai, "huggingface": _huggingface}
+FAILOVER_ORDER = ("cloudflare", "together", "huggingface", "openai", "pollinations")
 
 
 _PAUSED_UNTIL: dict[str, float] = {}     # provider -> time until which we skip it (after a limit / credit error)
 PAUSE_SECONDS = 3600
+POLLINATIONS_PAUSE = 900                 # the free generator after a failure: its 65 s turns would stall every line
+
+
+def provider_order(cfg: dict[str, Any] | None = None, now: float | None = None) -> list[str]:
+    """Providers to try, in order: the configured one, then the others with a key, then the free generator; paused
+    providers are left out."""
+    cfg = cfg or settings()
+    now = now or time.time()
+    order = []
+    for p in (cfg["provider"], *FAILOVER_ORDER):
+        if p in PROVIDERS and p not in order and available(p) and _PAUSED_UNTIL.get(p, 0) < now:
+            order.append(p)
+    return order
 
 
 def _looks_like_limit(exc: Exception) -> bool:
@@ -290,11 +332,10 @@ def generate(line_text: str, keyword: str, subject: str = "", prompt: str = "", 
         prompt = f"{scene}.{VARIANTS[variant % len(VARIANTS)]} {_look(style)}"
     else:
         prompt = build_prompt(line_text, keyword, subject, style) + VARIANTS[variant % len(VARIANTS)]
-    order = []
-    if available(cfg["provider"]) and _PAUSED_UNTIL.get(cfg["provider"], 0) < time.time():
-        order.append(cfg["provider"])
-    if "pollinations" not in order:
-        order.append("pollinations")
+    order = provider_order(cfg)
+    if not order:
+        log.info("AI image for %r skipped: every image provider is paused after failures", keyword)
+        return None
     for provider in order:
         keyed = provider == "pollinations" and env("POLLINATIONS_TOKEN")
         # a keyed model draws differently from the free tier: its images are cached apart
@@ -306,9 +347,13 @@ def generate(line_text: str, keyword: str, subject: str = "", prompt: str = "", 
             PROVIDERS[provider](prompt, dest)
         except Exception as exc:  # noqa: BLE001
             dest.unlink(missing_ok=True)
-            if provider != "pollinations" and _looks_like_limit(exc):
+            if provider == "pollinations":
+                _PAUSED_UNTIL[provider] = time.time() + POLLINATIONS_PAUSE
+                log.warning("free AI image generator failed for %r (%s); not tried again for %d minutes", keyword, str(exc)[:120],
+                            POLLINATIONS_PAUSE // 60)
+            elif _looks_like_limit(exc):
                 _PAUSED_UNTIL[provider] = time.time() + PAUSE_SECONDS
-                log.warning("AI image provider %s hit a limit (%s); using the free generator for the next hour", provider, str(exc)[:120])
+                log.warning("AI image provider %s hit a limit (%s); the next provider takes over for an hour", provider, str(exc)[:120])
             else:
                 log.warning("AI image (%s) failed for %r: %s", provider, keyword, str(exc)[:160])
             continue

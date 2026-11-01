@@ -40,6 +40,8 @@ KEY_FIELDS = {
     "HF_TOKEN": "Hugging Face token (optional: FLUX / Stable Diffusion images via the Inference API)",
     "POLLINATIONS_TOKEN": "Pollinations pollen key (free at enter.pollinations.ai: AI images without the 1-per-45 s limit)",
     "OPENAI_API_KEY": "OpenAI key (optional: gpt-image-1 images instead of the free generator)",
+    "CLOUDFLARE_ACCOUNT_ID": "Cloudflare account id (optional: FLUX images on Workers AI, free daily allowance, no card)",
+    "CLOUDFLARE_API_TOKEN": "Cloudflare API token with Workers AI access (optional, goes with the account id)",
 }
 PATH_FIELDS = {
     "YOUTUBE_CHANNEL": "Your YouTube channel handle (e.g. @yourname) or channel id, for performance feedback",
@@ -1010,6 +1012,8 @@ def list_outputs() -> list[dict[str, Any]]:
             "fact_check": (script or {}).get("fact_check"), "review_reason": meta.get("review_reason"),
             "render_check": meta.get("render_check"), "approval": meta.get("approval"),
             "interrupt": meta.get("interrupt"), "loudness": meta.get("loudness"), "playlist": meta.get("playlist"),
+            "callouts": meta.get("callouts"), "voice": meta.get("voice"), "voice_rate": meta.get("voice_rate"),
+            "casting": meta.get("casting"), "caption_track": meta.get("caption_track"),
             "subject_screening": (script or {}).get("subject_screening"),
             "hook_tournament": ({"replaced": (script or {}).get("hook_tournament", {}).get("chosen") != (script or {}).get("hook_tournament", {}).get("original", {}).get("hook")}
                                 if (script or {}).get("hook_tournament") else None),
