@@ -30,6 +30,8 @@ KOKORO_FILES = {
 DEFAULTS = {"engine": "edge", "fallback": "kokoro", "kokoro_voice": "am_michael"}
 SENTENCE_GAP = 0.12           # seconds of silence between Kokoro sentences
 EDGE_WAITS = (15, 45)         # pauses before the 2nd and 3rd edge-tts attempt
+EDGE_TIMEOUT = 240            # seconds for one edge-tts stream; a dead connection must not stall a production
+EDGE_MIN_COVERAGE = 0.7       # word boundaries received / script words below this = the stream was cut off
 
 
 def config() -> dict[str, Any]:
@@ -39,7 +41,7 @@ def config() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------------------------------- edge-tts
-async def _synth(text: str, voice: str, rate: str, out_path: Path) -> list[dict[str, Any]]:
+async def _stream(text: str, voice: str, rate: str, out_path: Path) -> list[dict[str, Any]]:
     communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
     words: list[dict[str, Any]] = []
     with open(out_path, "wb") as f:
@@ -53,11 +55,22 @@ async def _synth(text: str, voice: str, rate: str, out_path: Path) -> list[dict[
     return words
 
 
+async def _synth(text: str, voice: str, rate: str, out_path: Path) -> list[dict[str, Any]]:
+    try:
+        return await asyncio.wait_for(_stream(text, voice, rate, out_path), timeout=EDGE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"edge-tts did not finish within {EDGE_TIMEOUT}s") from None
+
+
 def synthesize_edge(text: str, out_path: Path, *, voice: str, rate: str = "+0%") -> list[dict[str, Any]]:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     words = asyncio.run(_synth(text, voice, rate, out_path))
     if not words or not out_path.exists() or out_path.stat().st_size < 1000:
         raise RuntimeError("edge-tts returned no audio")
+    # a connection that drops mid-stream ends the stream cleanly with part of the voice: compare with the script
+    expected = len([t for t in text.split() if any(c.isalnum() for c in t)])
+    if expected and len(words) < EDGE_MIN_COVERAGE * expected:
+        raise RuntimeError(f"edge-tts voice was cut off: {len(words)} of {expected} words received")
     return words
 
 
