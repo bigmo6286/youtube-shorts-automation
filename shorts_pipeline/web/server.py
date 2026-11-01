@@ -1009,7 +1009,7 @@ def list_outputs() -> list[dict[str, Any]]:
                    "faithful": qa.get("faithful", {}).get("noul")} if qa else None,
             "fact_check": (script or {}).get("fact_check"), "review_reason": meta.get("review_reason"),
             "render_check": meta.get("render_check"), "approval": meta.get("approval"),
-            "interrupt": meta.get("interrupt"), "loudness": meta.get("loudness"),
+            "interrupt": meta.get("interrupt"), "loudness": meta.get("loudness"), "playlist": meta.get("playlist"),
             "subject_screening": (script or {}).get("subject_screening"),
             "hook_tournament": ({"replaced": (script or {}).get("hook_tournament", {}).get("chosen") != (script or {}).get("hook_tournament", {}).get("original", {}).get("hook")}
                                 if (script or {}).get("hook_tournament") else None),

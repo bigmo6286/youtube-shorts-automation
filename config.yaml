@@ -110,6 +110,8 @@ production:
     min_gain: 0.05
   render_check:               # look at the finished video: black stretches (ffmpeg), captions over faces, cut-off text,
     enabled: true             # blank frames (TypeSafe images); a severe problem holds the Short for review
+    heal: true                # ...after trying to fix it: the footage of a blank or black line is picked again, captions over
+    max_retries: 2            # the subject move down, cut-off text shrinks the captions, and the Short is rendered again
   fact_check:                 # every claim searched on the web (Claude Code with web search) and judged by TypeSafe before voicing
     enabled: true
     mode: fix                 # fix = wrong claims are corrected in the script | review = wrong claims only hold the Short | off
@@ -298,5 +300,9 @@ upload:
   review_hours: 2             # ...but not before this many hours after the upload: your window to cancel
   max_per_hour: 2             # at most this many Shorts go public in the same hour
   publish_gap_minutes: 25     # and at least this many minutes apart
+  playlists:                  # every topic series gets a playlist in part order; weekly compilations get their own
+    enabled: true
+    privacy: public
+    backfill_per_upload: 6    # earlier parts added to a new playlist per upload (50 quota units each)
   horizon_hours: 24           # a Short waits at most this long for a good hour
   category_id: "22"           # 22 = People & Blogs, 24 = Entertainment, 27 = Education, 28 = Science & Technology

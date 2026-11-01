@@ -574,16 +574,7 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
         # no Pexels key: every line gets an AI image (the search steps are skipped inside footage_for_line)
         _SEARCH_CACHE.set("v:__nopexels__", [])
 
-    chunks = [script["hook"], *[ln["text"] for ln in script["lines"]], script["cta"]]
-    first_kw = script["lines"][0]["visual_keyword"] if script["lines"] else script.get("title", "abstract")
-    keywords = [first_kw, *[ln["visual_keyword"] for ln in script["lines"]], keywords_fallback(script)]
-    fallback = keywords_fallback(script)
-    lines = script["lines"]
-    # The hook and the closing line rarely name the subject ("And you'd walk right past it") but are about it: they
-    # show the video's main named subject, so a Short about one landmark does not end on some other place.
-    marked = [ln.get("named_subject", "").strip() for ln in lines if (ln.get("named_subject") or "").strip()]
-    main = max(set(marked), key=marked.count) if marked else ""
-    named = [(lines[0].get("named_subject") if lines else "") or main, *[ln.get("named_subject", "") for ln in lines], main]
+    chunks, keywords, named, fallback = _line_plan(script)
     segments: list[dict[str, Any]] = []
     used: set[str] = set()
     _AI_BUDGET["left"] = int(imagegen.settings().get("max_per_video", 4))
@@ -609,9 +600,46 @@ def plan_backgrounds(script: dict[str, Any], words: list[dict[str, Any]], total_
                                       topic=script.get("title", ""),
                                       image_prompt=prompts[i] if i < len(prompts) else "")
         log.info("footage %d/%d: %s", i + 1, len(chunks), note)
-        segments.append({"path": str(clip), "start": t, "end": end})
+        segments.append({"path": str(clip), "start": t, "end": end, "line": i})
         t = end
+    script["footage_used"] = sorted(used)              # so a healed line can pick something not yet in the Short
     return segments
+
+
+def _line_plan(script: dict[str, Any]) -> tuple[list[str], list[str], list[str], str]:
+    """(spoken chunks, search terms, named subjects, subject-level fallback term), one entry per hook / line / closing."""
+    chunks = [script["hook"], *[ln["text"] for ln in script["lines"]], script["cta"]]
+    first_kw = script["lines"][0]["visual_keyword"] if script["lines"] else script.get("title", "abstract")
+    fallback = keywords_fallback(script)
+    keywords = [first_kw, *[ln["visual_keyword"] for ln in script["lines"]], fallback]
+    lines = script["lines"]
+    # The hook and the closing line rarely name the subject ("And you'd walk right past it") but are about it: they
+    # show the video's main named subject, so a Short about one landmark does not end on some other place.
+    marked = [ln.get("named_subject", "").strip() for ln in lines if (ln.get("named_subject") or "").strip()]
+    main = max(set(marked), key=marked.count) if marked else ""
+    named = [(lines[0].get("named_subject") if lines else "") or main, *[ln.get("named_subject", "") for ln in lines], main]
+    return chunks, keywords, named, fallback
+
+
+def replan_line(script: dict[str, Any], segments: list[dict[str, Any]], index: int, work_dir: Path,
+                credits: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], str]:
+    """Pick the background of one segment again (self-healing render): anything already used in the Short is skipped,
+    so a different clip, an AI image or the generated background comes back. Returns (new segment, note)."""
+    seg = segments[index]
+    line = int(seg.get("line", index))
+    chunks, keywords, named, fallback = _line_plan(script)
+    if not 0 <= line < len(chunks):
+        raise ValueError(f"segment {index} has no script line")
+    used = set(script.get("footage_used") or [])
+    prompts = script.get("image_prompts") or []
+    _AI_BUDGET["left"] = max(int(_AI_BUDGET.get("left", 0)), 1)
+    kw = keywords[line]
+    clip, note = footage_for_line(chunks[line], kw, float(seg["end"]) - float(seg["start"]), work_dir, line,
+                                  fallback_keyword=fallback if kw != fallback else "", used=used,
+                                  named_subject=(named[line] or "").strip(), credits=credits, topic=script.get("title", ""),
+                                  image_prompt=prompts[line] if line < len(prompts) else "")
+    script["footage_used"] = sorted(used)
+    return {**seg, "path": str(clip)}, note
 
 
 def keywords_fallback(script: dict[str, Any]) -> str:

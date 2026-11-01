@@ -86,7 +86,9 @@ def add(video_id: str, title: str, yt=None, _retry: bool = True) -> bool:
         with_retries(lambda: yt.playlistItems().insert(part="snippet", body={"snippet": {
             "playlistId": pid, "resourceId": {"kind": "youtube#video", "videoId": video_id}}}).execute(), "add to a playlist")
     except HttpError as exc:
-        if _retry and "playlistNotFound" in str(exc):
+        content = getattr(exc, "content", b"") or b""
+        detail = (content.decode("utf-8", "replace") if isinstance(content, bytes) else str(content)) + str(exc)
+        if _retry and "playlistNotFound" in detail:
             _forget(title)                                   # deleted on YouTube: make it again once
             return add(video_id, title, yt, _retry=False)
         raise

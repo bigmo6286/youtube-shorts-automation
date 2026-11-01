@@ -495,17 +495,22 @@ def cmd_produce(args) -> Path:
     cap_style = _caption_style(cfg)
     if frame.landscape():                       # same look, sized for a 1080-high frame
         cap_style = {**cap_style, "size": int(round(float(cap_style.get("size") or 84) * float(lv_cfg.get("caption_scale", 0.7))))}
-    ass_path = captions.write_ass(words, out_dir / "captions.ass", style=cap_style, full_text=script["full_text"],
-                                  width=frame.size()[0], height=frame.size()[1])
     hook_cfg = cfg.get("hook_overlay") or {}
-    if not long_video and hook_cfg.get("enabled", True) and (script.get("thumbnail_text") or script.get("hook")):
-        n = len((script.get("hook") or "").split())
-        hook_end = words[min(len(words), max(n, 1)) - 1]["end"] + 0.5 if words and n else 2.5
-        seconds = max(1.5, min(float(hook_cfg.get("max_seconds", 3.5)), hook_end))
-        captions.add_hook_overlay(ass_path, script.get("thumbnail_text") or script["hook"], seconds, style=_caption_style(cfg))
-    if itp_at is not None and itp_info.get("card_text") and interrupt.config()["card"]:
-        captions.add_card_event(ass_path, itp_info["card_text"], itp_at, float(interrupt.config()["card_seconds"]),
-                                style=_caption_style(cfg), width=frame.size()[0], height=frame.size()[1])
+
+    def write_captions(style: dict) -> Path:
+        """Captions, the hook overlay and the interrupt callout for one render (called again by the self-healing loop)."""
+        ass = captions.write_ass(words, out_dir / "captions.ass", style=style, full_text=script["full_text"],
+                                 width=frame.size()[0], height=frame.size()[1])
+        if not long_video and hook_cfg.get("enabled", True) and (script.get("thumbnail_text") or script.get("hook")):
+            n = len((script.get("hook") or "").split())
+            hook_end = words[min(len(words), max(n, 1)) - 1]["end"] + 0.5 if words and n else 2.5
+            seconds = max(1.5, min(float(hook_cfg.get("max_seconds", 3.5)), hook_end))
+            captions.add_hook_overlay(ass, script.get("thumbnail_text") or script["hook"], seconds, style=style)
+        if itp_at is not None and itp_info.get("card_text") and interrupt.config()["card"]:
+            captions.add_card_event(ass, itp_info["card_text"], itp_at, float(interrupt.config()["card_seconds"]),
+                                    style=style, width=frame.size()[0], height=frame.size()[1])
+        return ass
+    ass_path = write_captions(cap_style)
     photo_credits: list[dict] = []
     segments = footage.plan_backgrounds(script, words, body_seconds, cfg["background_source"], out_dir, credits=photo_credits)
 
@@ -580,12 +585,15 @@ def cmd_produce(args) -> Path:
     master_cfg = cfg.get("mastering") or {}
     mastering = {**render.MASTER_DEFAULTS, **master_cfg} if master_cfg.get("enabled", True) else None
     loudness: dict[str, Any] = {}
-    video = render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
-                          music_path=Path(track["path"]) if track else None,
-                          music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
-                          fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro and not long_video
-                                        else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
-                          intro=intro, outro=outro, polish=polish, sfx_path=sfx_path, mastering=mastering, report=loudness)
+
+    def do_render() -> Path:
+        return render.render(segments, voice_path, ass_path, out_dir / "short.mp4", total_seconds=total,
+                             music_path=Path(track["path"]) if track else None,
+                             music_volume_db=float(music_cfg.get("volume_db", -18)), duck=bool(music_cfg.get("duck", True)),
+                             fade_seconds=(min(0.3, float(music_cfg.get("fade_seconds", 1.5))) if script_gen.loop_endings() and not outro and not long_video
+                                           else float(music_cfg.get("fade_seconds", 1.5))),     # a long fade breaks the loop
+                             intro=intro, outro=outro, polish=polish, sfx_path=sfx_path, mastering=mastering, report=loudness)
+    video = do_render()
     if mastering:
         if loudness.get("input_lufs") is not None:
             log.info("mastering: mix measured %.1f LUFS (true peak %.1f dB) -> %.0f LUFS, voice %s", loudness["input_lufs"],
@@ -594,6 +602,7 @@ def cmd_produce(args) -> Path:
         else:
             log.info("mastering: loudness not measured (silent mix?); normalised dynamically to %.0f LUFS", mastering["target_lufs"])
     render_result = None
+    healed: list[str] = []
     from . import render_check
     if render_check.config()["enabled"]:
         try:
@@ -604,6 +613,41 @@ def cmd_produce(args) -> Path:
                 log.info("render check: no problems in %d frames, %.1f s black", len(render_result["frames"]), render_result["black_seconds"])
         except Exception as exc:  # noqa: BLE001
             log.warning("render check skipped: %s", str(exc)[:120])
+        # Self-healing: fix what the check found and render again, before anything is held for review.
+        rc_cfg = render_check.config()
+        tries, credits_before = 0, len(photo_credits)
+        while (render_result and render_result["issues"] and rc_cfg.get("heal", True) and not long_video
+               and tries < int(rc_cfg.get("max_retries", 2))):
+            fix = render_check.plan_fix(render_result, segments, total, intro_seconds, cap_style)
+            if not fix:
+                break
+            tries += 1
+            log.info("self-healing render %d/%d: %s", tries, int(rc_cfg.get("max_retries", 2)), "; ".join(fix["reasons"]))
+            for i in fix["segments"]:
+                try:
+                    segments[i], note = footage.replan_line(script, segments, i, out_dir, credits=photo_credits)
+                    log.info("footage %d again: %s", int(segments[i].get("line", i)) + 1, note)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("footage %d not re-picked: %s", i + 1, str(exc)[:120])
+            if fix["style"]:
+                cap_style = {**cap_style, **fix["style"]}
+                ass_path = write_captions(cap_style)
+            healed += fix["reasons"]
+            try:
+                video = do_render()
+                render_result = render_check.check(video, total, script.get("title", ""))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("self-healing render failed: %s", str(exc)[:160])
+                break
+            if render_result["issues"]:
+                log.warning("render check after healing (%s): %s", render_result["severity"], "; ".join(render_result["issues"]))
+            else:
+                log.info("render check after healing: no problems")
+        if len(photo_credits) > credits_before:
+            from .commons import credit_line
+            description = description.rstrip() + "\n\n" + credit_line(photo_credits[credits_before:])
+        if render_result is not None:
+            render_result["healed"] = healed
     for flag in ("explore",):
         if getattr(args, flag, False):
             blueprint = {**blueprint, flag: True}
@@ -614,7 +658,7 @@ def cmd_produce(args) -> Path:
             "intro": bool(intro), "outro": bool(outro), "thumbnail": str(thumb) if thumb else None, "voice": voice,
             "segments": segments, "photo_credits": photo_credits, "timeline": timeline,
             "fact_check": script.get("fact_check", {}).get("summary") if script.get("fact_check") else None,
-            "render_check": {k: render_result[k] for k in ("severity", "issues", "black_seconds")} if render_result else None,
+            "render_check": {k: render_result.get(k) for k in ("severity", "issues", "black_seconds", "healed")} if render_result else None,
             "interrupt": ({k: itp_info.get(k) for k in ("line", "at", "basis", "rewritten", "card_text")} | {"seconds": round(itp_at + intro_seconds, 2)}
                           if itp_at is not None else None),
             "loudness": loudness or None,
@@ -1029,6 +1073,12 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
         except Exception as exc:  # noqa: BLE001
             log.warning("series links failed: %s", str(exc)[:160])
         meta = load_json(out_dir / "meta.json") or meta        # keep the part number and pending links
+    from . import playlists
+    pl = playlists.after_upload(out_dir, meta)
+    if pl:
+        print(f"Playlist {pl['title']!r}: {'added' if pl['added'] else 'already in it'}"
+              + (f", {pl['backfilled']} earlier part(s) added too" if pl["backfilled"] else "") + ".")
+        meta = load_json(out_dir / "meta.json") or meta
     from . import housekeeping
     if housekeeping.cleanup_config()["clean_after_upload"]:
         housekeeping.remove_intermediates(out_dir)        # the render pieces are not needed any more

@@ -82,7 +82,7 @@ def test_playlists_create_add_and_backfill_a_series(monkeypatch, tmp_path):
     yt = _YT()
     out = tmp_path / "d4"
     out.mkdir()
-    meta = {"youtube_id": "v4", "blueprint": {"series": "bible stories"}, "title": "p4"}
+    meta = {"youtube_id": "v4", "blueprint": {"key": "series:bible stories", "series": "bible stories"}, "title": "p4"}
     save_json(out / "meta.json", meta)
     r = playlists.after_upload(out, meta, yt=yt)
     assert r == {"title": "Bible Stories", "added": True, "backfilled": 2}

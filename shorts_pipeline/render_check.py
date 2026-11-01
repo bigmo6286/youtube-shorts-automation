@@ -3,6 +3,12 @@
 ffmpeg finds black stretches (a missing clip, a failed segment). TypeSafe images looks at a few frames for captions
 covering a face or the main subject, text cut off at the frame edge, and blank frames. The findings are saved on
 the Short's card; a severe problem (black video, blank frames) holds the Short for review instead of auto-upload.
+
+Self-healing (`heal`): before holding anything, `plan_fix` turns the findings into a fix the producer applies and
+renders again, up to `max_retries` times: a blank or black stretch means the footage of that line is picked again
+(a clip not yet used in the Short, else an AI image or the generated background); captions over the subject move
+the captions one position lower; text cut off at the edge shrinks the captions. Only a problem that survives the
+retries holds the Short.
 """
 from __future__ import annotations
 
@@ -16,7 +22,10 @@ from .config import has_typesafe, load_config
 
 log = logging.getLogger(__name__)
 
-DEFAULTS = {"enabled": True, "frames": [0.15, 0.5, 0.85], "black_seconds_severe": 1.0, "cover_warn": 0.7, "blank_severe": 0.7}
+DEFAULTS = {"enabled": True, "frames": [0.15, 0.5, 0.85], "black_seconds_severe": 1.0, "cover_warn": 0.7, "blank_severe": 0.7,
+            "heal": True, "max_retries": 2}
+LOWER = {"top": "center", "center": "lower", "lower": "bottom", "bottom": "bottom"}
+SHRINK = 0.88
 
 
 def config() -> dict[str, Any]:
@@ -37,6 +46,59 @@ def black_seconds(video: Path) -> float:
     return round(sum(float(x) for x in re.findall(r"black_duration:([\d.]+)", (proc.stderr or "") + (proc.stdout or ""))), 2)
 
 
+def black_spans(video: Path) -> list[tuple[float, float]]:
+    """(start, end) of every black stretch of 0.3 s or more."""
+    from .tools import run
+    try:
+        proc = run(["ffmpeg", "-hide_banner", "-i", str(video), "-vf", "blackdetect=d=0.3:pic_th=0.97", "-an", "-f", "null", "-"],
+                   capture_output=True, text=True, timeout=300)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("blackdetect failed: %s", exc)
+        return []
+    text = (proc.stderr or "") + (proc.stdout or "")
+    return [(round(float(a), 2), round(float(b), 2)) for a, b in re.findall(r"black_start:([\d.]+) black_end:([\d.]+)", text)]
+
+
+def plan_fix(result: dict[str, Any], segments: list[dict[str, Any]], duration: float, intro_seconds: float,
+             style: dict[str, Any]) -> dict[str, Any] | None:
+    """What to change before rendering again: {segments: [indices to re-pick], style: {...}, reasons: [...]}, or None."""
+    cfg = config()
+    fix: dict[str, Any] = {"segments": [], "style": {}, "reasons": []}
+
+    def seg_at(t_body: float) -> int | None:
+        for i, s in enumerate(segments):
+            if float(s["start"]) - 0.05 <= t_body < float(s["end"]):
+                return i
+        return None
+
+    def want(i: int | None, why: str) -> None:
+        if i is not None and i not in fix["segments"]:
+            fix["segments"].append(i)
+            fix["reasons"].append(f"{why}: footage of line {int(segments[i].get('line', i)) + 1} picked again")
+
+    for f in result.get("frames") or []:
+        if float(f.get("blank", 0)) >= float(cfg["blank_severe"]):
+            want(seg_at(float(f["at"]) * duration - intro_seconds), f"blank frame at {int(float(f['at']) * 100)}%")
+    for a, b in result.get("black_spans") or []:
+        for i, s in enumerate(segments):
+            lo, hi = max(a - intro_seconds, float(s["start"])), min(b - intro_seconds, float(s["end"]))
+            if hi - lo >= 0.3:
+                want(i, f"black picture {a:.1f}-{b:.1f}s")
+    issues = result.get("issues") or []
+    if any("cover the subject" in x for x in issues):
+        pos = style.get("position", "lower")
+        if LOWER.get(pos, pos) != pos:
+            fix["style"]["position"] = LOWER[pos]
+            fix["reasons"].append(f"captions cover the subject: moved from {pos} to {LOWER[pos]}")
+        else:
+            fix["style"]["size"] = int(int(style.get("size", 84)) * SHRINK)
+            fix["reasons"].append("captions cover the subject: made smaller")
+    if any("cut off" in x for x in issues):
+        fix["style"]["size"] = int(int(fix["style"].get("size", style.get("size", 84))) * SHRINK)
+        fix["reasons"].append("text cut off at the edge: captions made smaller")
+    return fix if fix["segments"] or fix["style"] else None
+
+
 def _frame(video: Path, at: float, duration: float) -> bytes | None:
     from .tools import run
     from .vision import prepare
@@ -55,6 +117,7 @@ def _frame(video: Path, at: float, duration: float) -> bytes | None:
 def check(video: Path, duration: float, title: str = "") -> dict[str, Any]:
     cfg = config()
     result: dict[str, Any] = {"black_seconds": black_seconds(video), "frames": [], "issues": [], "severity": "ok"}
+    result["black_spans"] = black_spans(video) if result["black_seconds"] > 0 else []
     if result["black_seconds"] >= float(cfg["black_seconds_severe"]):
         result["issues"].append(f"{result['black_seconds']:.1f} s of black picture")
     if has_typesafe():
