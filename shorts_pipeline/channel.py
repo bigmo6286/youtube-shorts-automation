@@ -198,9 +198,21 @@ def _match_score(meta: dict[str, Any], video: dict[str, Any], dir_name: str) -> 
     return min(score, 1.0)
 
 
-def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _seen_at(fetched_at: str | float | None) -> float:
+    if isinstance(fetched_at, (int, float)):
+        return float(fetched_at)
+    try:
+        return datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return time.time()
+
+
+def match_outputs(videos: list[dict[str, Any]], fetched_at: str | float | None = None) -> list[dict[str, Any]]:
     """Attach channel stats to produced Shorts: by our upload id, else by the best text / hashtag /
-    duration match (each channel video is used at most once)."""
+    duration match (each channel video is used at most once). `fetched_at` is when `videos` was read from YouTube
+    (None = just now): the console redraws from a cached list hours old, and that must not overwrite a privacy or
+    view count read more recently (the privacy refresh, a publish, an upload)."""
+    seen_at = _seen_at(fetched_at) if fetched_at is not None else time.time()
     by_id = {v["id"]: v for v in videos}
     matched: list[dict[str, Any]] = []
     if not OUTPUT_DIR.exists():
@@ -219,7 +231,7 @@ def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
             taken.add(video["id"])
     pairs = []
     for d, meta in metas:
-        if d.name in assignments:
+        if d.name in assignments or meta.get("youtube_id"):  # our own upload: never matched to another video
             continue
         for v in videos:
             if v["id"] in taken:
@@ -234,7 +246,7 @@ def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
         taken.add(v["id"])
     # duration + timing fallback for uploads with no usable text (e.g. titled with the date)
     for d, meta in metas:
-        if d.name in assignments or not meta.get("duration"):
+        if d.name in assignments or meta.get("youtube_id") or not meta.get("duration"):
             continue
         cands = [v for v in videos if v["id"] not in taken and abs(v["duration"] - meta["duration"]) <= 1.5
                  and v.get("published_ts", 0) >= _render_ts(d.name) - 60]
@@ -246,13 +258,20 @@ def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not video:
             continue
         bp = meta.get("blueprint") or {}
-        changed = (meta.get("youtube_id") != video["id"] or meta.get("channel_stats", {}).get("views") != video["views"]
-                   or (video.get("privacy") and meta.get("privacy") != video["privacy"]))
+        privacy_newer = seen_at >= float(meta.get("privacy_checked_at") or 0)
+        stats_newer = seen_at >= float((meta.get("channel_stats") or {}).get("seen_at") or 0)
+        changed = (meta.get("youtube_id") != video["id"]
+                   or (stats_newer and (meta.get("channel_stats") or {}).get("views") != video["views"])
+                   or (privacy_newer and video.get("privacy") and meta.get("privacy") != video["privacy"]))
         meta["youtube_id"] = video["id"]
-        if video.get("privacy"):
+        if video.get("privacy") and privacy_newer:
+            if meta.get("privacy") != video["privacy"]:
+                meta["privacy_checked_at"] = seen_at
             meta["privacy"] = video["privacy"]           # follows changes made in YouTube Studio
-        meta["channel_stats"] = {k: video[k] for k in ("views", "likes", "comments", "views_per_hour", "age_hours", "published")}
-        meta["channel_stats"]["youtube_title"] = video["title"]
+        if stats_newer or not meta.get("channel_stats"):
+            meta["channel_stats"] = {k: video[k] for k in ("views", "likes", "comments", "views_per_hour", "age_hours", "published")}
+            meta["channel_stats"]["youtube_title"] = video["title"]
+            meta["channel_stats"]["seen_at"] = seen_at
         if changed:
             save_json(d / "meta.json", meta)
         matched.append({"dir": d.name, "id": video["id"], "title": meta.get("title"), "key": f"{bp.get('format')}|{bp.get('topic')}",
@@ -383,7 +402,7 @@ def blueprint_performance(matched: list[dict[str, Any]] | None = None) -> dict[s
     seen = {u["id"] for u in uploads}
     if matched is None:
         data = load_json(STATS_PATH)
-        matched = match_outputs(data["videos"]) if data else []
+        matched = match_outputs(data["videos"], data.get("fetched_at")) if data else []
     for m in matched:
         vid = None
         for d_meta in (m,):
@@ -511,7 +530,7 @@ def channel_blueprints(perf: dict[str, Any] | None = None, min_factor: float = 1
         return []
     uploads = labelled_uploads()
     data = load_json(STATS_PATH)
-    matched = match_outputs(data["videos"]) if data else []
+    matched = match_outputs(data["videos"], data.get("fetched_at")) if data else []
     seen = {u["id"] for u in uploads}
     uploads += [m for m in matched if m.get("id") not in seen]
     by_key: dict[str, list[dict[str, Any]]] = {}
@@ -563,7 +582,7 @@ def sync() -> dict[str, Any]:
         log.info("%s", health.sync(data["videos"]))       # removed or restricted uploads, a views or likes collapse
     except Exception as exc:  # noqa: BLE001
         log.warning("health check skipped: %s", exc)
-    matched = match_outputs(data["videos"])
+    matched = match_outputs(data["videos"], data.get("fetched_at"))
     perf = blueprint_performance(matched)
     log.info("channel feedback: %d uploads labelled, %d matched to local outputs, %d format x topic pairs with data",
              perf.get("uploads_labelled", 0), len(matched), len(perf["blueprints"]))
@@ -602,7 +621,7 @@ def cached_report() -> dict[str, Any] | None:
     data = load_json(STATS_PATH)
     if not data:
         return None
-    matched = match_outputs(data["videos"])
+    matched = match_outputs(data["videos"], data.get("fetched_at"))
     perf = blueprint_performance(matched)
     from . import analytics
     an = analytics.cached()

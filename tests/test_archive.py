@@ -92,3 +92,55 @@ def test_cleanup_removes_abandoned_half_made_folders(tmp_path, monkeypatch):
         os.utime(f, (now - 3 * DAY, now - 3 * DAY))
     s = housekeeping.cleanup_outputs(now=now)
     assert s["half_made"] == 1 and not old.exists() and fresh.exists()       # a production in progress is left alone
+
+
+def test_a_passed_publish_time_counts_as_public(tmp_path, monkeypatch):
+    out = tmp_path / "output"
+    now = time.time()
+    monkeypatch.setattr(housekeeping, "cleanup_config", lambda: {**housekeeping.CLEANUP_DEFAULTS, "archive_after_days": 3})
+    past = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 4 * DAY))
+    future = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + DAY))
+    _short(out, "went_public", youtube_id="v1", privacy="private", publish_at=past, uploaded_at=now - 5 * DAY)
+    _short(out, "still_planned", youtube_id="v2", privacy="private", publish_at=future, uploaded_at=now - 5 * DAY)
+    assert folders.live_privacy({"youtube_id": "v1", "privacy": "private", "publish_at": past}, now) == "public"
+    assert folders.live_privacy({"youtube_id": "v2", "privacy": "private", "publish_at": future}, now) == "private"
+    assert folders.live_privacy({"youtube_id": "v3", "privacy": "private"}, now) == "private"
+    assert housekeeping.archive_settled(now=now, output_dir=out) == ["went_public"]
+
+
+def test_privacy_refresh_is_not_blocked_by_a_production(monkeypatch):
+    from types import SimpleNamespace
+    from shorts_pipeline import upload
+    from shorts_pipeline.web import server
+    calls = []
+    monkeypatch.setattr(upload, "oauth_available", lambda: True)
+    monkeypatch.setattr(upload, "TOKEN_PATH", SimpleNamespace(exists=lambda: True))
+    monkeypatch.setattr(upload, "sync_output_status", lambda d: calls.append(d) or 0)
+    monkeypatch.setattr(server, "_STATUS_SYNC", {"last": 0.0, "running": False, "error": None})
+    monkeypatch.setattr(server, "_CURRENT", SimpleNamespace(kind="publish"))
+    assert server._sync_youtube_status(force=True) is False                # a publish changes privacy itself
+    monkeypatch.setattr(server, "_CURRENT", SimpleNamespace(kind="produce"))
+    assert server._sync_youtube_status(force=True) is True
+    for _ in range(100):
+        if not server._STATUS_SYNC["running"]:
+            break
+        time.sleep(0.02)
+    assert len(calls) == 1
+
+
+def test_an_old_channel_list_does_not_undo_a_newer_privacy(tmp_path, monkeypatch):
+    from shorts_pipeline import channel
+    out = tmp_path / "output"
+    monkeypatch.setattr(channel, "OUTPUT_DIR", out)
+    now = time.time()
+    d = _short(out, "2026-11-01T10-00-00Z_x", youtube_id="v1", privacy="public", privacy_checked_at=now,
+               channel_stats={"views": 900, "seen_at": now}, duration=30)
+    video = {"id": "v1", "title": "x", "privacy": "private", "views": 10, "likes": 0, "comments": 0,
+             "views_per_hour": 1.0, "age_hours": 5, "published": "2026-11-01T10:00:00Z", "duration": 30}
+    stale = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - 14 * 3600))
+    channel.match_outputs([video], stale)
+    meta = load_json(d / "meta.json")
+    assert meta["privacy"] == "public" and meta["channel_stats"]["views"] == 900       # the cache is 14 h old
+    channel.match_outputs([{**video, "views": 1200}])                                  # a fresh read wins
+    meta = load_json(d / "meta.json")
+    assert meta["privacy"] == "private" and meta["channel_stats"]["views"] == 1200

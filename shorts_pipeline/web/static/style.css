@@ -50,6 +50,10 @@ button.danger { color: var(--danger); border-color: var(--danger); }
 .ex { margin: 6px 0; font-size: 13px; }
 
 .outputs { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.outputs > details.uploaded { grid-column: 1 / -1; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.uploaded > summary { cursor: pointer; padding: 10px 12px; color: var(--text); }
+.uprow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--border); }
+.uptitle { flex: 1 1 260px; min-width: 0; color: var(--text); font-size: 13px; }
 .out { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; }
 .out video { width: 150px; aspect-ratio: 9/16; background: #000; object-fit: cover; flex: none; } .novideo { width: 150px; display: grid; place-items: center; color: var(--muted); }
 .outbody { padding: 12px; min-width: 0; } .outbody h3 { margin: 0 0 4px; font-size: 14px; color: var(--text); text-transform: none; letter-spacing: 0; }

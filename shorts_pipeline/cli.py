@@ -1082,7 +1082,7 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
     meta["youtube_id"] = vid
     meta["privacy"] = "private" if publish_at else cfg["privacy"]
     meta["publish_at"] = publish_at
-    meta["uploaded_at"] = time.time()
+    meta["uploaded_at"] = meta["privacy_checked_at"] = time.time()
     if meta.get("upload_state") in ("queued", "expired", "failed", None):
         meta["upload_state"] = "uploaded"
     if series_info:
@@ -1238,6 +1238,7 @@ def cmd_publish(args) -> None:
     upload.set_privacy(meta["youtube_id"], privacy)       # replaces the whole status: any planned publish time is dropped
     meta["privacy"] = privacy
     meta["publish_at"] = None
+    meta["privacy_checked_at"] = time.time()
     save_json(out_dir / "meta.json", meta)
     print(f"{meta['youtube_id']} is now {privacy}: https://youtube.com/shorts/{meta['youtube_id']}")
 

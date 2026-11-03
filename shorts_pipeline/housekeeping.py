@@ -109,7 +109,7 @@ def ensure_free_space() -> None:
 INTERMEDIATE_PATTERNS = ("bg_*.mp4", "bg_*.jpg", "bg_*.png", "outro_bg.mp4", "intro_bg.mp4", "voice.mp3", "*.ass",
                          "words.json", "*.tmp", ".*.tmp", "mix.wav", "sfx.wav")
 KEEP_FILES = {"short.mp4", "meta.json", "script.json", "thumbnail.jpg"}
-CLEANUP_DEFAULTS = {"clean_after_upload": True, "keep_video_days": 0, "keep_unuploaded_days": 30, "archive_after_days": 7}
+CLEANUP_DEFAULTS = {"clean_after_upload": True, "keep_video_days": 0, "keep_unuploaded_days": 30, "archive_after_days": 3}
 # Working fields of the upload queue and the review step: meaningless once the Short is on YouTube. (upload_priority
 # stays: the weekly compilation ranks uploaded Shorts by it.)
 QUEUE_FIELDS = ("queued_at", "priority_parts", "upload_error", "upload_attempts", "expired_at", "approval",
@@ -189,7 +189,7 @@ def archive_settled(dry_run: bool = False, now: float | None = None, output_dir:
     archive_after_days, or never uploaded and its video already removed archive_after_days ago. Private uploads and
     anything still in the queue or waiting for review stay on the page. Returns the folder names moved."""
     from .config import OUTPUT_DIR
-    from .folders import archive_dir
+    from .folders import archive_dir, live_privacy
     from .storage import load_json, save_json
 
     days = cleanup_config().get("archive_after_days")
@@ -204,7 +204,7 @@ def archive_settled(dry_run: bool = False, now: float | None = None, output_dir:
         if not meta or (d / "short.mp4").exists() or meta.get("thumbnail_pending"):
             continue
         if meta.get("youtube_id"):
-            if meta.get("privacy") not in ("public", "unlisted", "deleted"):
+            if live_privacy(meta, now) not in ("public", "unlisted", "deleted"):
                 continue
             since = float(meta.get("uploaded_at") or _made(d))
         else:

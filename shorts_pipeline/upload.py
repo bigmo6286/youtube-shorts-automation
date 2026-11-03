@@ -204,6 +204,7 @@ def sync_output_status(output_dir: Path) -> int:
             metas[meta["youtube_id"]] = d / "meta.json"
     if not metas:
         return 0
+    checked_at = time.time()
     live = video_status(list(metas))
     changed = 0
     for vid, path in metas.items():
@@ -211,11 +212,13 @@ def sync_output_status(output_dir: Path) -> int:
         publish_at = live[vid].get("publish_at") if vid in live else None
         meta = load_json(path)                 # re-read right before writing: a job may have updated it meanwhile
         if not meta or meta.get("youtube_id") != vid or (meta.get("privacy") == privacy
-                                                         and meta.get("publish_at") == publish_at):
+                                                         and meta.get("publish_at") == publish_at
+                                                         and meta.get("privacy_checked_at")):
             continue
         if meta.get("privacy") != privacy:
             log.info("%s is now %s on YouTube (console had %s)", vid, privacy, meta.get("privacy"))
         meta["privacy"] = privacy
+        meta["privacy_checked_at"] = checked_at   # an older cached channel list must not undo this
         meta["publish_at"] = publish_at        # cleared when it went public or the schedule was cancelled in Studio
         save_json(path, meta)
         changed += 1

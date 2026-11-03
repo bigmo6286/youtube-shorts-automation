@@ -23,6 +23,7 @@ from .. import cli
 from ..config import OUTPUT_DIR, ROOT, load_config, save_local_config
 from ..tools import run as _run
 from ..storage import RUNS_DIR, load_json
+from ..folders import live_privacy
 
 log = logging.getLogger("shorts.web")
 STATIC = Path(__file__).parent / "static"
@@ -784,12 +785,14 @@ def get_run(run_id: str, top: int = 40) -> dict[str, Any]:
 
 _STATUS_SYNC = {"last": 0.0, "running": False, "error": None}
 STATUS_SYNC_SECONDS = 60
+STATUS_SYNC_BLOCKERS = {"upload", "publish"}     # these write a Short's privacy themselves
 
 
 def _sync_youtube_status(force: bool = False) -> bool:
-    """Refresh uploaded videos' privacy from YouTube in the background, at most every 3 minutes, and never
-    while a job runs (an upload or publish is writing the same files)."""
-    if _STATUS_SYNC["running"] or _CURRENT is not None:
+    """Refresh uploaded videos' privacy from YouTube in the background, at most once a minute (the page asks when it
+    loads, the scheduler every half hour). Skipped while an upload or publish job is changing privacy itself; other
+    jobs (a production runs most of the day) do not block it, since each meta.json is re-read right before writing."""
+    if _STATUS_SYNC["running"] or (_CURRENT is not None and _CURRENT.kind in STATUS_SYNC_BLOCKERS):
         return False
     if not force and time.time() - _STATUS_SYNC["last"] < STATUS_SYNC_SECONDS:
         return False
@@ -990,7 +993,7 @@ def list_outputs() -> list[dict[str, Any]]:
             "thumbnail_url": f"/outputs/{d.name}/thumbnail.jpg" if (d / "thumbnail.jpg").exists() else None,
             "thumbnail_text": meta.get("thumbnail_text"),
             "youtube_id": meta.get("youtube_id"),
-            "privacy": meta.get("privacy"),
+            "privacy": live_privacy(meta), "uploaded_at": meta.get("uploaded_at"),
             "upload_state": meta.get("upload_state"), "upload_priority": meta.get("upload_priority"),
             "publish_at": meta.get("publish_at"), "video_removed": meta.get("video_removed"),
             "priority_parts": meta.get("priority_parts"), "upload_error": meta.get("upload_error"),

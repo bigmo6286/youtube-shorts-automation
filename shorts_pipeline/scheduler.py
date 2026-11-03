@@ -24,6 +24,7 @@ REUSE_RUN_HOURS = 3          # a trend refresh is skipped when a run (any channe
 RETRY_DELAY_MINUTES = 30     # a scheduled production that failed for a temporary reason runs again this much later
 EXPIRE_EVERY_SECONDS = 600
 CLEANUP_EVERY_SECONDS = 6 * 3600
+STATUS_EVERY_SECONDS = 30 * 60   # privacy from YouTube, so a Short made public in Studio shows as public
 COMMENTS_EVERY_SECONDS = 2 * 3600
 DEFAULTS = {
     "enabled": False,
@@ -172,6 +173,7 @@ class Scheduler:
         self._last_expire = 0.0
         self._last_cleanup = 0.0
         self._last_comments = 0.0
+        self._last_status = 0.0
         self._lock = threading.Lock()
         self.state = load_json(STATE_PATH, None) or {"date": "", "done": [], "history": [], "next_blueprint": 0}
         self._thread: threading.Thread | None = None
@@ -277,6 +279,15 @@ class Scheduler:
                     trends.maybe_check(now, self._submit)
                 except Exception:  # noqa: BLE001
                     log.exception("trend check failed")
+            if time.time() - self._last_status > STATUS_EVERY_SECONDS:
+                try:
+                    from .web import server as _server
+                    started = _server._sync_youtube_status(force=True)
+                except Exception:  # noqa: BLE001
+                    log.exception("privacy refresh failed")
+                    started = True
+                # not started (an upload is changing privacy, or YouTube is not connected): try again in 2 minutes
+                self._last_status = time.time() if started else time.time() - STATUS_EVERY_SECONDS + 120
             if time.time() - self._last_cleanup > CLEANUP_EVERY_SECONDS:
                 self._last_cleanup = time.time()
                 try:

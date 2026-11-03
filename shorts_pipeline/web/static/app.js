@@ -261,9 +261,34 @@ async function loadOutputs(afterStatusSync = false) {
   }
   const outs = await api("/api/outputs");
   state.outputs = Object.fromEntries(outs.map((o) => [o.dir, o]));
+  // On YouTube and public (or unlisted, or removed there): nothing left to do here, so a compact row without the
+  // video or thumbnail. Private uploads, the queue and anything held for review stay as full cards.
+  const settled = (o) => o.youtube_id && ["public", "unlisted", "deleted"].includes(o.privacy);
+  const work = outs.filter((o) => !settled(o)), done = outs.filter(settled);
   const pct = (v) => v == null ? "-" : Math.round(v * 100) + "%";
   const writer = (o) => (o.blueprint && o.blueprint.source === "trend" ? "trend reaction · " : "") + (o.mode === "compilation" ? `weekly compilation of ${(o.parts || []).length} Shorts` : (o.long_video ? "long video · " : "") + (o.mode === "custom" ? "your own script, as written" : o.mode === "enhanced" ? "your script, enhanced" : o.backend === "claude_code" ? "written by Claude subscription" : "written by Anthropic API"));
-  $("#outputs").innerHTML = outs.map((o) => `<div class="out">
+  const doneRow = (o) => {
+    const when = o.uploaded_at ? new Date(o.uploaded_at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+    const kind = o.mode === "custom" ? "custom" : o.mode === "compilation" ? "weekly compilation" : `${o.blueprint.format || ""} × ${o.blueprint.topic || ""}`;
+    const stats = o.channel_stats ? `${fmt(o.channel_stats.views)} views · ${o.channel_stats.views_per_hour}/h · ${fmt(o.channel_stats.likes)} likes` : "no stats yet";
+    return `<div class="uprow">
+      <div class="uptitle">${esc(o.title)}<div class="muted small">${esc(when)}${when ? " · " : ""}${esc(kind)}</div></div>
+      ${o.privacy === "deleted" ? `<span class="tag warn">removed from YouTube</span>`
+        : `<a class="tag ok" href="https://youtube.com/shorts/${o.youtube_id}" target="_blank">${esc(o.privacy)} · ${stats}</a>`}
+      ${o.privacy === "public" ? `<button data-publish="${o.dir}" data-privacy="private">Make private</button>` : ""}
+      ${o.privacy === "unlisted" ? `<button data-publish="${o.dir}" data-privacy="public">Make public</button>` : ""}
+      <button class="danger" data-delete="${o.dir}" title="remove it from this computer (and optionally YouTube)">Delete</button>
+    </div>`;
+  };
+  const archiveNote = () => {
+    const c = (state.settings && state.settings.config.production.cleanup) || {};
+    const days = c.archive_after_days === undefined ? 3 : c.archive_after_days;
+    return days === null ? "(kept here until you delete them)" : `(kept here ${days} days after upload, then moved to the archive; the learning still reads them)`;
+  };
+  const doneBlock = done.length ? `<details class="uploaded"${state.uploadedOpen ? " open" : ""}><summary>Uploaded: ${done.length} on YouTube
+      <span class="muted">${archiveNote()}</span></summary>
+      ${done.map(doneRow).join("")}</details>` : "";
+  $("#outputs").innerHTML = work.map((o) => `<div class="out">
       ${o.video_url ? `<video src="${o.video_url}" controls preload="metadata"${o.thumbnail_url ? ` poster="${o.thumbnail_url}"` : ""}></video>` : `<div class="novideo">${o.video_removed ? (o.youtube_id ? "video file removed to save disk space; it is on YouTube" : "video file removed after 30 days unuploaded") : "no video"}</div>`}
       <div class="outbody">
         <h3>${esc(o.title)} <span class="tag ${o.title.length <= 100 ? "ok" : "warn"}" title="YouTube title limit is 100 characters; Shorts show about 70">${o.title.length}/100</span></h3>
@@ -298,7 +323,9 @@ async function loadOutputs(afterStatusSync = false) {
              ${o.privacy !== "unlisted" && o.privacy !== "public" ? `<button data-publish="${o.dir}" data-privacy="unlisted">Unlisted</button>` : ""}
              ${o.privacy === "public" ? `<button data-publish="${o.dir}" data-privacy="private">Make private</button>` : ""}`
           : `<button data-upload="${o.dir}">Upload to YouTube</button>`}
-      </div></div>`).join("") || `<p class="muted">Nothing produced yet.</p>`;
+      </div></div>`).join("") + doneBlock || `<p class="muted">Nothing produced yet.</p>`;
+  const up = $("#outputs details.uploaded");
+  if (up) up.addEventListener("toggle", () => { state.uploadedOpen = up.open; });
   $$("button[data-upload]").forEach((b) => b.addEventListener("click", () => startJob("upload", { path: `output/${b.dataset.upload}` })));
   $$("button[data-telegram]").forEach((b) => b.addEventListener("click", () => startJob("telegram", { action: "send", path: `output/${b.dataset.telegram}` })));
   $$("button[data-publish]").forEach((b) => b.addEventListener("click", () => startJob("publish", { path: `output/${b.dataset.publish}`, privacy: b.dataset.privacy })));

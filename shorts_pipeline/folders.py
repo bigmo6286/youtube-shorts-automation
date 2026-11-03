@@ -7,7 +7,10 @@ for a second channel), so code and tests that point output somewhere else get a 
 """
 from __future__ import annotations
 
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 
 def archive_dir(output_dir: Path) -> Path:
@@ -27,6 +30,21 @@ def short_dirs(output_dir: Path, archived: bool = True) -> list[Path]:
                 seen.add(d.name)
                 out.append(d)
     return out
+
+
+def live_privacy(meta: dict[str, Any], now: float | None = None) -> str | None:
+    """The privacy a Short has on YouTube right now, as far as we know. YouTube publishes a scheduled Short by itself,
+    so a private Short whose publish time has passed is public, even before the next privacy refresh writes it down."""
+    privacy = meta.get("privacy")
+    at = meta.get("publish_at")
+    if privacy == "private" and at and meta.get("youtube_id"):
+        try:
+            when = datetime.fromisoformat(str(at).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return privacy
+        if when <= (now or time.time()):
+            return "public"
+    return privacy
 
 
 def find(name: str, output_dir: Path) -> Path:
