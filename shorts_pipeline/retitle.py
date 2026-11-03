@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from .config import DATA_DIR, OUTPUT_DIR, load_config
+from .folders import find as find_short, short_dirs
 from .storage import load_json, save_json
 
 log = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ def run() -> dict[str, Any]:
     if len(recent) < 9:
         return out
     cutoff = sorted(float(v["views_per_hour"]) for v in recent)[max(0, int(len(recent) * float(cfg["bottom_share"])) - 1)]
-    for d in sorted(OUTPUT_DIR.iterdir(), reverse=True):
+    for d in sorted(short_dirs(OUTPUT_DIR), key=lambda p: p.name, reverse=True):
         meta = load_json(d / "meta.json") if d.is_dir() else None
         if not meta or not meta.get("youtube_id") or meta.get("privacy") != "public":
             continue
@@ -123,7 +124,7 @@ def run() -> dict[str, Any]:
 def tally() -> dict[str, int]:
     t = {"tried": 0, "improved": 0, "no_change": 0, "pending": 0}
     if OUTPUT_DIR.exists():
-        for d in OUTPUT_DIR.iterdir():
+        for d in short_dirs(OUTPUT_DIR):
             rt = (load_json(d / "meta.json") or {}).get("retitle") if d.is_dir() else None
             if rt:
                 t["tried"] += 1

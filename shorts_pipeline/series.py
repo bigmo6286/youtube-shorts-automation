@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import OUTPUT_DIR, load_config
+from .folders import find as find_short, short_dirs
 from .storage import load_json, save_json
 
 log = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ def parts(series: str, output_dir: Path | None = None, exclude: str | None = Non
     found: list[tuple[Path, dict[str, Any]]] = []
     if not output_dir.exists():
         return []
-    for d in output_dir.iterdir():
+    for d in short_dirs(output_dir):
         if not d.is_dir() or d.name == exclude:
             continue
         meta = load_json(d / "meta.json")
@@ -178,7 +179,7 @@ def flush(yt=None, only: str | None = None, output_dir: Path | None = None) -> l
     if not output_dir.exists():
         return done
     comments_yt = yt
-    for d in sorted(output_dir.iterdir(), reverse=True):
+    for d in sorted(short_dirs(output_dir), key=lambda p: p.name, reverse=True):
         if not d.is_dir() or (only and d.name != only):
             continue
         meta = load_json(d / "meta.json")
@@ -190,10 +191,10 @@ def flush(yt=None, only: str | None = None, output_dir: Path | None = None) -> l
         for act in pending:
             if act.get("attempts", 0) >= MAX_ATTEMPTS:
                 continue
-            target_meta = load_json(output_dir / act["dir"] / "meta.json") or {}
+            target_meta = load_json(find_short(act["dir"], output_dir) / "meta.json") or {}
             try:
                 if act["type"] == "description":
-                    _append_description(act["video"], act["append"], output_dir / act["dir"])
+                    _append_description(act["video"], act["append"], find_short(act["dir"], output_dir))
                     done_here.append(f"description of {act['dir']}: {act['append']}")
                     continue
                 if target_meta.get("privacy") != "public":

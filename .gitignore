@@ -1,6 +1,7 @@
 .env
 data/
 output/
+archive/
 client_secrets.json
 __pycache__/
 *.pyc

@@ -18,6 +18,7 @@ import time
 from typing import Any
 
 from .config import DATA_DIR, OUTPUT_DIR, load_config
+from .folders import find as find_short, short_dirs
 from .storage import load_json, save_json
 
 log = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def post_questions(yt=None) -> int:
         return 0
     from .upload import with_retries
     posted = 0
-    for d in sorted(OUTPUT_DIR.iterdir(), reverse=True):
+    for d in sorted(short_dirs(OUTPUT_DIR), key=lambda p: p.name, reverse=True):
         if posted >= int(cfg["max_questions_per_run"]):
             break
         meta = load_json(d / "meta.json") if d.is_dir() else None
@@ -126,7 +127,7 @@ def fetch_new(yt) -> list[dict[str, Any]]:
 def _video_context() -> dict[str, dict[str, str]]:
     out: dict[str, dict[str, str]] = {}
     if OUTPUT_DIR.exists():
-        for d in OUTPUT_DIR.iterdir():
+        for d in short_dirs(OUTPUT_DIR):
             meta = load_json(d / "meta.json") if d.is_dir() else None
             if meta and meta.get("youtube_id"):
                 out[meta["youtube_id"]] = {"title": meta.get("title", ""),

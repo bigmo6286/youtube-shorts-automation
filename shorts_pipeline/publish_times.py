@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .config import DATA_DIR, OUTPUT_DIR, load_config
+from .folders import find as find_short, short_dirs
 from .storage import load_json
 
 log = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ def _taken() -> list[datetime]:
     now = datetime.now(timezone.utc)
     if not OUTPUT_DIR.exists():
         return out
-    for d in OUTPUT_DIR.iterdir():
+    for d in short_dirs(OUTPUT_DIR):
         meta = load_json(d / "meta.json") if d.is_dir() else None
         if meta and meta.get("publish_at") and meta.get("privacy") != "public":
             try:

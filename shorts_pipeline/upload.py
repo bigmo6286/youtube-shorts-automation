@@ -197,11 +197,11 @@ def sync_output_status(output_dir: Path) -> int:
     from .storage import load_json, save_json
 
     metas: dict[str, Path] = {}
-    if output_dir.exists():
-        for d in output_dir.iterdir():
-            meta = load_json(d / "meta.json") if d.is_dir() else None
-            if meta and meta.get("youtube_id"):
-                metas[meta["youtube_id"]] = d / "meta.json"
+    from .folders import short_dirs
+    for d in short_dirs(output_dir):
+        meta = load_json(d / "meta.json")
+        if meta and meta.get("youtube_id"):
+            metas[meta["youtube_id"]] = d / "meta.json"
     if not metas:
         return 0
     live = video_status(list(metas))

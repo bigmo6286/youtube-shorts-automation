@@ -859,7 +859,8 @@ def cmd_cleanup(args) -> None:
     c = housekeeping.cleanup_config()
     print(f"{'Would free' if s['dry_run'] else 'Freed'} {s['freed_gb']} GB in {s['folders']} folders: render pieces of uploaded "
           f"Shorts, {s['videos_removed']} video files on YouTube for {c['keep_video_days']}+ days or never uploaded for "
-          f"{c['keep_unuploaded_days']}+ days. Scripts, details and thumbnails are kept.")
+          f"{c['keep_unuploaded_days']}+ days. {s.get('archived', 0)} settled Shorts "
+          f"{'would move' if s['dry_run'] else 'moved'} to the archive (off the page; details kept for the learning).")
     _, removed = housekeeping.prune_cache()
     if removed:
         print(f"Footage cache trimmed by {removed:.1f} GB.")
@@ -1114,6 +1115,7 @@ def _upload(out_dir: Path, force: bool = False, interactive: bool = True) -> Non
         except Exception as exc:  # noqa: BLE001 - a caption track must never fail an upload
             log.warning("caption track not attached: %s", str(exc)[:160])
     from . import housekeeping
+    housekeeping.settle_uploaded(out_dir)                 # the queue's working fields and the caption file go
     if housekeeping.cleanup_config()["clean_after_upload"]:
         housekeeping.remove_intermediates(out_dir)        # the render pieces are not needed any more
     print(f"Uploaded as {cfg['privacy']}: https://youtube.com/shorts/{vid}")

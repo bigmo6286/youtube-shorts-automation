@@ -109,7 +109,12 @@ def ensure_free_space() -> None:
 INTERMEDIATE_PATTERNS = ("bg_*.mp4", "bg_*.jpg", "bg_*.png", "outro_bg.mp4", "intro_bg.mp4", "voice.mp3", "*.ass",
                          "words.json", "*.tmp", ".*.tmp", "mix.wav", "sfx.wav")
 KEEP_FILES = {"short.mp4", "meta.json", "script.json", "thumbnail.jpg"}
-CLEANUP_DEFAULTS = {"clean_after_upload": True, "keep_video_days": 0, "keep_unuploaded_days": 30}
+CLEANUP_DEFAULTS = {"clean_after_upload": True, "keep_video_days": 0, "keep_unuploaded_days": 30, "archive_after_days": 7}
+# Working fields of the upload queue and the review step: meaningless once the Short is on YouTube. (upload_priority
+# stays: the weekly compilation ranks uploaded Shorts by it.)
+QUEUE_FIELDS = ("queued_at", "priority_parts", "upload_error", "upload_attempts", "expired_at", "approval",
+                "approval_note", "approval_asked_at", "review_reason")
+UPLOADED_LEFTOVERS = ("captions.srt",)       # on YouTube as the caption track by now
 
 
 def cleanup_config() -> dict[str, Any]:
@@ -137,6 +142,103 @@ def remove_intermediates(out_dir: Path, dry_run: bool = False) -> int:
     return _remove(sorted(f for f in files if f.name not in KEEP_FILES), dry_run)
 
 
+def settle_uploaded(out_dir: Path, meta: dict[str, Any] | None = None, dry_run: bool = False) -> dict[str, Any]:
+    """A Short on YouTube: mark it uploaded (also when it was held for review or rejected and uploaded by hand), drop
+    the queue's working fields and the caption file. Returns the details as saved."""
+    from .storage import load_json, save_json
+    meta = dict(meta if meta is not None else (load_json(out_dir / "meta.json") or {}))
+    if not meta.get("youtube_id"):
+        return meta
+    changed = [k for k in QUEUE_FIELDS if k in meta]
+    for k in changed:
+        meta.pop(k)
+    if meta.get("upload_state") != "uploaded":
+        meta["upload_state"] = "uploaded"
+        changed.append("upload_state")
+    if not dry_run:
+        if changed:
+            save_json(out_dir / "meta.json", meta)
+        for name in UPLOADED_LEFTOVERS:
+            try:
+                (out_dir / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+    return meta
+
+
+def _abandoned(d: Path, now: float, days: float = 2.0) -> bool:
+    """No details file and nothing written for `days`: a production that stopped half-way (one still running writes
+    files every few seconds and is never this old)."""
+    try:
+        newest = max([f.stat().st_mtime for f in d.rglob("*")] + [d.stat().st_mtime])
+    except OSError:
+        return False
+    return now - newest >= days * 86400
+
+
+def _made(d: Path) -> float:
+    try:
+        return time.mktime(time.strptime(d.name[:19], "%Y-%m-%dT%H-%M-%S")) - time.timezone  # folder names are UTC
+    except ValueError:
+        return d.stat().st_mtime
+
+
+def archive_settled(dry_run: bool = False, now: float | None = None, output_dir: Path | None = None) -> list[str]:
+    """Move settled Shorts out of output/ (and so off the console page) into the archive, keeping only their details
+    and script for the learning. Settled = no video file left here, and either public/unlisted/removed on YouTube for
+    archive_after_days, or never uploaded and its video already removed archive_after_days ago. Private uploads and
+    anything still in the queue or waiting for review stay on the page. Returns the folder names moved."""
+    from .config import OUTPUT_DIR
+    from .folders import archive_dir
+    from .storage import load_json, save_json
+
+    days = cleanup_config().get("archive_after_days")
+    output_dir = output_dir or OUTPUT_DIR
+    if days is None or not output_dir.exists():
+        return []
+    now = now or time.time()
+    dest_root = archive_dir(output_dir)
+    moved: list[str] = []
+    for d in sorted(p for p in output_dir.iterdir() if p.is_dir()):
+        meta = load_json(d / "meta.json")
+        if not meta or (d / "short.mp4").exists() or meta.get("thumbnail_pending"):
+            continue
+        if meta.get("youtube_id"):
+            if meta.get("privacy") not in ("public", "unlisted", "deleted"):
+                continue
+            since = float(meta.get("uploaded_at") or _made(d))
+        else:
+            if not meta.get("video_removed") or meta.get("upload_state") in ("queued", "review"):
+                continue
+            since = float(meta["video_removed"])
+        if (now - since) / 86400 < float(days):
+            continue
+        moved.append(d.name)
+        if dry_run:
+            continue
+        target = dest_root / d.name
+        target.mkdir(parents=True, exist_ok=True)
+        script = load_json(d / "script.json")
+        if script:
+            save_json(target / "script.json", script)
+        save_json(target / "meta.json", {**meta, "archived_at": now})
+        # everything else first, the details last: a locked file stops the move with the output/ copy still whole
+        try:
+            for f in sorted(d.iterdir(), key=lambda p: p.name in ("meta.json", "script.json")):
+                if f.is_dir():
+                    shutil.rmtree(f)
+                else:
+                    f.unlink()
+            d.rmdir()
+        except OSError as exc:
+            moved.pop()
+            log.warning("archive: %s not moved yet (%s); the next cleanup tries again", d.name, exc)
+    if moved:
+        log.info("archive%s: %d settled Shorts moved off the console page (details kept for the learning)",
+                 " (dry run)" if dry_run else "", len(moved))
+    return moved
+
+
 def cleanup_outputs(dry_run: bool = False, now: float | None = None, force_uploaded: bool = False) -> dict[str, Any]:
     """Uploaded Shorts lose their render pieces at once and their video file after keep_video_days on YouTube
     (0 = at the next cleanup; YouTube keeps the video); Shorts never uploaded keep everything for
@@ -149,16 +251,20 @@ def cleanup_outputs(dry_run: bool = False, now: float | None = None, force_uploa
     if force_uploaded:
         cfg = {**cfg, "clean_after_upload": True, "keep_video_days": 0}
     now = now or time.time()
-    stats = {"folders": 0, "pieces_bytes": 0, "videos_removed": 0, "video_bytes": 0, "dry_run": dry_run}
+    stats = {"folders": 0, "pieces_bytes": 0, "videos_removed": 0, "video_bytes": 0, "half_made": 0, "dry_run": dry_run}
     if not OUTPUT_DIR.exists():
         return stats
     for d in sorted(p for p in OUTPUT_DIR.iterdir() if p.is_dir()):
         meta = load_json(d / "meta.json") or {}
-        made = d.stat().st_mtime
-        try:
-            made = time.mktime(time.strptime(d.name[:19], "%Y-%m-%dT%H-%M-%S")) - time.timezone  # folder names are UTC
-        except ValueError:
-            pass
+        made = _made(d)
+        if not meta and _abandoned(d, now):
+            stats["half_made"] += 1                        # a production stopped before it finished: only render pieces
+            stats["pieces_bytes"] += _remove([f for f in d.rglob("*") if f.is_file()], dry_run)
+            if not dry_run:
+                shutil.rmtree(d, ignore_errors=True)
+            continue
+        if meta.get("youtube_id"):
+            meta = settle_uploaded(d, meta, dry_run)       # older uploads still carrying the queue's fields
         on_youtube = bool(meta.get("youtube_id")) and meta.get("privacy") != "deleted"
         age_days = (now - float(meta.get("uploaded_at") or made)) / 86400
         freed = 0
@@ -189,6 +295,11 @@ def cleanup_outputs(dry_run: bool = False, now: float | None = None, force_uploa
         if freed or drop_video:
             stats["folders"] += 1
         stats["pieces_bytes"] += freed
+    try:
+        stats["archived"] = len(archive_settled(dry_run, now))
+    except Exception as exc:  # noqa: BLE001 - the archive must never stop the disk cleanup
+        log.warning("archive step failed: %s", exc)
+        stats["archived"] = 0
     total = (stats["pieces_bytes"] + stats["video_bytes"]) / GB
     if stats["folders"]:
         log.info("output cleanup%s: %d folders, %d video files removed, %.2f GB freed", " (dry run)" if dry_run else "",

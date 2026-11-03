@@ -13,6 +13,7 @@ import statistics as st
 from typing import Any
 
 from .config import OUTPUT_DIR, has_typesafe, load_config
+from .folders import find as find_short, short_dirs
 from .storage import load_json
 
 log = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ def voice_stats(output_dir=None) -> dict[str, dict[str, Any]]:
     rows: dict[str, list[float]] = {}
     if not output_dir.exists():
         return {}
-    for d in output_dir.iterdir():
+    for d in short_dirs(output_dir):
         meta = load_json(d / "meta.json") if d.is_dir() else None
         if not meta or not meta.get("youtube_id") or not meta.get("voice"):
             continue

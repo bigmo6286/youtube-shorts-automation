@@ -20,6 +20,7 @@ import time
 from typing import Any
 
 from .config import DATA_DIR, OUTPUT_DIR, load_config
+from .folders import find as find_short, short_dirs
 from .storage import load_json, save_json
 
 log = logging.getLogger(__name__)
@@ -165,7 +166,7 @@ def post_followups(yt) -> int:
         for key, rec in state[bucket].items():
             if rec.get("followed_up"):
                 continue
-            meta = load_json(OUTPUT_DIR / rec["out_dir"] / "meta.json") if rec.get("out_dir") else None
+            meta = load_json(find_short(rec["out_dir"], OUTPUT_DIR) / "meta.json") if rec.get("out_dir") else None
             if not meta or meta.get("privacy") != "public" or not meta.get("youtube_id"):
                 continue
             link = f"https://youtube.com/shorts/{meta['youtube_id']}"

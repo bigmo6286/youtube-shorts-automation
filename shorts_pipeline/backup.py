@@ -61,12 +61,15 @@ def _files() -> list[tuple[Path, str]]:
         out += [(p, f"data/profiles/{p.name}") for p in profiles.glob("*.json")]
     if LOCAL_CONFIG.exists():
         out.append((LOCAL_CONFIG, "config.local.yaml"))
-    if OUTPUT_DIR.exists():
-        for d in OUTPUT_DIR.iterdir():
+    from .folders import archive_dir
+    for root, prefix in ((OUTPUT_DIR, "output"), (archive_dir(OUTPUT_DIR), "archive")):
+        if not root.exists():
+            continue
+        for d in root.iterdir():
             for name in ("meta.json", "script.json"):
                 p = d / name
                 if p.exists():
-                    out.append((p, f"output/{d.name}/{name}"))
+                    out.append((p, f"{prefix}/{d.name}/{name}"))
     return [(p, arc) for p, arc in out if p.name not in NEVER]
 
 
@@ -103,6 +106,9 @@ def restore(zip_path: Path) -> int:
                 target = SHARED_DIR / arc[len("shared/"):]
             elif arc.startswith("output/"):
                 target = OUTPUT_DIR / arc[len("output/"):]
+            elif arc.startswith("archive/"):
+                from .folders import archive_dir
+                target = archive_dir(OUTPUT_DIR) / arc[len("archive/"):]
             elif arc == "config.local.yaml":
                 target = LOCAL_CONFIG
             else:

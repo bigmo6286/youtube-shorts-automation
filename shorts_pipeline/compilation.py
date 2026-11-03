@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from .config import DATA_DIR, OUTPUT_DIR, load_config
+from .folders import find as find_short, short_dirs
 from .storage import load_json, now_iso, save_json
 
 log = logging.getLogger(__name__)
@@ -325,10 +326,10 @@ def run(*, topic: str | None = None, days: float | None = None, upload: bool | N
     save_json(out_dir / "script.json", {"title": title, "full_text": intro, "backend": "compilation", "hashtags": hashtags,
                                         "lines": [{"text": c} for _, c in chapters]})
     for p in parts:
-        m = load_json(OUTPUT_DIR / p["dir"] / "meta.json")
+        m = load_json(find_short(p["dir"], OUTPUT_DIR) / "meta.json")
         if m:
             m["compiled_in"] = out_dir.name
-            save_json(OUTPUT_DIR / p["dir"] / "meta.json", m)
+            save_json(find_short(p["dir"], OUTPUT_DIR) / "meta.json", m)
     history.record(title, key="compilation", out_dir=out_dir, source="compilation")
     st = load_json(STATE_PATH) or {}
     st["last_run"] = {"at": now, "dir": out_dir.name, "label": label, "parts": len(parts)}

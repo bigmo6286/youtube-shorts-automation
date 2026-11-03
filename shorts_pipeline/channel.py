@@ -17,6 +17,7 @@ from typing import Any
 import requests
 
 from .config import DATA_DIR, OUTPUT_DIR, env, load_config
+from .folders import find as find_short, short_dirs
 from .storage import JsonCache, load_json, save_json
 
 log = logging.getLogger(__name__)
@@ -205,7 +206,7 @@ def match_outputs(videos: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not OUTPUT_DIR.exists():
         return matched
     metas = []
-    for d in sorted(p for p in OUTPUT_DIR.iterdir() if p.is_dir()):
+    for d in sorted(short_dirs(OUTPUT_DIR), key=lambda p: p.name):
         meta = load_json(d / "meta.json")
         if meta:
             metas.append((d, meta))
@@ -311,7 +312,7 @@ def _local_scripts() -> dict[str, str]:
     out: dict[str, str] = {}
     if not OUTPUT_DIR.exists():
         return out
-    for d in OUTPUT_DIR.iterdir():
+    for d in short_dirs(OUTPUT_DIR):
         meta = load_json(d / "meta.json") if d.is_dir() else None
         if meta and meta.get("youtube_id"):
             text = (load_json(d / "script.json") or {}).get("full_text") or ""
@@ -467,7 +468,7 @@ def _local_hooks() -> dict[str, str]:
     out: dict[str, str] = {}
     if not OUTPUT_DIR.exists():
         return out
-    for d in OUTPUT_DIR.iterdir():
+    for d in short_dirs(OUTPUT_DIR):
         meta = load_json(d / "meta.json") if d.is_dir() else None
         if meta and meta.get("youtube_id"):
             hook = (load_json(d / "script.json") or {}).get("hook")

@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from .config import DATA_DIR, OUTPUT_DIR
+from .folders import find as find_short, short_dirs
 from .storage import load_json, save_json
 
 log = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ def _outputs_by_video() -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     out = {}
     if not OUTPUT_DIR.exists():
         return out
-    for d in OUTPUT_DIR.iterdir():
+    for d in short_dirs(OUTPUT_DIR):
         meta = load_json(d / "meta.json") if d.is_dir() else None
         if meta and meta.get("youtube_id"):
             out[meta["youtube_id"]] = (meta, load_json(d / "script.json") or {})

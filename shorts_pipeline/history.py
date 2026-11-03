@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import DATA_DIR, OUTPUT_DIR
+from .folders import find as find_short, short_dirs
 from .storage import load_json, save_json
 
 log = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def known_videos() -> list[dict[str, Any]]:
     for v in reversed((load_json(HISTORY_PATH) or {}).get("videos", [])):
         add(v["title"], hook=v.get("hook", ""), key=v.get("key", ""), at=v.get("at", ""), origin="produced")
     if OUTPUT_DIR.exists():
-        for d in sorted((p for p in OUTPUT_DIR.iterdir() if p.is_dir()), reverse=True):
+        for d in sorted(short_dirs(OUTPUT_DIR), key=lambda p: p.name, reverse=True):
             meta = load_json(d / "meta.json")
             if meta and meta.get("title"):
                 bp = meta.get("blueprint") or {}
