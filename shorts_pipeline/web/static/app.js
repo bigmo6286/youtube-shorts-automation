@@ -68,12 +68,18 @@ async function loadStatus() {
     card("Today's usage", true, s.usage_text || "nothing yet"),
     card("Engine version", !(state.update && state.update.behind), state.update ? (state.update.error ? "could not check GitHub"
       : state.update.behind ? `${state.update.behind} update${state.update.behind === 1 ? "" : "s"} available <button id="updatenow" title="${esc((state.update.changes || []).join("\n"))}">Update and restart</button>`
-      : `up to date (${esc(state.update.local || "")})`) : "checking..."),
+      : `up to date (${esc(state.update.local || "")})`) + ` <button id="updatecheck" title="ask GitHub again now (otherwise checked every 6 hours)">Check now</button>` : "checking..."),
   ].join("");
   const upd = $("#updatenow");
   if (upd) upd.addEventListener("click", async () => {
     if (!confirm("Pull the latest engine code from GitHub and restart the console now?\n\nNothing is produced while it restarts (about 30 seconds).")) return;
     try { const r = await api("/api/update", { method: "POST" }); toast(r.message); } catch (e) { toast(e.message, true); }
+  });
+  const chk = $("#updatecheck");
+  if (chk) chk.addEventListener("click", async () => {
+    chk.disabled = true; chk.textContent = "checking...";
+    await loadUpdate(true); loadStatus();
+    toast(state.update.error ? "Could not reach GitHub" : state.update.behind ? `${state.update.behind} update(s) available` : "Already up to date", !!state.update.error);
   });
   const inst = $("#installffmpeg");
   if (inst) inst.addEventListener("click", () => startJob("setup_ffmpeg"));
@@ -508,6 +514,11 @@ async function loadProfiles() {
   if (sched) { const k = sched.value; sched.innerHTML = `<option value="">(none)</option>` + ps.map((p) => `<option value="${esc(p.handle)}">${esc(p.channel || p.handle)}</option>`).join(""); if (k) sched.value = k; }
   showProfileSummary();
 }
+// A fold's open or closed state, remembered in this browser (closed when storage is unavailable).
+function remembered(key) { try { return localStorage.getItem(key) === "1"; } catch (_) { return false; } }
+function remember(details, key) {
+  if (details) details.addEventListener("toggle", () => { try { localStorage.setItem(key, details.open ? "1" : "0"); } catch (_) {} });
+}
 async function showProfileSummary() {
   const h = $("#pf-select").value; const el = $("#pf-summary");
   if (!h) { el.textContent = ""; return; }
@@ -515,7 +526,7 @@ async function showProfileSummary() {
     const p = await api(`/api/profiles/${encodeURIComponent(h)}`);
     const sg = p.style_guide;
     el.innerHTML = `<b>${esc(p.channel)}</b>: ${p.videos} Shorts, ~${p.typical_seconds}s · formats ${(p.top_formats || []).map((f) => `${esc(f.name)} ${Math.round(f.share * 100)}%`).join(", ")} · topics ${(p.top_topics || []).slice(0, 4).map((t) => `${esc(t.name)} ${Math.round(t.share * 100)}%`).join(", ")}`
-      + (sg ? `<details><summary>Style guide</summary><p><b>Voice:</b> ${esc(sg.voice_and_tone)}</p><p><b>Hooks:</b> ${esc((sg.hook_patterns || []).join(" · "))}</p><p><b>Structure:</b> ${esc(sg.structure)}</p><p><b>Pacing:</b> ${esc(sg.pacing_and_sentences)}</p><p><b>Endings:</b> ${esc(sg.ending_and_cta)}</p><p><b>Do:</b> ${esc((sg.dos || []).join(" · "))}</p><p><b>Never:</b> ${esc((sg.donts || []).join(" · "))}</p></details>` : " · no style guide yet (written on the next produce if Claude is available)");
+      + (sg ? `<details class="pf-guide"${remembered("pf-guide-open") ? " open" : ""}><summary>Style guide (voice, hooks, structure, pacing, endings)</summary><div class="pf-scroll"><p><b>Voice:</b> ${esc(sg.voice_and_tone)}</p><p><b>Hooks:</b> ${esc((sg.hook_patterns || []).join(" · "))}</p><p><b>Structure:</b> ${esc(sg.structure)}</p><p><b>Pacing:</b> ${esc(sg.pacing_and_sentences)}</p><p><b>Endings:</b> ${esc(sg.ending_and_cta)}</p><p><b>Do:</b> ${esc((sg.dos || []).join(" · "))}</p><p><b>Never:</b> ${esc((sg.donts || []).join(" · "))}</p></div></details>` : " · no style guide yet (written on the next produce if Claude is available)");
     const vids = p.exemplars || [];
     const rows = vids.map((v) => `<tr><td><a href="${esc(v.url)}" target="_blank" rel="noopener">${esc(v.title || v.id)}</a></td>
         <td>${Number(v.views || 0).toLocaleString()}</td><td>${v.duration ? v.duration + "s" : "-"}</td>
@@ -523,12 +534,10 @@ async function showProfileSummary() {
         <td><button class="pf-remake" data-id="${esc(v.id)}" data-title="${esc(v.title || "")}">Produce like this</button></td></tr>`).join("");
     const head = `Their Shorts (${vids.length}${vids.length < (p.videos || 0) ? ` of ${p.videos}; analyse again to list all` : ""}, most viewed first)`;
     // Collapsed by default (a profile can list 150 Shorts); open or closed is remembered in this browser.
-    let open = false;
-    try { open = localStorage.getItem("pf-list-open") === "1"; } catch (_) {}
-    el.innerHTML += `<details class="pf-list"${open ? " open" : ""}><summary>${head}</summary>
+    el.innerHTML += `<details class="pf-list"${remembered("pf-list-open") ? " open" : ""}><summary>${head}</summary>
       <div class="tablewrap pf-scroll"><table><thead><tr><th>Title</th><th>Views</th><th>Length</th><th>Format × topic</th><th>Hook</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">No videos stored; analyse the channel again.</td></tr>`}</tbody></table></div></details>`;
-    const list = el.querySelector("details.pf-list");
-    list.addEventListener("toggle", () => { try { localStorage.setItem("pf-list-open", list.open ? "1" : "0"); } catch (_) {} });
+    remember(el.querySelector("details.pf-list"), "pf-list-open");
+    remember(el.querySelector("details.pf-guide"), "pf-guide-open");
     el.querySelectorAll(".pf-remake").forEach((b) => b.addEventListener("click", () => {
       toast(`Producing a remake of "${b.dataset.title.slice(0, 50)}" in the style of ${h}`);
       startJob("produce", { profile: h, exemplar: b.dataset.id, angle: $("#pf-angle").value, music: $("#pf-music").value, upload: $("#pf-upload").checked });
@@ -759,5 +768,5 @@ async function loadChannels() {
   } catch (_) {}
 }
 setInterval(loadStatus, 10000);
-async function loadUpdate() { try { state.update = await api("/api/update"); } catch (_) { state.update = { error: true }; } }
+async function loadUpdate(force = false) { try { state.update = await api(`/api/update${force ? "?force=true" : ""}`); } catch (_) { state.update = { error: true }; } }
 loadUpdate(); setInterval(loadUpdate, 6 * 3600 * 1000);

@@ -856,8 +856,10 @@ def dismiss_comment(thread_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/update")
-def update_status() -> dict[str, Any]:
+def update_status(force: bool = False) -> dict[str, Any]:
     from .. import updater
+    if force:                                       # the "Check now" button: skip the 6-hour cache
+        _SHARED.pop("update_check", None)
     return _shared("update_check", 6 * 3600, lambda: updater.check(fetch=True))
 
 
