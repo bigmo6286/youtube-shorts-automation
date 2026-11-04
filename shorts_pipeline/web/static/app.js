@@ -522,7 +522,13 @@ async function showProfileSummary() {
         <td>${esc((v.format || "?") + " × " + (v.topic || "?"))}</td><td>${esc(v.hook_style || "")}</td>
         <td><button class="pf-remake" data-id="${esc(v.id)}" data-title="${esc(v.title || "")}">Produce like this</button></td></tr>`).join("");
     const head = `Their Shorts (${vids.length}${vids.length < (p.videos || 0) ? ` of ${p.videos}; analyse again to list all` : ""}, most viewed first)`;
-    el.innerHTML += `<div class="tablewrap" style="margin-top:8px"><table><thead><tr><th>${head}</th><th>Views</th><th>Length</th><th>Format × topic</th><th>Hook</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">No videos stored; analyse the channel again.</td></tr>`}</tbody></table></div>`;
+    // Collapsed by default (a profile can list 150 Shorts); open or closed is remembered in this browser.
+    let open = false;
+    try { open = localStorage.getItem("pf-list-open") === "1"; } catch (_) {}
+    el.innerHTML += `<details class="pf-list"${open ? " open" : ""}><summary>${head}</summary>
+      <div class="tablewrap pf-scroll"><table><thead><tr><th>Title</th><th>Views</th><th>Length</th><th>Format × topic</th><th>Hook</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">No videos stored; analyse the channel again.</td></tr>`}</tbody></table></div></details>`;
+    const list = el.querySelector("details.pf-list");
+    list.addEventListener("toggle", () => { try { localStorage.setItem("pf-list-open", list.open ? "1" : "0"); } catch (_) {} });
     el.querySelectorAll(".pf-remake").forEach((b) => b.addEventListener("click", () => {
       toast(`Producing a remake of "${b.dataset.title.slice(0, 50)}" in the style of ${h}`);
       startJob("produce", { profile: h, exemplar: b.dataset.id, angle: $("#pf-angle").value, music: $("#pf-music").value, upload: $("#pf-upload").checked });
