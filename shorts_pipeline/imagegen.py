@@ -259,9 +259,15 @@ CF_DEFAULT_MODEL = "@cf/black-forest-labs/flux-1-schnell"
 def _cloudflare(prompt: str, dest: Path) -> Path:
     """Cloudflare Workers AI: FLUX schnell answers JSON with a base64 image; Stable Diffusion models answer PNG bytes."""
     model = settings().get("model") if str(settings().get("model") or "").startswith("@cf/") else CF_DEFAULT_MODEL
+    if "flux-1-schnell" in model:
+        # FLUX schnell on Workers AI takes only prompt + steps (width/height are refused with a 400) and always draws a
+        # 1024x1024 square; the renderer crops its middle to the frame, so the subject is asked to sit in the centre
+        body: dict[str, Any] = {"prompt": re.sub(r"vertical(?: 9:16)? composition|horizontal 16:9 composition",
+                                                 "subject centred in the middle of the frame", prompt), "steps": 4}
+    else:                                   # Stable Diffusion models on Workers AI take a size
+        body = {"prompt": prompt, "num_steps": 20, "width": _dims(768, 1344)[0], "height": _dims(768, 1344)[1]}
     r = requests.post(f"https://api.cloudflare.com/client/v4/accounts/{env('CLOUDFLARE_ACCOUNT_ID')}/ai/run/{model}",
-                      headers={"Authorization": f"Bearer {env('CLOUDFLARE_API_TOKEN')}"},
-                      json={"prompt": prompt, "steps": 4, "width": _dims(768, 1344)[0], "height": _dims(768, 1344)[1]}, timeout=120)
+                      headers={"Authorization": f"Bearer {env('CLOUDFLARE_API_TOKEN')}"}, json=body, timeout=120)
     if r.status_code != 200:
         raise RuntimeError(f"cloudflare {r.status_code}: {r.text[:200]}")
     if r.headers.get("content-type", "").startswith("image/"):

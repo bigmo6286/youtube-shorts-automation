@@ -54,7 +54,8 @@ def test_cleanup_rules(tmp_path, monkeypatch):
     now = time.time()
     fresh = _folder(tmp_path, "2026-10-09T10-00-00Z_a", youtube_id="A", privacy="public", uploaded_at=now - 3600)
     old = _folder(tmp_path, "2026-10-01T10-00-00Z_b", youtube_id="B", privacy="public", uploaded_at=now - 5 * 86400)
-    waiting = _folder(tmp_path, "2026-10-08T10-00-00Z_c", upload_state="review")
+    made = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime(now - 2 * 86400))   # relative: a fixed date ages past 30 days
+    waiting = _folder(tmp_path, f"{made}_c", upload_state="review")
     s = housekeeping.cleanup_outputs(now=now)
     assert not (fresh / "voice.mp3").exists() and (fresh / "short.mp4").exists()         # pieces go, video stays
     assert not (old / "short.mp4").exists() and load_json(old / "meta.json")["video_removed"]
@@ -99,7 +100,8 @@ def test_uploaded_videos_go_at_the_next_cleanup_and_first_when_the_disk_is_low(t
     now = time.time()
     monkeypatch.setattr(housekeeping, "cleanup_config", lambda: dict(housekeeping.CLEANUP_DEFAULTS))
     just = _folder(tmp_path, "2026-10-11T10-00-00Z_a", youtube_id="A", privacy="private", uploaded_at=now - 60)
-    waiting = _folder(tmp_path, "2026-10-11T11-00-00Z_b", upload_state="queued")
+    made = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime(now - 86400))       # relative: a fixed date ages past 30 days
+    waiting = _folder(tmp_path, f"{made}_b", upload_state="queued")
     housekeeping.cleanup_outputs(now=now)
     assert not (just / "short.mp4").exists() and (just / "thumbnail.jpg").exists()       # default: gone at once
     assert (waiting / "short.mp4").exists()                                              # not on YouTube: kept
