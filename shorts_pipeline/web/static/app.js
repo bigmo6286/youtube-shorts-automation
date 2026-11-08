@@ -636,7 +636,14 @@ async function loadSettings() {
     ? (s.youtube_token_present ? "client_secrets.json present and account already authorised." : "client_secrets.json present. The first upload opens a browser to authorise your channel.")
     : "No client_secrets.json yet.";
   const c = s.config;
-  const set = (name, v) => { const el = $(`[name="${name}"]`); if (el) el.value = v ?? ""; };
+  const set = (name, v) => {
+    const el = $(`[name="${name}"]`);
+    if (!el) return;
+    // a saved value this page has no option for (an older page, a newer engine) stays as it is: a blank select
+    // would save "" over it
+    if (el.tagName === "SELECT" && v != null && v !== "" && ![...el.options].some((o) => o.value === String(v))) el.add(new Option(String(v), String(v)));
+    el.value = v ?? "";
+  };
   set("discovery.hashtags", (c.discovery.hashtags || []).join(", "));
   set("discovery.max_age_days", c.discovery.max_age_days); set("discovery.channels_to_follow", c.discovery.channels_to_follow); set("discovery.workers", c.discovery.workers);
   Object.entries(c.ranking.weights || {}).forEach(([k, v]) => set(`ranking.weights.${k}`, v));
