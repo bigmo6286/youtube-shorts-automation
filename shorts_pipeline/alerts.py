@@ -36,6 +36,10 @@ class Problem:
 
 
 _RULES: list[tuple[str, Problem]] = [
+    (r"no available TypeSafe API credits|TypeSafe has no credits",
+     Problem("typesafe_credits", "TypeSafe is out of credits",
+             "Add credits or turn on auto-reload at https://console.typesafe.ai/settings/billing. Scheduled Shorts "
+             "pause until then and resume on their own.", False)),
     (r"invalid_grant|RefreshError|needs a new consent|not authorised yet",
      Problem("youtube_token", "YouTube sign-in expired",
              "Open the console and click Upload on any video card (or Sync channel now), then approve the Google page.",

@@ -269,10 +269,14 @@ def _run_job(job: Job) -> None:
         job.status = "error"
         job.log.append(f"ERROR: {exc}")
     except Exception as exc:  # noqa: BLE001
-        job.error = f"{type(exc).__name__}: {exc}"
         job.status = "error"
-        job.log.append(f"ERROR: {job.error}")
-        job.log.extend(traceback.format_exc().rstrip().splitlines())
+        if _usage.out_of_credits_error(exc):
+            job.error = _usage.OUT_OF_CREDITS           # an account matter: the traceback says nothing more
+            job.log.append(f"ERROR: {job.error}")
+        else:
+            job.error = f"{type(exc).__name__}: {exc}"
+            job.log.append(f"ERROR: {job.error}")
+            job.log.extend(traceback.format_exc().rstrip().splitlines())
     finally:
         _cancel_async_stop(job)          # a Stop that arrives as the job ends must not hit this cleanup
         _usage.CURRENT_JOB = None
@@ -372,7 +376,7 @@ def stop_job_endpoint(job_id: str) -> dict[str, Any]:
 
 
 # Problems that need the owner even when they started the job themselves (it will keep failing until fixed).
-_ALWAYS_ALERT = {"youtube_token", "disk", "script_backend", "upload_limit", "api_quota"}
+_ALWAYS_ALERT = {"youtube_token", "disk", "script_backend", "upload_limit", "api_quota", "typesafe_credits"}
 
 
 def _alert_failure(job: Job) -> None:

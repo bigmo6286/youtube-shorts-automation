@@ -197,6 +197,9 @@ def cmd_produce(args) -> Path:
         housekeeping.ensure_free_space()        # a full disk leaves empty files behind; stop before that
     except RuntimeError as exc:
         sys.exit(str(exc))
+    from . import usage
+    if usage.typesafe_out_of_credits(recheck_after=0):
+        sys.exit(usage.OUT_OF_CREDITS)
     cfg = load_config()["production"]
     from . import frame
     long_video = bool(getattr(args, "long", False))

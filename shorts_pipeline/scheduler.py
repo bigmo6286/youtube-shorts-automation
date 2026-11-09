@@ -418,6 +418,16 @@ class Scheduler:
             return False
 
     def _fire(self, kind: str, index: int, slot: datetime, cfg: dict[str, Any], retry_of: str | None = None) -> bool:
+        from . import usage
+        if usage.typesafe_out_of_credits():
+            log.warning("%s slot %s skipped: TypeSafe is out of credits", kind, slot.strftime("%H:%M"))
+            self.state.setdefault("skipped", []).append(f"{kind}:{index}")
+            self.state["history"].append({"kind": f"{kind} (skipped: TypeSafe out of credits)",
+                                          "slot": slot.strftime("%Y-%m-%d %H:%M"),
+                                          "started": datetime.now().strftime("%H:%M:%S"), "status": "skipped"})
+            from .alerts import send
+            send("typesafe_credits", f"⚠️ {usage.OUT_OF_CREDITS}", repeat_hours=24)
+            return True
         if kind == "produce" and cfg.get("skip_when_queue_full", True) and self._queue_full():
             log.info("produce slot %s skipped: the upload queue already holds a day's worth of Shorts", slot.strftime("%H:%M"))
             self.state.setdefault("skipped", []).append(f"{kind}:{index}")

@@ -104,7 +104,13 @@ def install() -> None:
         original = typesafe_sdk.TypeSafeClient.system_one
 
         def counted(self, *args, **kwargs):
-            resp = original(self, *args, **kwargs)
+            try:
+                resp = original(self, *args, **kwargs)
+            except Exception as exc:
+                if out_of_credits_error(exc):
+                    _note_credits(False)
+                raise
+            _note_credits(True)
             try:
                 u = getattr(resp, "usage", None)
                 record(typesafe_calls=1, typesafe_in=getattr(u, "input_tokens", 0) or 0, typesafe_out=getattr(u, "output_tokens", 0) or 0)
@@ -115,6 +121,57 @@ def install() -> None:
         _installed = True
     except Exception as exc:  # noqa: BLE001
         log.debug("usage counting not installed: %s", exc)
+
+
+# ------------------------------------------------------------------ TypeSafe credits
+CREDITS_PATH = DATA_DIR / "typesafe_credits.json"
+CREDITS_RECHECK_SECONDS = 3600
+BILLING_URL = "https://console.typesafe.ai/settings/billing"
+OUT_OF_CREDITS = (f"TypeSafe has no credits left (402), so nothing was made. Add credits or turn on auto-reload at "
+                  f"{BILLING_URL}; scheduled Shorts pause until then and resume on their own.")
+
+
+def out_of_credits_error(exc: BaseException | str) -> bool:
+    s = str(exc)
+    return ("402" in s and "credit" in s.lower()) or "no available TypeSafe API credits" in s
+
+
+def _note_credits(ok: bool) -> None:
+    """Remember a 402 (when it started, when it was last seen); any successful call clears it."""
+    try:
+        if ok:
+            if CREDITS_PATH.exists():
+                CREDITS_PATH.unlink(missing_ok=True)
+                log.info("TypeSafe credits are available again")
+            return
+        state = load_json(CREDITS_PATH) or {}
+        now = time.time()
+        save_json(CREDITS_PATH, {"out_since": state.get("out_since") or now, "checked": now})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def typesafe_out_of_credits(recheck_after: float = CREDITS_RECHECK_SECONDS) -> bool:
+    """True while TypeSafe is known to be out of credits. Nothing is asked while no 402 has been seen; after one,
+    one tiny call checks again once `recheck_after` seconds have passed since the last check."""
+    state = load_json(CREDITS_PATH) if CREDITS_PATH.exists() else None
+    if not state:
+        return False
+    if time.time() - float(state.get("checked") or 0) < recheck_after:
+        return True
+    try:
+        install()
+        from typesafe_sdk import TypeSafeClient
+        with TypeSafeClient(timeout=30.0) as client:
+            client.system_one(state={"text": "hello"},
+                              questions={"probe": {"type": "noul", "instructions": "Is `text` a greeting?"}})
+        _note_credits(True)
+        return False
+    except Exception as exc:  # noqa: BLE001
+        if not out_of_credits_error(exc):  # the network, not the credits: look again at the next check
+            _note_credits(False)
+            log.info("TypeSafe credit check failed (%s)", str(exc)[:120])
+        return True
 
 
 def note_claude(result: dict[str, Any]) -> None:
