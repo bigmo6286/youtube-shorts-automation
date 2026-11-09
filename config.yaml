@@ -213,6 +213,12 @@ production:
   script_max_attempts: 3      # regenerate if TypeSafe QA says the hook is weak
   script_min_hook_score: 2    # 0-3, see judge.SCRIPT_QA_QUESTIONS
 
+typesafe:                     # TypeSafe judges scripts, footage and images
+  fallback: claude            # when its credits run out: claude = Claude answers the same questions (slower, uses your
+                              # Claude plan) | off = productions pause until credits are back. Either way TypeSafe takes
+                              # over again on its own: one tiny call an hour checks the credits.
+  fallback_model: haiku       # the Claude model that stands in (haiku is fast; sonnet judges a little better, slower)
+
 notifications:
   budgets:                    # daily usage alerts on Telegram (0 = off); YouTube API quota alerts at 80% always
     typesafe_tokens_per_day: 0

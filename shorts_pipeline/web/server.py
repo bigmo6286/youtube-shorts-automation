@@ -551,7 +551,13 @@ def get_settings() -> dict[str, Any]:
     from ..upload import TOKEN_PATH, secrets_path
     return {"keys": keys, "paths": paths, "config": load_config(),
             "client_secrets_present": secrets_path().exists(),
-            "youtube_token_present": TOKEN_PATH.exists()}
+            "youtube_token_present": TOKEN_PATH.exists(), "typesafe_credits": _credits_state()}
+
+
+def _credits_state() -> dict[str, Any]:
+    from ..usage import CREDITS_PATH
+    state = load_json(CREDITS_PATH) if CREDITS_PATH.exists() else None
+    return {"out": bool(state), "out_since": (state or {}).get("out_since")}
 
 
 class SettingsUpdate(BaseModel):

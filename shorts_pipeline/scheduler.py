@@ -419,7 +419,7 @@ class Scheduler:
 
     def _fire(self, kind: str, index: int, slot: datetime, cfg: dict[str, Any], retry_of: str | None = None) -> bool:
         from . import usage
-        if usage.typesafe_out_of_credits():
+        if usage.typesafe_blocked():
             log.warning("%s slot %s skipped: TypeSafe is out of credits", kind, slot.strftime("%H:%M"))
             self.state.setdefault("skipped", []).append(f"{kind}:{index}")
             self.state["history"].append({"kind": f"{kind} (skipped: TypeSafe out of credits)",

@@ -233,6 +233,12 @@
             <label class="inline"><input type="checkbox" name="schedule.skip_stretch"> skip stretch formats</label>
           </div>
           <p class="muted">Runs are spread evenly over the window and each finished Short goes to Telegram. The scheduler only runs while this console is running: use <code>python main.py autostart install</code> so it starts at logon, and keep the machine awake.</p>
+          <h3>TypeSafe</h3>
+          <div class="row">
+            <label>When out of credits<select name="typesafe.fallback"><option value="claude">Claude answers its questions (slower; uses your Claude plan)</option><option value="off">pause productions until credits are back</option></select></label>
+            <label>Claude model standing in<select name="typesafe.fallback_model"><option value="haiku">Haiku (fast)</option><option value="sonnet">Sonnet (a little better, slower)</option></select></label>
+          </div>
+          <p class="muted" id="tscredits">TypeSafe takes over again on its own: once an hour one tiny call checks the credits.</p>
           <h3>AI images</h3>
           <div class="row">
             <label>When to use<select name="production.ai_images.mode"><option value="fallback">only when Pexels has nothing that fits</option><option value="compete">also when the best clip is a weak match (an AI image competes)</option><option value="always">for every line (no stock footage)</option><option value="never">never</option></select></label>

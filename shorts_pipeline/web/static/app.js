@@ -660,6 +660,14 @@ async function loadSettings() {
   set("production.ai_images.provider", ai.provider || "pollinations");
   set("production.ai_images.style", ai.style || "");
   set("production.ai_images.model", ai.model || "");
+  const ts = c.typesafe || {};
+  set("typesafe.fallback", ts.fallback || "claude");
+  set("typesafe.fallback_model", ts.fallback_model || "haiku");
+  $("#tscredits").textContent = s.typesafe_credits && s.typesafe_credits.out
+    ? `Out of credits since ${new Date(s.typesafe_credits.out_since * 1000).toLocaleString()}. ` +
+      (ts.fallback === "off" ? "Productions are paused." : "Claude is answering in its place.") +
+      " TypeSafe takes over again on its own: once an hour one tiny call checks the credits."
+    : "TypeSafe takes over again on its own: once an hour one tiny call checks the credits.";
   const sc = c.schedule || {};
   $(`[name="schedule.enabled"]`).checked = !!sc.enabled;
   set("schedule.produces_per_day", sc.produces_per_day ?? 20); set("schedule.refresh_per_day", sc.refresh_per_day ?? 1);
@@ -727,6 +735,7 @@ $("#cfgform").addEventListener("submit", async (ev) => {
       max_age_hours: num("upload.max_age_hours") || 36, min_gap_minutes: Math.max(0, num("upload.min_gap_minutes")),
       schedule_publish: $(`[name="upload.schedule_publish"]`).checked, review_hours: Math.max(0, num("upload.review_hours")),
       max_per_hour: num("upload.max_per_hour") || 2 },
+    typesafe: { fallback: g("typesafe.fallback"), fallback_model: g("typesafe.fallback_model") },
     notifications: { telegram: { alerts: $(`[name="notifications.telegram.alerts"]`).checked,
       daily_report_hour: g("notifications.telegram.daily_report_hour") === "" ? null : num("notifications.telegram.daily_report_hour") } },
     schedule: { enabled: $(`[name="schedule.enabled"]`).checked, produces_per_day: num("schedule.produces_per_day") || 20,

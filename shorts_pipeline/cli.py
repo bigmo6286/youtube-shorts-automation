@@ -198,7 +198,7 @@ def cmd_produce(args) -> Path:
     except RuntimeError as exc:
         sys.exit(str(exc))
     from . import usage
-    if usage.typesafe_out_of_credits(recheck_after=0):
+    if usage.typesafe_blocked(recheck_after=0):
         sys.exit(usage.OUT_OF_CREDITS)
     cfg = load_config()["production"]
     from . import frame
@@ -1712,4 +1712,6 @@ def cmd_channels(args) -> None:
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose)
+    from . import usage
+    usage.install()                 # count TypeSafe calls; Claude stands in while its credits are out
     args.func(args)

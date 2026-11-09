@@ -88,7 +88,8 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
 
 
 def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: int = 600,
-                  tools: list[str] | None = None, max_turns: int | None = None) -> dict[str, Any]:
+                  tools: list[str] | None = None, max_turns: int | None = None,
+                  model: str | None = None) -> dict[str, Any]:
     """Run one headless turn and return the structured output as a dict. `tools` (e.g. ["WebSearch", "WebFetch"])
     lets that turn search the web (the fact-check); by default there are no tools at all."""
     binary = find_claude_binary()
@@ -116,6 +117,8 @@ def generate_json(system: str, prompt: str, schema: dict[str, Any], *, timeout: 
                "--tools", ",".join(tools) if tools else ""]     # no tools: pure text generation
         if tools:
             cmd += ["--allowedTools", ",".join(tools)]          # headless: nobody can answer a permission prompt
+        if model:
+            cmd += ["--model", model]
         try:
             proc = _run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                         timeout=timeout, env=child_env, retries=0)

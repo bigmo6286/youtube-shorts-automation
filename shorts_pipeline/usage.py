@@ -26,6 +26,7 @@ POLLEN_PRICES = {"black-forest-labs/flux.2-klein-4b": 0.005, "tongyi-mai/z-image
                  "black-forest-labs/flux.1-schnell": 0.002}
 YOUTUBE_QUOTA = 10_000
 _installed = False
+_ORIGINAL: dict[str, Any] = {}            # the SDK's own system_one, for the credit check (the wrapper may answer with Claude)
 
 
 def record(**amounts: float) -> None:
@@ -94,6 +95,30 @@ def _maybe_alert(day: dict[str, Any]) -> None:
         pass
 
 
+def _system_one(original, client, args, kwargs):
+    """Every TypeSafe call: counted; answered by Claude while TypeSafe is out of credits (when that is switched on)."""
+    from . import claude_judge
+    if typesafe_out_of_credits() and claude_judge.enabled():     # the cheap test first
+        return claude_judge.answer(*args, **kwargs)
+    try:
+        resp = original(client, *args, **kwargs)
+    except Exception as exc:
+        if not out_of_credits_error(exc):
+            raise
+        _note_credits(False)
+        if not claude_judge.enabled():
+            raise
+        log.warning("TypeSafe is out of credits: Claude answers its questions until credits are back")
+        return claude_judge.answer(*args, **kwargs)
+    _note_credits(True)
+    try:
+        u = getattr(resp, "usage", None)
+        record(typesafe_calls=1, typesafe_in=getattr(u, "input_tokens", 0) or 0, typesafe_out=getattr(u, "output_tokens", 0) or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    return resp
+
+
 def install() -> None:
     """Count every TypeSafe call made anywhere in the engine (wraps the SDK's system_one once)."""
     global _installed
@@ -104,20 +129,9 @@ def install() -> None:
         original = typesafe_sdk.TypeSafeClient.system_one
 
         def counted(self, *args, **kwargs):
-            try:
-                resp = original(self, *args, **kwargs)
-            except Exception as exc:
-                if out_of_credits_error(exc):
-                    _note_credits(False)
-                raise
-            _note_credits(True)
-            try:
-                u = getattr(resp, "usage", None)
-                record(typesafe_calls=1, typesafe_in=getattr(u, "input_tokens", 0) or 0, typesafe_out=getattr(u, "output_tokens", 0) or 0)
-            except Exception:  # noqa: BLE001
-                pass
-            return resp
+            return _system_one(original, self, args, kwargs)
         typesafe_sdk.TypeSafeClient.system_one = counted
+        _ORIGINAL["system_one"] = original
         _installed = True
     except Exception as exc:  # noqa: BLE001
         log.debug("usage counting not installed: %s", exc)
@@ -128,7 +142,8 @@ CREDITS_PATH = DATA_DIR / "typesafe_credits.json"
 CREDITS_RECHECK_SECONDS = 3600
 BILLING_URL = "https://console.typesafe.ai/settings/billing"
 OUT_OF_CREDITS = (f"TypeSafe has no credits left (402), so nothing was made. Add credits or turn on auto-reload at "
-                  f"{BILLING_URL}; scheduled Shorts pause until then and resume on their own.")
+                  f"{BILLING_URL}; scheduled Shorts pause until then and resume on their own. (Or let Claude stand "
+                  f"in: Settings -> TypeSafe -> When out of credits.)")
 
 
 def out_of_credits_error(exc: BaseException | str) -> bool:
@@ -163,8 +178,9 @@ def typesafe_out_of_credits(recheck_after: float = CREDITS_RECHECK_SECONDS) -> b
         install()
         from typesafe_sdk import TypeSafeClient
         with TypeSafeClient(timeout=30.0) as client:
-            client.system_one(state={"text": "hello"},
-                              questions={"probe": {"type": "noul", "instructions": "Is `text` a greeting?"}})
+            ask = _ORIGINAL.get("system_one") or type(client).system_one
+            ask(client, state={"text": "hello"},
+                questions={"probe": {"type": "noul", "instructions": "Is `text` a greeting?"}})
         _note_credits(True)
         return False
     except Exception as exc:  # noqa: BLE001
@@ -172,6 +188,14 @@ def typesafe_out_of_credits(recheck_after: float = CREDITS_RECHECK_SECONDS) -> b
             _note_credits(False)
             log.info("TypeSafe credit check failed (%s)", str(exc)[:120])
         return True
+
+
+def typesafe_blocked(recheck_after: float = CREDITS_RECHECK_SECONDS) -> bool:
+    """Out of credits with nobody to stand in: productions stop. With Claude standing in they go on."""
+    if not typesafe_out_of_credits(recheck_after):
+        return False
+    from . import claude_judge
+    return not claude_judge.enabled()
 
 
 def note_claude(result: dict[str, Any]) -> None:
